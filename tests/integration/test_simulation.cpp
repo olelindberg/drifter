@@ -1602,4 +1602,180 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
     EXPECT_TRUE(std::filesystem::exists(vtk_path));
     std::cout << "Coastline-adaptive VTK: " << vtk_path << "\n";
     std::cout << "Elements refined near coastline with max level " << max_level_x << "\n";
+
+    // =========================================================================
+    // Generate high-resolution seabed surface using SeabedVTKWriter
+    // =========================================================================
+
+    // Build element coordinates in the format expected by SeabedVTKWriter
+    // (interleaved x,y,z for each DOF)
+    std::vector<VecX> element_coords_interleaved;
+    std::vector<VecX> element_depth_data;
+
+    element_coords_interleaved.reserve(octree.num_elements());
+    element_depth_data.reserve(octree.num_elements());
+
+    octree.for_each_element([&](Index e, const OctreeNode& node) {
+        const auto& bounds = node.bounds;
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real dz_sigma = bounds.zmax - bounds.zmin;
+
+        VecX coords(3 * nodes_per_elem);
+        VecX depths(nodes_per_elem);
+
+        for (int i = 0; i < nodes_per_elem; ++i) {
+            const auto& ref_node = ref_nodes[i];
+
+            Real x = bounds.xmin + 0.5 * (ref_node.x() + 1.0) * dx;
+            Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
+            Real sigma = bounds.zmin + 0.5 * (ref_node.z() + 1.0) * dz_sigma;
+
+            // Use the projected depth from earlier pass
+            Real local_depth = all_elem_depths[e][i];
+            Real z = sigma * local_depth;
+
+            coords(3 * i + 0) = x;
+            coords(3 * i + 1) = y;
+            coords(3 * i + 2) = z;
+            depths(i) = local_depth;
+        }
+
+        element_coords_interleaved.push_back(coords);
+        element_depth_data.push_back(depths);
+    });
+
+    // Write high-resolution seabed surface
+    std::string seabed_path = "/tmp/danish_seabed_adaptive";
+
+    SeabedVTKWriter seabed_writer(seabed_path);
+    seabed_writer.set_mesh(octree, element_coords_interleaved, poly_order);
+    seabed_writer.set_resolution(10);  // 10x10 quads per element face
+    seabed_writer.add_scalar_field("depth", element_depth_data);
+
+    seabed_writer.write();
+
+    std::string seabed_vtk_path = seabed_path + ".vtk";
+    EXPECT_TRUE(std::filesystem::exists(seabed_vtk_path));
+
+    std::cout << "\nHigh-resolution seabed surface: " << seabed_vtk_path << "\n";
+    std::cout << "  Points: " << seabed_writer.num_points() << "\n";
+    std::cout << "  Cells (quads): " << seabed_writer.num_cells() << "\n";
+    std::cout << "  Resolution: 10x10 subdivisions per element bottom face\n";
+}
+
+TEST_F(SimulationTest, HighResolutionSeabedVTK) {
+    // Test the SeabedVTKWriter with coastline-adaptive mesh
+    // This generates a high-resolution 2D surface mesh of the seabed
+    // by evaluating Lagrange polynomials at many points on each element's bottom face
+
+    if (!GeoTiffReader::is_available()) {
+        GTEST_SKIP() << "GDAL not available, skipping GeoTIFF test";
+    }
+
+    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+    if (!std::filesystem::exists(geotiff_path)) {
+        GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
+    }
+
+    GeoTiffReader reader;
+    BathymetryData bathy = reader.load(geotiff_path);
+    ASSERT_TRUE(bathy.is_valid());
+
+    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
+
+    // Build mesh with bathymetry generator
+    BathymetryMeshGenerator generator(bathy_ptr);
+
+    BathymetryMeshGenerator::Config config;
+    config.base_nx = 20;
+    config.base_ny = 20;
+    config.base_nz = 3;  // 3 vertical layers
+    config.mask_land = true;
+    config.min_depth = 1.0;
+    generator.set_config(config);
+
+    auto element_bounds = generator.generate();
+
+    std::cout << "Generated " << element_bounds.size() << " water elements\n";
+
+    if (element_bounds.empty()) {
+        GTEST_SKIP() << "No water elements generated";
+    }
+
+    // Build OctreeAdapter from element bounds
+    OctreeAdapter octree(bathy_ptr->xmin, bathy_ptr->xmax,
+                         bathy_ptr->ymin, bathy_ptr->ymax,
+                         -1.0, 0.0);  // Sigma coordinates
+    octree.build_uniform(config.base_nx, config.base_ny, config.base_nz);
+
+    // Create high-order DG basis
+    const int poly_order = 3;
+    HexahedronBasis basis(poly_order);
+    const auto& ref_nodes = basis.lgl_nodes();
+    const int num_dofs = static_cast<int>(ref_nodes.size());
+
+    // Generate element coordinates with bathymetry-following bottom
+    std::vector<VecX> element_coords;
+    std::vector<VecX> element_depths;
+
+    const auto& elements = octree.elements();
+    for (size_t e = 0; e < elements.size(); ++e) {
+        const auto& bounds = elements[e]->bounds;
+
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real dz_sigma = bounds.zmax - bounds.zmin;
+
+        VecX coords(3 * num_dofs);
+        VecX depths(num_dofs);
+
+        for (int i = 0; i < num_dofs; ++i) {
+            const auto& ref_node = ref_nodes[i];
+
+            // Horizontal position
+            Real x = bounds.xmin + 0.5 * (ref_node.x() + 1.0) * dx;
+            Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
+
+            // Sigma coordinate
+            Real sigma = bounds.zmin + 0.5 * (ref_node.z() + 1.0) * dz_sigma;
+
+            // Get local bathymetry
+            Real local_depth = bathy_ptr->get_depth(x, y);
+            if (local_depth < 1.0) local_depth = 1.0;  // Minimum depth
+
+            // Physical z from sigma: z = sigma * H(x,y)
+            Real z = sigma * local_depth;
+
+            coords(3 * i + 0) = x;
+            coords(3 * i + 1) = y;
+            coords(3 * i + 2) = z;
+            depths(i) = local_depth;
+        }
+
+        element_coords.push_back(coords);
+        element_depths.push_back(depths);
+    }
+
+    std::cout << "Generated coordinates for " << element_coords.size()
+              << " elements with " << num_dofs << " DOFs each\n";
+
+    // Write high-resolution seabed VTK
+    std::string seabed_path = "/tmp/danish_seabed_highres";
+
+    SeabedVTKWriter seabed_writer(seabed_path);
+    seabed_writer.set_mesh(octree, element_coords, poly_order);
+    seabed_writer.set_resolution(20);  // 20x20 quads per element face = smooth surface
+    seabed_writer.add_scalar_field("depth", element_depths);
+
+    seabed_writer.write();
+
+    std::string seabed_vtk_path = seabed_path + ".vtk";
+    EXPECT_TRUE(std::filesystem::exists(seabed_vtk_path));
+
+    std::cout << "High-resolution seabed VTK: " << seabed_vtk_path << "\n";
+    std::cout << "  Points: " << seabed_writer.num_points() << "\n";
+    std::cout << "  Cells (quads): " << seabed_writer.num_cells() << "\n";
+    std::cout << "  Resolution: 20x20 subdivisions per element bottom face\n";
+    std::cout << "Open in ParaView to visualize the smooth seabed surface\n";
 }

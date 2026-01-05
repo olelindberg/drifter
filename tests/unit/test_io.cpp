@@ -793,3 +793,242 @@ TEST_F(IOTest, GeoTiffReaderLoadNonexistent) {
     EXPECT_FALSE(error.empty());
 }
 
+// =============================================================================
+// SeabedVTKWriter Tests
+// =============================================================================
+
+TEST_F(IOTest, SeabedVTKWriterConstruction) {
+    std::string filename = (test_dir_ / "seabed").string();
+
+    SeabedVTKWriter writer(filename);
+
+    EXPECT_EQ(writer.num_points(), 0);
+    EXPECT_EQ(writer.num_cells(), 0);
+}
+
+TEST_F(IOTest, SeabedVTKWriterSetResolution) {
+    std::string filename = (test_dir_ / "seabed_res").string();
+
+    SeabedVTKWriter writer(filename);
+    writer.set_resolution(20);
+
+    // No exceptions
+    SUCCEED();
+}
+
+TEST_F(IOTest, SeabedVTKWriterSingleElement) {
+    std::string filename = (test_dir_ / "seabed_single").string();
+
+    // Create a simple octree with one element
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    mesh.build_uniform(1, 1, 1);
+
+    // Create element coordinates for polynomial order 1 (8 nodes)
+    // Interleaved x,y,z: [x0,y0,z0, x1,y1,z1, ...]
+    // For order 1, nodes are at corners of the reference cube
+    int order = 1;
+    int np = order + 1;  // 2 nodes per dimension
+    int num_dofs = np * np * np;  // 8 DOFs
+
+    VecX coords(3 * num_dofs);
+    // Generate coordinates for a unit cube with varying bottom depth
+    // DOF ordering: i + np*(j + np*k)
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                Real x = static_cast<Real>(i) / order;
+                Real y = static_cast<Real>(j) / order;
+                Real z_ref = -1.0 + 2.0 * static_cast<Real>(k) / order;
+
+                // Map z: bottom face has varying depth, surface is flat at z=0
+                Real depth = 1.0 + 0.2 * x + 0.1 * y;  // Varying bottom depth
+                Real z = (z_ref + 1.0) / 2.0 * depth - depth;  // sigma to physical
+
+                coords(3 * dof + 0) = x;
+                coords(3 * dof + 1) = y;
+                coords(3 * dof + 2) = z;
+            }
+        }
+    }
+
+    std::vector<VecX> element_coords = {coords};
+
+    SeabedVTKWriter writer(filename);
+    writer.set_mesh(mesh, element_coords, order);
+    writer.set_resolution(5);  // 5x5 subdivision
+
+    writer.write();
+
+    // Check that file was created
+    std::string vtk_filename = filename + ".vtk";
+    EXPECT_TRUE(fs::exists(vtk_filename));
+
+    // Check point and cell counts
+    // resolution=5 means 6x6=36 points per element, 5x5=25 quads per element
+    EXPECT_EQ(writer.num_points(), 36);
+    EXPECT_EQ(writer.num_cells(), 25);
+
+    // Verify file content
+    std::ifstream file(vtk_filename);
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+
+    EXPECT_TRUE(content.find("POINTS 36") != std::string::npos);
+    EXPECT_TRUE(content.find("CELLS 25") != std::string::npos);
+    EXPECT_TRUE(content.find("CELL_TYPES 25") != std::string::npos);
+}
+
+TEST_F(IOTest, SeabedVTKWriterWithScalarField) {
+    std::string filename = (test_dir_ / "seabed_scalar").string();
+
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    mesh.build_uniform(1, 1, 1);
+
+    int order = 1;
+    int np = order + 1;
+    int num_dofs = np * np * np;
+
+    // Create coordinates (simple flat bottom)
+    VecX coords(3 * num_dofs);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                coords(3 * dof + 0) = static_cast<Real>(i) / order;
+                coords(3 * dof + 1) = static_cast<Real>(j) / order;
+                coords(3 * dof + 2) = -1.0 + static_cast<Real>(k) / order;
+            }
+        }
+    }
+
+    // Create depth field data
+    VecX depth_data(num_dofs);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                depth_data(dof) = 100.0 + 10.0 * i + 5.0 * j;
+            }
+        }
+    }
+
+    std::vector<VecX> element_coords = {coords};
+    std::vector<VecX> element_depth = {depth_data};
+
+    SeabedVTKWriter writer(filename);
+    writer.set_mesh(mesh, element_coords, order);
+    writer.set_resolution(3);
+    writer.add_scalar_field("depth", element_depth);
+
+    writer.write();
+
+    std::string vtk_filename = filename + ".vtk";
+    EXPECT_TRUE(fs::exists(vtk_filename));
+
+    // Verify scalar field is in the file
+    std::ifstream file(vtk_filename);
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+
+    EXPECT_TRUE(content.find("POINT_DATA") != std::string::npos);
+    EXPECT_TRUE(content.find("SCALARS depth") != std::string::npos);
+}
+
+TEST_F(IOTest, SeabedVTKWriterHigherOrder) {
+    std::string filename = (test_dir_ / "seabed_highorder").string();
+
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    mesh.build_uniform(1, 1, 1);
+
+    int order = 2;  // Quadratic
+    int np = order + 1;  // 3 nodes per dimension
+    int num_dofs = np * np * np;  // 27 DOFs
+
+    // Create coordinates with curved bottom (quadratic variation)
+    VecX coords(3 * num_dofs);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                Real xi = static_cast<Real>(i) / order;
+                Real eta = static_cast<Real>(j) / order;
+                Real zeta_ref = -1.0 + 2.0 * static_cast<Real>(k) / order;
+
+                // Curved bottom: depth = 1 + 0.3*sin(pi*x)*sin(pi*y)
+                Real depth = 1.0 + 0.3 * std::sin(M_PI * xi) * std::sin(M_PI * eta);
+                Real z = (zeta_ref + 1.0) / 2.0 * depth - depth;
+
+                coords(3 * dof + 0) = xi;
+                coords(3 * dof + 1) = eta;
+                coords(3 * dof + 2) = z;
+            }
+        }
+    }
+
+    std::vector<VecX> element_coords = {coords};
+
+    SeabedVTKWriter writer(filename);
+    writer.set_mesh(mesh, element_coords, order);
+    writer.set_resolution(10);  // High resolution to see the curvature
+
+    writer.write();
+
+    std::string vtk_filename = filename + ".vtk";
+    EXPECT_TRUE(fs::exists(vtk_filename));
+
+    // resolution=10 means 11x11=121 points, 10x10=100 quads
+    EXPECT_EQ(writer.num_points(), 121);
+    EXPECT_EQ(writer.num_cells(), 100);
+}
+
+TEST_F(IOTest, SeabedVTKWriterMultipleElements) {
+    std::string filename = (test_dir_ / "seabed_multi").string();
+
+    // Create mesh with 2x2x1 elements
+    OctreeAdapter mesh(0.0, 2.0, 0.0, 2.0, -1.0, 0.0);
+    mesh.build_uniform(2, 2, 1);
+
+    int order = 1;
+    int np = order + 1;
+    int num_dofs = np * np * np;
+
+    std::vector<VecX> element_coords;
+
+    // Generate coordinates for each element
+    const auto& elements = mesh.elements();
+    for (size_t e = 0; e < elements.size(); ++e) {
+        const auto& bounds = elements[e]->bounds;
+
+        VecX coords(3 * num_dofs);
+        for (int k = 0; k < np; ++k) {
+            for (int j = 0; j < np; ++j) {
+                for (int i = 0; i < np; ++i) {
+                    int dof = i + np * (j + np * k);
+                    Real xi = static_cast<Real>(i) / order;
+                    Real eta = static_cast<Real>(j) / order;
+                    Real zeta = static_cast<Real>(k) / order;
+
+                    coords(3 * dof + 0) = bounds.xmin + xi * (bounds.xmax - bounds.xmin);
+                    coords(3 * dof + 1) = bounds.ymin + eta * (bounds.ymax - bounds.ymin);
+                    coords(3 * dof + 2) = bounds.zmin + zeta * (bounds.zmax - bounds.zmin);
+                }
+            }
+        }
+        element_coords.push_back(coords);
+    }
+
+    SeabedVTKWriter writer(filename);
+    writer.set_mesh(mesh, element_coords, order);
+    writer.set_resolution(4);
+
+    writer.write();
+
+    std::string vtk_filename = filename + ".vtk";
+    EXPECT_TRUE(fs::exists(vtk_filename));
+
+    // 4 elements, each with 5x5=25 points and 4x4=16 quads
+    EXPECT_EQ(writer.num_points(), 4 * 25);
+    EXPECT_EQ(writer.num_cells(), 4 * 16);
+}
+

@@ -24,6 +24,11 @@
 #include <vector>
 #include <map>
 
+// Forward declaration
+namespace drifter {
+struct BathymetryData;
+}
+
 #ifdef DRIFTER_USE_MPI
 #include <mpi.h>
 #endif
@@ -265,6 +270,61 @@ public:
 private:
     std::unique_ptr<VTKWriter> writer_;
     size_t time_idx_ = 0;
+};
+
+/// @brief High-resolution seabed surface VTK writer
+/// Extracts bottom faces from hexahedral elements and outputs them at high resolution
+/// by evaluating Lagrange polynomials at many points on each face.
+class SeabedVTKWriter {
+public:
+    /// @brief Construct writer with output path
+    /// @param filename Output VTK filename (without extension)
+    SeabedVTKWriter(const std::string& filename);
+
+    /// @brief Set the mesh and element coordinates
+    /// @param mesh The octree mesh adapter
+    /// @param element_coords Physical coordinates at each element's DOF nodes
+    ///        (vector of size num_elements, each VecX has 3*num_dofs values: x,y,z interleaved)
+    /// @param order Polynomial order of the DG representation
+    void set_mesh(const OctreeAdapter& mesh,
+                  const std::vector<VecX>& element_coords,
+                  int order);
+
+    /// @brief Set output resolution (subdivisions per face)
+    /// @param resolution Number of subdivisions per dimension on each face (default: 10)
+    ///        Each bottom face will be subdivided into resolution x resolution quads
+    void set_resolution(int resolution);
+
+    /// @brief Add scalar field data to output
+    /// @param name Field name
+    /// @param element_data Data at each element's DOF nodes (same structure as element_coords)
+    void add_scalar_field(const std::string& name, const std::vector<VecX>& element_data);
+
+    /// @brief Write the seabed surface to VTK file
+    void write();
+
+    /// @brief Get the number of points written
+    size_t num_points() const { return num_points_; }
+
+    /// @brief Get the number of cells written
+    size_t num_cells() const { return num_cells_; }
+
+private:
+    std::string filename_;
+    int resolution_ = 10;
+    int order_ = 1;
+
+    const OctreeAdapter* mesh_ = nullptr;
+    std::vector<VecX> element_coords_;
+
+    std::map<std::string, std::vector<VecX>> scalar_fields_;
+
+    size_t num_points_ = 0;
+    size_t num_cells_ = 0;
+
+    // Evaluate solution at a point on the bottom face using Lagrange interpolation
+    Vec3 evaluate_point(const VecX& coords, Real xi, Real eta, int order) const;
+    Real evaluate_scalar(const VecX& data, Real xi, Real eta, int order) const;
 };
 
 }  // namespace drifter

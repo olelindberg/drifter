@@ -900,4 +900,255 @@ void XDMFWriter::update_xdmf() {
     file << "</Xdmf>\n";
 }
 
+// =============================================================================
+// SeabedVTKWriter implementation
+// =============================================================================
+
+SeabedVTKWriter::SeabedVTKWriter(const std::string& filename)
+    : filename_(filename)
+{
+}
+
+void SeabedVTKWriter::set_mesh(const OctreeAdapter& mesh,
+                                const std::vector<VecX>& element_coords,
+                                int order) {
+    mesh_ = &mesh;
+    element_coords_ = element_coords;
+    order_ = order;
+}
+
+void SeabedVTKWriter::set_resolution(int resolution) {
+    resolution_ = resolution;
+}
+
+void SeabedVTKWriter::add_scalar_field(const std::string& name,
+                                        const std::vector<VecX>& element_data) {
+    scalar_fields_[name] = element_data;
+}
+
+Vec3 SeabedVTKWriter::evaluate_point(const VecX& coords, Real xi, Real eta, int order) const {
+    // Evaluate 3D Lagrange basis on bottom face (zeta = -1)
+    // coords contains interleaved x,y,z for each DOF: [x0,y0,z0, x1,y1,z1, ...]
+    int np = order + 1;
+
+    // Compute true LGL nodes for Lagrange basis
+    VecX lgl_nodes(np), lgl_weights(np);
+    compute_gauss_lobatto_nodes(np, lgl_nodes, lgl_weights);
+
+    // Evaluate 1D Lagrange basis at xi
+    VecX phi_xi(np);
+    for (int i = 0; i < np; ++i) {
+        Real prod = 1.0;
+        for (int j = 0; j < np; ++j) {
+            if (j != i) {
+                prod *= (xi - lgl_nodes(j)) / (lgl_nodes(i) - lgl_nodes(j));
+            }
+        }
+        phi_xi(i) = prod;
+    }
+
+    // Evaluate 1D Lagrange basis at eta
+    VecX phi_eta(np);
+    for (int j = 0; j < np; ++j) {
+        Real prod = 1.0;
+        for (int k = 0; k < np; ++k) {
+            if (k != j) {
+                prod *= (eta - lgl_nodes(k)) / (lgl_nodes(j) - lgl_nodes(k));
+            }
+        }
+        phi_eta(j) = prod;
+    }
+
+    // Evaluate 1D Lagrange basis at zeta = -1 (bottom face)
+    VecX phi_zeta(np);
+    Real zeta = -1.0;
+    for (int k = 0; k < np; ++k) {
+        Real prod = 1.0;
+        for (int l = 0; l < np; ++l) {
+            if (l != k) {
+                prod *= (zeta - lgl_nodes(l)) / (lgl_nodes(k) - lgl_nodes(l));
+            }
+        }
+        phi_zeta(k) = prod;
+    }
+
+    // Interpolate coordinates using tensor product basis
+    Vec3 point(0, 0, 0);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                Real weight = phi_xi(i) * phi_eta(j) * phi_zeta(k);
+
+                point(0) += weight * coords(3 * dof + 0);
+                point(1) += weight * coords(3 * dof + 1);
+                point(2) += weight * coords(3 * dof + 2);
+            }
+        }
+    }
+
+    return point;
+}
+
+Real SeabedVTKWriter::evaluate_scalar(const VecX& data, Real xi, Real eta, int order) const {
+    // Evaluate scalar field on bottom face (zeta = -1)
+    int np = order + 1;
+
+    // Compute true LGL nodes for Lagrange basis
+    VecX lgl_nodes(np), lgl_weights(np);
+    compute_gauss_lobatto_nodes(np, lgl_nodes, lgl_weights);
+
+    VecX phi_xi(np);
+    for (int i = 0; i < np; ++i) {
+        Real prod = 1.0;
+        for (int j = 0; j < np; ++j) {
+            if (j != i) {
+                prod *= (xi - lgl_nodes(j)) / (lgl_nodes(i) - lgl_nodes(j));
+            }
+        }
+        phi_xi(i) = prod;
+    }
+
+    VecX phi_eta(np);
+    for (int j = 0; j < np; ++j) {
+        Real prod = 1.0;
+        for (int k = 0; k < np; ++k) {
+            if (k != j) {
+                prod *= (eta - lgl_nodes(k)) / (lgl_nodes(j) - lgl_nodes(k));
+            }
+        }
+        phi_eta(j) = prod;
+    }
+
+    VecX phi_zeta(np);
+    Real zeta = -1.0;
+    for (int k = 0; k < np; ++k) {
+        Real prod = 1.0;
+        for (int l = 0; l < np; ++l) {
+            if (l != k) {
+                prod *= (zeta - lgl_nodes(l)) / (lgl_nodes(k) - lgl_nodes(l));
+            }
+        }
+        phi_zeta(k) = prod;
+    }
+
+    // Interpolate scalar
+    Real value = 0.0;
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                Real weight = phi_xi(i) * phi_eta(j) * phi_zeta(k);
+                value += weight * data(dof);
+            }
+        }
+    }
+
+    return value;
+}
+
+void SeabedVTKWriter::write() {
+    if (!mesh_ || element_coords_.empty()) {
+        throw std::runtime_error("SeabedVTKWriter: mesh and coordinates not set");
+    }
+
+    std::string vtk_filename = filename_ + ".vtk";
+    std::ofstream vtk_file(vtk_filename);
+    if (!vtk_file) {
+        throw std::runtime_error("Failed to open file: " + vtk_filename);
+    }
+
+    const auto& elements = mesh_->elements();
+    size_t num_elements = elements.size();
+
+    // Each element's bottom face is subdivided into resolution_ x resolution_ quads
+    int pts_per_face = (resolution_ + 1) * (resolution_ + 1);
+    int cells_per_face = resolution_ * resolution_;
+
+    num_points_ = num_elements * pts_per_face;
+    num_cells_ = num_elements * cells_per_face;
+
+    // Write VTK header
+    vtk_file << "# vtk DataFile Version 3.0\n";
+    vtk_file << "DRIFTER High-Resolution Seabed Surface\n";
+    vtk_file << "ASCII\n";
+    vtk_file << "DATASET UNSTRUCTURED_GRID\n";
+
+    // Collect all points by evaluating Lagrange polynomials on each bottom face
+    std::vector<Vec3> all_points;
+    all_points.reserve(num_points_);
+
+    // Also collect scalar field values if any
+    std::map<std::string, std::vector<Real>> field_values;
+    for (const auto& [name, _] : scalar_fields_) {
+        field_values[name].reserve(num_points_);
+    }
+
+    for (size_t e = 0; e < num_elements; ++e) {
+        const VecX& coords = element_coords_[e];
+
+        // Generate points on bottom face (zeta = -1) at high resolution
+        for (int j = 0; j <= resolution_; ++j) {
+            Real eta = -1.0 + 2.0 * j / resolution_;
+            for (int i = 0; i <= resolution_; ++i) {
+                Real xi = -1.0 + 2.0 * i / resolution_;
+
+                Vec3 pt = evaluate_point(coords, xi, eta, order_);
+                all_points.push_back(pt);
+
+                // Evaluate scalar fields
+                for (const auto& [name, elem_data] : scalar_fields_) {
+                    Real val = evaluate_scalar(elem_data[e], xi, eta, order_);
+                    field_values[name].push_back(val);
+                }
+            }
+        }
+    }
+
+    // Write points
+    vtk_file << "POINTS " << num_points_ << " double\n";
+    for (const auto& pt : all_points) {
+        vtk_file << std::setprecision(15) << pt(0) << " " << pt(1) << " " << pt(2) << "\n";
+    }
+
+    // Write cells (quads)
+    vtk_file << "\nCELLS " << num_cells_ << " " << num_cells_ * 5 << "\n";
+    for (size_t e = 0; e < num_elements; ++e) {
+        Index base = static_cast<Index>(e * pts_per_face);
+        int stride = resolution_ + 1;
+
+        for (int j = 0; j < resolution_; ++j) {
+            for (int i = 0; i < resolution_; ++i) {
+                // Quad corners (counter-clockwise)
+                Index p0 = base + j * stride + i;
+                Index p1 = base + j * stride + (i + 1);
+                Index p2 = base + (j + 1) * stride + (i + 1);
+                Index p3 = base + (j + 1) * stride + i;
+
+                vtk_file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
+            }
+        }
+    }
+
+    // Cell types: VTK_QUAD = 9
+    vtk_file << "\nCELL_TYPES " << num_cells_ << "\n";
+    for (size_t c = 0; c < num_cells_; ++c) {
+        vtk_file << "9\n";
+    }
+
+    // Write point data
+    if (!field_values.empty()) {
+        vtk_file << "\nPOINT_DATA " << num_points_ << "\n";
+        for (const auto& [name, values] : field_values) {
+            vtk_file << "SCALARS " << name << " double 1\n";
+            vtk_file << "LOOKUP_TABLE default\n";
+            for (Real v : values) {
+                vtk_file << std::setprecision(15) << v << "\n";
+            }
+        }
+    }
+
+    vtk_file.close();
+}
+
 }  // namespace drifter
