@@ -906,9 +906,11 @@ void XDMFWriter::update_xdmf() {
 // =============================================================================
 
 SeabedVTKWriter::SeabedVTKWriter(const std::string& filename,
-                                  SeabedInterpolation method)
+                                  SeabedInterpolation method,
+                                  VTKFormat format)
     : filename_(filename)
     , method_(method)
+    , format_(format)
 {
 }
 
@@ -943,15 +945,11 @@ void SeabedVTKWriter::add_scalar_field(const std::string& name,
     scalar_fields_[name] = element_data;
 }
 
-Vec3 SeabedVTKWriter::evaluate_point(const VecX& coords, Real xi, Real eta, int order) const {
-    // Delegate to the interpolator (uses Lagrange or Bernstein depending on method_)
-    (void)order;  // Use member order_ via interpolator
+Vec3 SeabedVTKWriter::evaluate_point(const VecX& coords, Real xi, Real eta) const {
     return get_interpolator().evaluate_point(coords, xi, eta);
 }
 
-Real SeabedVTKWriter::evaluate_scalar(const VecX& data, Real xi, Real eta, int order) const {
-    // Delegate to the interpolator (uses Lagrange or Bernstein depending on method_)
-    (void)order;  // Use member order_ via interpolator
+Real SeabedVTKWriter::evaluate_scalar(const VecX& data, Real xi, Real eta) const {
     return get_interpolator().evaluate_scalar(data, xi, eta);
 }
 
@@ -960,33 +958,32 @@ void SeabedVTKWriter::write() {
         throw std::runtime_error("SeabedVTKWriter: mesh and coordinates not set");
     }
 
-    std::string vtk_filename = filename_ + ".vtk";
-    std::ofstream vtk_file(vtk_filename);
-    if (!vtk_file) {
-        throw std::runtime_error("Failed to open file: " + vtk_filename);
+    switch (format_) {
+        case VTKFormat::Legacy:
+            write_legacy();
+            break;
+        case VTKFormat::VTU:
+        case VTKFormat::PVTU:
+        default:
+            write_vtu();
+            break;
     }
+}
 
+void SeabedVTKWriter::write_vtu() {
     const auto& elements = mesh_->elements();
     size_t num_elements = elements.size();
 
-    // Each element's bottom face is subdivided into resolution_ x resolution_ quads
     int pts_per_face = (resolution_ + 1) * (resolution_ + 1);
     int cells_per_face = resolution_ * resolution_;
 
     num_points_ = num_elements * pts_per_face;
     num_cells_ = num_elements * cells_per_face;
 
-    // Write VTK header
-    vtk_file << "# vtk DataFile Version 3.0\n";
-    vtk_file << "DRIFTER High-Resolution Seabed Surface\n";
-    vtk_file << "ASCII\n";
-    vtk_file << "DATASET UNSTRUCTURED_GRID\n";
-
-    // Collect all points by evaluating Lagrange polynomials on each bottom face
+    // Collect points and field values
     std::vector<Vec3> all_points;
     all_points.reserve(num_points_);
 
-    // Also collect scalar field values if any
     std::map<std::string, std::vector<Real>> field_values;
     for (const auto& [name, _] : scalar_fields_) {
         field_values[name].reserve(num_points_);
@@ -995,68 +992,194 @@ void SeabedVTKWriter::write() {
     for (size_t e = 0; e < num_elements; ++e) {
         const VecX& coords = element_coords_[e];
 
-        // Generate points on bottom face (zeta = -1) at high resolution
         for (int j = 0; j <= resolution_; ++j) {
             Real eta = -1.0 + 2.0 * j / resolution_;
             for (int i = 0; i <= resolution_; ++i) {
                 Real xi = -1.0 + 2.0 * i / resolution_;
 
-                Vec3 pt = evaluate_point(coords, xi, eta, order_);
-                all_points.push_back(pt);
+                all_points.push_back(evaluate_point(coords, xi, eta));
 
-                // Evaluate scalar fields
                 for (const auto& [name, elem_data] : scalar_fields_) {
-                    Real val = evaluate_scalar(elem_data[e], xi, eta, order_);
-                    field_values[name].push_back(val);
+                    field_values[name].push_back(evaluate_scalar(elem_data[e], xi, eta));
                 }
             }
         }
     }
 
-    // Write points
-    vtk_file << "POINTS " << num_points_ << " double\n";
-    for (const auto& pt : all_points) {
-        vtk_file << std::setprecision(15) << pt(0) << " " << pt(1) << " " << pt(2) << "\n";
-    }
+    // Build connectivity for quads
+    std::vector<std::vector<Index>> cells;
+    cells.reserve(num_cells_);
 
-    // Write cells (quads)
-    vtk_file << "\nCELLS " << num_cells_ << " " << num_cells_ * 5 << "\n";
     for (size_t e = 0; e < num_elements; ++e) {
         Index base = static_cast<Index>(e * pts_per_face);
         int stride = resolution_ + 1;
 
         for (int j = 0; j < resolution_; ++j) {
             for (int i = 0; i < resolution_; ++i) {
-                // Quad corners (counter-clockwise)
                 Index p0 = base + j * stride + i;
                 Index p1 = base + j * stride + (i + 1);
                 Index p2 = base + (j + 1) * stride + (i + 1);
                 Index p3 = base + (j + 1) * stride + i;
+                cells.push_back({p0, p1, p2, p3});
+            }
+        }
+    }
 
-                vtk_file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
+    // Write VTU file
+    std::string vtu_filename = filename_ + ".vtu";
+    std::ofstream file(vtu_filename);
+    if (!file) {
+        throw std::runtime_error("Failed to open file: " + vtu_filename);
+    }
+
+    file << "<?xml version=\"1.0\"?>\n";
+    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+    file << "<UnstructuredGrid>\n";
+    file << "<Piece NumberOfPoints=\"" << num_points_
+         << "\" NumberOfCells=\"" << num_cells_ << "\">\n";
+
+    // Points
+    file << "<Points>\n";
+    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    for (const auto& pt : all_points) {
+        file << std::setprecision(15) << pt(0) << " " << pt(1) << " " << pt(2) << "\n";
+    }
+    file << "</DataArray>\n";
+    file << "</Points>\n";
+
+    // Cells
+    file << "<Cells>\n";
+    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
+    for (const auto& cell : cells) {
+        for (Index idx : cell) {
+            file << idx << " ";
+        }
+        file << "\n";
+    }
+    file << "</DataArray>\n";
+
+    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+    Index offset = 0;
+    for (const auto& cell : cells) {
+        offset += cell.size();
+        file << offset << " ";
+    }
+    file << "\n</DataArray>\n";
+
+    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+    for (size_t c = 0; c < num_cells_; ++c) {
+        file << "9 ";  // VTK_QUAD
+    }
+    file << "\n</DataArray>\n";
+    file << "</Cells>\n";
+
+    // Point data
+    if (!field_values.empty()) {
+        file << "<PointData>\n";
+        for (const auto& [name, values] : field_values) {
+            file << "<DataArray type=\"Float64\" Name=\"" << name
+                 << "\" NumberOfComponents=\"1\" format=\"ascii\">\n";
+            for (Real v : values) {
+                file << std::setprecision(15) << v << "\n";
+            }
+            file << "</DataArray>\n";
+        }
+        file << "</PointData>\n";
+    }
+
+    file << "</Piece>\n";
+    file << "</UnstructuredGrid>\n";
+    file << "</VTKFile>\n";
+}
+
+void SeabedVTKWriter::write_legacy() {
+    const auto& elements = mesh_->elements();
+    size_t num_elements = elements.size();
+
+    int pts_per_face = (resolution_ + 1) * (resolution_ + 1);
+    int cells_per_face = resolution_ * resolution_;
+
+    num_points_ = num_elements * pts_per_face;
+    num_cells_ = num_elements * cells_per_face;
+
+    // Collect points and field values
+    std::vector<Vec3> all_points;
+    all_points.reserve(num_points_);
+
+    std::map<std::string, std::vector<Real>> field_values;
+    for (const auto& [name, _] : scalar_fields_) {
+        field_values[name].reserve(num_points_);
+    }
+
+    for (size_t e = 0; e < num_elements; ++e) {
+        const VecX& coords = element_coords_[e];
+
+        for (int j = 0; j <= resolution_; ++j) {
+            Real eta = -1.0 + 2.0 * j / resolution_;
+            for (int i = 0; i <= resolution_; ++i) {
+                Real xi = -1.0 + 2.0 * i / resolution_;
+
+                all_points.push_back(evaluate_point(coords, xi, eta));
+
+                for (const auto& [name, elem_data] : scalar_fields_) {
+                    field_values[name].push_back(evaluate_scalar(elem_data[e], xi, eta));
+                }
+            }
+        }
+    }
+
+    // Write legacy VTK file
+    std::string vtk_filename = filename_ + ".vtk";
+    std::ofstream file(vtk_filename);
+    if (!file) {
+        throw std::runtime_error("Failed to open file: " + vtk_filename);
+    }
+
+    file << "# vtk DataFile Version 3.0\n";
+    file << "DRIFTER High-Resolution Seabed Surface\n";
+    file << "ASCII\n";
+    file << "DATASET UNSTRUCTURED_GRID\n";
+
+    // Points
+    file << "POINTS " << num_points_ << " double\n";
+    for (const auto& pt : all_points) {
+        file << std::setprecision(15) << pt(0) << " " << pt(1) << " " << pt(2) << "\n";
+    }
+
+    // Cells (quads)
+    file << "\nCELLS " << num_cells_ << " " << num_cells_ * 5 << "\n";
+    for (size_t e = 0; e < num_elements; ++e) {
+        Index base = static_cast<Index>(e * pts_per_face);
+        int stride = resolution_ + 1;
+
+        for (int j = 0; j < resolution_; ++j) {
+            for (int i = 0; i < resolution_; ++i) {
+                Index p0 = base + j * stride + i;
+                Index p1 = base + j * stride + (i + 1);
+                Index p2 = base + (j + 1) * stride + (i + 1);
+                Index p3 = base + (j + 1) * stride + i;
+                file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
             }
         }
     }
 
     // Cell types: VTK_QUAD = 9
-    vtk_file << "\nCELL_TYPES " << num_cells_ << "\n";
+    file << "\nCELL_TYPES " << num_cells_ << "\n";
     for (size_t c = 0; c < num_cells_; ++c) {
-        vtk_file << "9\n";
+        file << "9\n";
     }
 
-    // Write point data
+    // Point data
     if (!field_values.empty()) {
-        vtk_file << "\nPOINT_DATA " << num_points_ << "\n";
+        file << "\nPOINT_DATA " << num_points_ << "\n";
         for (const auto& [name, values] : field_values) {
-            vtk_file << "SCALARS " << name << " double 1\n";
-            vtk_file << "LOOKUP_TABLE default\n";
+            file << "SCALARS " << name << " double 1\n";
+            file << "LOOKUP_TABLE default\n";
             for (Real v : values) {
-                vtk_file << std::setprecision(15) << v << "\n";
+                file << std::setprecision(15) << v << "\n";
             }
         }
     }
-
-    vtk_file.close();
 }
 
 }  // namespace drifter

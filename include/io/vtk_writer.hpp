@@ -289,8 +289,10 @@ public:
     /// @brief Construct writer with output path
     /// @param filename Output VTK filename (without extension)
     /// @param method Interpolation method (default: Bernstein for bounded output)
+    /// @param format Output format (default: VTU for modern XML format)
     SeabedVTKWriter(const std::string& filename,
-                    SeabedInterpolation method = SeabedInterpolation::Bernstein);
+                    SeabedInterpolation method = SeabedInterpolation::Bernstein,
+                    VTKFormat format = VTKFormat::VTU);
 
     /// @brief Set the mesh and element coordinates
     /// @param mesh The octree mesh adapter
@@ -332,6 +334,7 @@ private:
     int resolution_ = 10;
     int order_ = 1;
     SeabedInterpolation method_;
+    VTKFormat format_;
 
     const OctreeAdapter* mesh_ = nullptr;
     std::vector<VecX> element_coords_;
@@ -347,9 +350,15 @@ private:
     // Get or create interpolator
     const SeabedInterpolator& get_interpolator() const;
 
-    // Legacy methods (kept for backward compatibility, delegate to interpolator)
-    Vec3 evaluate_point(const VecX& coords, Real xi, Real eta, int order) const;
-    Real evaluate_scalar(const VecX& data, Real xi, Real eta, int order) const;
+    // Evaluate interpolated point/scalar on bottom face
+    Vec3 evaluate_point(const VecX& coords, Real xi, Real eta) const;
+    Real evaluate_scalar(const VecX& data, Real xi, Real eta) const;
+
+    // Write using VTU format
+    void write_vtu();
+
+    // Write using legacy format (for backward compatibility)
+    void write_legacy();
 };
 
 }  // namespace drifter

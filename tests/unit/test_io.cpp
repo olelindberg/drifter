@@ -860,23 +860,23 @@ TEST_F(IOTest, SeabedVTKWriterSingleElement) {
 
     writer.write();
 
-    // Check that file was created
-    std::string vtk_filename = filename + ".vtk";
-    EXPECT_TRUE(fs::exists(vtk_filename));
+    // Check that file was created (default is VTU format)
+    std::string vtu_filename = filename + ".vtu";
+    EXPECT_TRUE(fs::exists(vtu_filename));
 
     // Check point and cell counts
     // resolution=5 means 6x6=36 points per element, 5x5=25 quads per element
     EXPECT_EQ(writer.num_points(), 36);
     EXPECT_EQ(writer.num_cells(), 25);
 
-    // Verify file content
-    std::ifstream file(vtk_filename);
+    // Verify file content (VTU XML format)
+    std::ifstream file(vtu_filename);
     std::string content((std::istreambuf_iterator<char>(file)),
                          std::istreambuf_iterator<char>());
 
-    EXPECT_TRUE(content.find("POINTS 36") != std::string::npos);
-    EXPECT_TRUE(content.find("CELLS 25") != std::string::npos);
-    EXPECT_TRUE(content.find("CELL_TYPES 25") != std::string::npos);
+    EXPECT_TRUE(content.find("NumberOfPoints=\"36\"") != std::string::npos);
+    EXPECT_TRUE(content.find("NumberOfCells=\"25\"") != std::string::npos);
+    EXPECT_TRUE(content.find("<VTKFile") != std::string::npos);
 }
 
 TEST_F(IOTest, SeabedVTKWriterWithScalarField) {
@@ -923,16 +923,16 @@ TEST_F(IOTest, SeabedVTKWriterWithScalarField) {
 
     writer.write();
 
-    std::string vtk_filename = filename + ".vtk";
-    EXPECT_TRUE(fs::exists(vtk_filename));
+    std::string vtu_filename = filename + ".vtu";
+    EXPECT_TRUE(fs::exists(vtu_filename));
 
-    // Verify scalar field is in the file
-    std::ifstream file(vtk_filename);
+    // Verify scalar field is in the file (VTU XML format)
+    std::ifstream file(vtu_filename);
     std::string content((std::istreambuf_iterator<char>(file)),
                          std::istreambuf_iterator<char>());
 
-    EXPECT_TRUE(content.find("POINT_DATA") != std::string::npos);
-    EXPECT_TRUE(content.find("SCALARS depth") != std::string::npos);
+    EXPECT_TRUE(content.find("<PointData>") != std::string::npos);
+    EXPECT_TRUE(content.find("Name=\"depth\"") != std::string::npos);
 }
 
 TEST_F(IOTest, SeabedVTKWriterHigherOrder) {
@@ -974,8 +974,8 @@ TEST_F(IOTest, SeabedVTKWriterHigherOrder) {
 
     writer.write();
 
-    std::string vtk_filename = filename + ".vtk";
-    EXPECT_TRUE(fs::exists(vtk_filename));
+    std::string vtu_filename = filename + ".vtu";
+    EXPECT_TRUE(fs::exists(vtu_filename));
 
     // resolution=10 means 11x11=121 points, 10x10=100 quads
     EXPECT_EQ(writer.num_points(), 121);
@@ -1024,8 +1024,8 @@ TEST_F(IOTest, SeabedVTKWriterMultipleElements) {
 
     writer.write();
 
-    std::string vtk_filename = filename + ".vtk";
-    EXPECT_TRUE(fs::exists(vtk_filename));
+    std::string vtu_filename = filename + ".vtu";
+    EXPECT_TRUE(fs::exists(vtu_filename));
 
     // 4 elements, each with 5x5=25 points and 4x4=16 quads
     EXPECT_EQ(writer.num_points(), 4 * 25);
@@ -1236,8 +1236,8 @@ TEST_F(IOTest, SeabedVTKWriterBernsteinOutput) {
 
     writer.write();
 
-    std::string vtk_filename = filename + ".vtk";
-    EXPECT_TRUE(fs::exists(vtk_filename));
+    std::string vtu_filename = filename + ".vtu";
+    EXPECT_TRUE(fs::exists(vtu_filename));
     EXPECT_GT(writer.num_points(), 0);
     EXPECT_GT(writer.num_cells(), 0);
 }
