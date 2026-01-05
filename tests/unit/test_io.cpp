@@ -2,6 +2,7 @@
 #include "io/vtk_writer.hpp"
 #include "io/zarr_writer.hpp"
 #include "mesh/geotiff_reader.hpp"
+#include "mesh/octree_adapter.hpp"
 #include "../test_utils.hpp"
 #include <filesystem>
 #include <fstream>
@@ -32,41 +33,35 @@ protected:
 };
 
 // =============================================================================
-// VTK Legacy Writer Tests
+// VTK Legacy Format Tests (using VTKWriter with Legacy format)
 // =============================================================================
 
-TEST_F(IOTest, VTKLegacyWriterBasic) {
-    std::string filename = (test_dir_ / "test.vtk").string();
+TEST_F(IOTest, VTKWriterLegacyFormat) {
+    std::string basename = (test_dir_ / "test_legacy").string();
 
-    VTKLegacyWriter writer(filename);
+    // Create a simple 1x1x1 mesh
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+    mesh.build_uniform(1, 1, 1);
 
-    // Create simple cube vertices
-    std::vector<Vec3> points = {
-        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
-        Vec3(0, 0, 1), Vec3(1, 0, 1), Vec3(1, 1, 1), Vec3(0, 1, 1)
-    };
+    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    writer.set_polynomial_order(1);
+    writer.set_mesh(mesh);
 
-    writer.write_points(points);
+    // Add scalar field
+    writer.add_point_data("temperature", 1);
+    VecX temp_data(8);
+    temp_data << 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0;
+    writer.set_point_data("temperature", temp_data);
 
-    // Write hexahedron
-    std::vector<std::array<Index, 8>> cells = {{0, 1, 2, 3, 4, 5, 6, 7}};
-    writer.write_hexahedra(cells);
+    // Add cell data
+    writer.add_cell_data("cell_id", 1);
+    std::vector<Real> cell_values = {42.0};
+    writer.set_cell_data("cell_id", cell_values);
 
-    // Add scalar data
-    VecX scalar_data(8);
-    scalar_data << 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0;
-    writer.add_point_scalar("temperature", scalar_data);
-
-    // Add vector data
-    VecX u(8), v(8), w(8);
-    u.setConstant(1.0);
-    v.setConstant(0.5);
-    w.setZero();
-    writer.add_point_vector("velocity", u, v, w);
-
-    writer.close();
+    writer.write(0, 0.0);
 
     // Verify file was created
+    std::string filename = basename + "_000000.vtk";
     ASSERT_TRUE(fs::exists(filename));
 
     // Verify file content
@@ -87,59 +82,51 @@ TEST_F(IOTest, VTKLegacyWriterBasic) {
     EXPECT_EQ(line, "DATASET UNSTRUCTURED_GRID");
 }
 
-TEST_F(IOTest, VTKLegacyWriterPointCount) {
-    std::string filename = (test_dir_ / "test_points.vtk").string();
+TEST_F(IOTest, VTKWriterLegacyPointCount) {
+    std::string basename = (test_dir_ / "test_legacy_points").string();
 
-    VTKLegacyWriter writer(filename);
+    // Create a 2x2x2 mesh (8 elements, each with 8 points = 64 points for order 1)
+    OctreeAdapter mesh(0.0, 2.0, 0.0, 2.0, 0.0, 2.0);
+    mesh.build_uniform(2, 2, 2);
 
-    // Create 27 points (3x3x3 grid)
-    std::vector<Vec3> points;
-    for (int k = 0; k < 3; ++k) {
-        for (int j = 0; j < 3; ++j) {
-            for (int i = 0; i < 3; ++i) {
-                points.push_back(Vec3(i, j, k));
-            }
-        }
-    }
+    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    writer.set_polynomial_order(1);
+    writer.set_mesh(mesh);
+    writer.write(0, 0.0);
 
-    writer.write_points(points);
-    writer.close();
-
-    // Read back and verify point count
+    // Read back and verify point count (8 elements * 8 points = 64)
+    std::string filename = basename + "_000000.vtk";
     std::ifstream file(filename);
     std::string line;
     while (std::getline(file, line)) {
-        if (line.find("POINTS 27") != std::string::npos) {
+        if (line.find("POINTS 64") != std::string::npos) {
             SUCCEED();
             return;
         }
     }
-    FAIL() << "Expected POINTS 27 in VTK file";
+    FAIL() << "Expected POINTS 64 in VTK file";
 }
 
-TEST_F(IOTest, VTKLegacyWriterCellData) {
-    std::string filename = (test_dir_ / "test_cells.vtk").string();
+TEST_F(IOTest, VTKWriterLegacyCellData) {
+    std::string basename = (test_dir_ / "test_legacy_cells").string();
 
-    VTKLegacyWriter writer(filename);
+    // Create a simple 1x1x1 mesh
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+    mesh.build_uniform(1, 1, 1);
 
-    // Create 8 points for one hex
-    std::vector<Vec3> points = {
-        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
-        Vec3(0, 0, 1), Vec3(1, 0, 1), Vec3(1, 1, 1), Vec3(0, 1, 1)
-    };
-    writer.write_points(points);
-
-    std::vector<std::array<Index, 8>> cells = {{0, 1, 2, 3, 4, 5, 6, 7}};
-    writer.write_hexahedra(cells);
+    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    writer.set_polynomial_order(1);
+    writer.set_mesh(mesh);
 
     // Add cell data
-    VecX cell_scalar(1);
-    cell_scalar(0) = 42.0;
-    writer.add_cell_scalar("cell_id", cell_scalar);
+    writer.add_cell_data("cell_id", 1);
+    std::vector<Real> cell_values = {42.0};
+    writer.set_cell_data("cell_id", cell_values);
 
-    writer.close();
+    writer.write(0, 0.0);
 
     // Verify file contains CELL_DATA
+    std::string filename = basename + "_000000.vtk";
     std::ifstream file(filename);
     std::string content((std::istreambuf_iterator<char>(file)),
                          std::istreambuf_iterator<char>());

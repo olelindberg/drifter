@@ -229,30 +229,6 @@ private:
     void update_xdmf();
 };
 
-/// @brief Simple ASCII VTK output for debugging
-class VTKLegacyWriter {
-public:
-    VTKLegacyWriter(const std::string& filename);
-
-    void write_points(const std::vector<Vec3>& points);
-    void write_hexahedra(const std::vector<std::array<Index, 8>>& cells);
-
-    void add_point_scalar(const std::string& name, const VecX& data);
-    void add_point_vector(const std::string& name,
-                           const VecX& u, const VecX& v, const VecX& w);
-    void add_cell_scalar(const std::string& name, const VecX& data);
-
-    void close();
-
-private:
-    std::ofstream file_;
-    size_t num_points_ = 0;
-    size_t num_cells_ = 0;
-    bool header_written_ = false;
-    bool point_data_started_ = false;
-    bool cell_data_started_ = false;
-};
-
 /// @brief Ocean-specific VTK output with standard variables
 class OceanVTKWriter {
 public:

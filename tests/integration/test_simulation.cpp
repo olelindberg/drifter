@@ -310,30 +310,27 @@ TEST_F(SimulationTest, VTKWriterCreation) {
     EXPECT_NE(content.find("UnstructuredGrid"), std::string::npos);
 }
 
-TEST_F(SimulationTest, VTKLegacyWriter) {
-    std::string filename = test_output_dir_ + "/test_legacy.vtk";
+TEST_F(SimulationTest, VTKWriterLegacyFormat) {
+    std::string basename = test_output_dir_ + "/test_legacy";
 
-    VTKLegacyWriter writer(filename);
+    // Create a simple 1x1x1 mesh
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+    mesh.build_uniform(1, 1, 1);
 
-    // Write simple cube
-    std::vector<Vec3> points = {
-        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
-        {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}
-    };
-    writer.write_points(points);
+    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    writer.set_polynomial_order(1);
+    writer.set_mesh(mesh);
 
-    std::vector<std::array<Index, 8>> cells = {
-        {0, 1, 2, 3, 4, 5, 6, 7}
-    };
-    writer.write_hexahedra(cells);
-
+    // Add point data
+    writer.add_point_data("node_id", 1);
     VecX scalar(8);
     scalar << 0, 1, 2, 3, 4, 5, 6, 7;
-    writer.add_point_scalar("node_id", scalar);
+    writer.set_point_data("node_id", scalar);
 
-    writer.close();
+    writer.write(0, 0.0);
 
     // Check file exists and has content
+    std::string filename = basename + "_000000.vtk";
     EXPECT_TRUE(std::filesystem::exists(filename));
 
     std::ifstream file(filename);
