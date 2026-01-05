@@ -8,6 +8,7 @@
 #include "dg/basis_hexahedron.hpp"
 #include "dg/quadrature_3d.hpp"
 #include "dg/operators_3d.hpp"
+#include "dg/nonconforming_projection.hpp"
 #include "io/vtk_writer.hpp"
 #include "physics/primitive_equations.hpp"
 #include "physics/mode_splitting.hpp"
@@ -1414,33 +1415,22 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
         lgl_pts[i] = ref_nodes[i].x();
     }
 
-    // Lagrange interpolation function: evaluate coarse element's bathymetry
-    // polynomial at arbitrary reference coordinates (xi, eta)
+    // Create interpolator for non-conforming projection
+    // Use Bernstein for bounded interpolation that matches the VTK writer
+    SeabedInterpolator projection_interp(poly_order, SeabedInterpolation::Bernstein);
+
+    // Wrapper to evaluate coarse bathymetry polynomial at reference coordinates
     auto interp_coarse_bathy = [&](const std::vector<Real>& coarse_depths,
                                     Real xi, Real eta) -> Real {
-        Real result = 0.0;
-        for (int cj = 0; cj < n1d; ++cj) {
-            // Lagrange basis L_cj(eta)
-            Real L_eta = 1.0;
-            for (int j2 = 0; j2 < n1d; ++j2) {
-                if (j2 != cj) {
-                    L_eta *= (eta - lgl_pts[j2]) / (lgl_pts[cj] - lgl_pts[j2]);
-                }
-            }
-            for (int ci = 0; ci < n1d; ++ci) {
-                // Lagrange basis L_ci(xi)
-                Real L_xi = 1.0;
-                for (int i2 = 0; i2 < n1d; ++i2) {
-                    if (i2 != ci) {
-                        L_xi *= (xi - lgl_pts[i2]) / (lgl_pts[ci] - lgl_pts[i2]);
-                    }
-                }
-                // Use bottom face (k=0) for 2D bathymetry
-                int coarse_idx = ci + cj * n1d;
-                result += coarse_depths[coarse_idx] * L_xi * L_eta;
+        // Convert std::vector to VecX for 2D bottom face data (k=0 layer)
+        VecX coarse_2d(n1d * n1d);
+        for (int j = 0; j < n1d; ++j) {
+            for (int i = 0; i < n1d; ++i) {
+                int idx_2d = i + n1d * j;
+                coarse_2d(idx_2d) = coarse_depths[idx_2d];  // k=0 layer
             }
         }
-        return result;
+        return projection_interp.evaluate_scalar_2d(coarse_2d, xi, eta);
     };
 
     // Find non-conforming interfaces and project coarse bathymetry to fine cells
@@ -1644,6 +1634,9 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
         element_coords_interleaved.push_back(coords);
         element_depth_data.push_back(depths);
     });
+
+    // Note: Non-conforming projection was already applied to all_elem_depths above
+    // using the same Bernstein interpolation as the VTK writer
 
     // Write high-resolution seabed surface
     std::string seabed_path = "/tmp/danish_seabed_adaptive";

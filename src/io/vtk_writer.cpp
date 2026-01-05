@@ -1,5 +1,6 @@
 #include "io/vtk_writer.hpp"
 #include "dg/basis_hexahedron.hpp"
+#include "dg/bernstein_basis.hpp"
 #include <cstring>
 #include <iomanip>
 #include <sstream>
@@ -904,9 +905,25 @@ void XDMFWriter::update_xdmf() {
 // SeabedVTKWriter implementation
 // =============================================================================
 
-SeabedVTKWriter::SeabedVTKWriter(const std::string& filename)
+SeabedVTKWriter::SeabedVTKWriter(const std::string& filename,
+                                  SeabedInterpolation method)
     : filename_(filename)
+    , method_(method)
 {
+}
+
+void SeabedVTKWriter::set_interpolation_method(SeabedInterpolation method) {
+    method_ = method;
+    // Reset interpolator so it gets recreated with new method
+    interpolator_.reset();
+}
+
+const SeabedInterpolator& SeabedVTKWriter::get_interpolator() const {
+    if (!interpolator_ || interpolator_->order() != order_ ||
+        interpolator_->method() != method_) {
+        interpolator_ = std::make_unique<SeabedInterpolator>(order_, method_);
+    }
+    return *interpolator_;
 }
 
 void SeabedVTKWriter::set_mesh(const OctreeAdapter& mesh,
@@ -927,124 +944,15 @@ void SeabedVTKWriter::add_scalar_field(const std::string& name,
 }
 
 Vec3 SeabedVTKWriter::evaluate_point(const VecX& coords, Real xi, Real eta, int order) const {
-    // Evaluate 3D Lagrange basis on bottom face (zeta = -1)
-    // coords contains interleaved x,y,z for each DOF: [x0,y0,z0, x1,y1,z1, ...]
-    int np = order + 1;
-
-    // Compute true LGL nodes for Lagrange basis
-    VecX lgl_nodes(np), lgl_weights(np);
-    compute_gauss_lobatto_nodes(np, lgl_nodes, lgl_weights);
-
-    // Evaluate 1D Lagrange basis at xi
-    VecX phi_xi(np);
-    for (int i = 0; i < np; ++i) {
-        Real prod = 1.0;
-        for (int j = 0; j < np; ++j) {
-            if (j != i) {
-                prod *= (xi - lgl_nodes(j)) / (lgl_nodes(i) - lgl_nodes(j));
-            }
-        }
-        phi_xi(i) = prod;
-    }
-
-    // Evaluate 1D Lagrange basis at eta
-    VecX phi_eta(np);
-    for (int j = 0; j < np; ++j) {
-        Real prod = 1.0;
-        for (int k = 0; k < np; ++k) {
-            if (k != j) {
-                prod *= (eta - lgl_nodes(k)) / (lgl_nodes(j) - lgl_nodes(k));
-            }
-        }
-        phi_eta(j) = prod;
-    }
-
-    // Evaluate 1D Lagrange basis at zeta = -1 (bottom face)
-    VecX phi_zeta(np);
-    Real zeta = -1.0;
-    for (int k = 0; k < np; ++k) {
-        Real prod = 1.0;
-        for (int l = 0; l < np; ++l) {
-            if (l != k) {
-                prod *= (zeta - lgl_nodes(l)) / (lgl_nodes(k) - lgl_nodes(l));
-            }
-        }
-        phi_zeta(k) = prod;
-    }
-
-    // Interpolate coordinates using tensor product basis
-    Vec3 point(0, 0, 0);
-    for (int k = 0; k < np; ++k) {
-        for (int j = 0; j < np; ++j) {
-            for (int i = 0; i < np; ++i) {
-                int dof = i + np * (j + np * k);
-                Real weight = phi_xi(i) * phi_eta(j) * phi_zeta(k);
-
-                point(0) += weight * coords(3 * dof + 0);
-                point(1) += weight * coords(3 * dof + 1);
-                point(2) += weight * coords(3 * dof + 2);
-            }
-        }
-    }
-
-    return point;
+    // Delegate to the interpolator (uses Lagrange or Bernstein depending on method_)
+    (void)order;  // Use member order_ via interpolator
+    return get_interpolator().evaluate_point(coords, xi, eta);
 }
 
 Real SeabedVTKWriter::evaluate_scalar(const VecX& data, Real xi, Real eta, int order) const {
-    // Evaluate scalar field on bottom face (zeta = -1)
-    int np = order + 1;
-
-    // Compute true LGL nodes for Lagrange basis
-    VecX lgl_nodes(np), lgl_weights(np);
-    compute_gauss_lobatto_nodes(np, lgl_nodes, lgl_weights);
-
-    VecX phi_xi(np);
-    for (int i = 0; i < np; ++i) {
-        Real prod = 1.0;
-        for (int j = 0; j < np; ++j) {
-            if (j != i) {
-                prod *= (xi - lgl_nodes(j)) / (lgl_nodes(i) - lgl_nodes(j));
-            }
-        }
-        phi_xi(i) = prod;
-    }
-
-    VecX phi_eta(np);
-    for (int j = 0; j < np; ++j) {
-        Real prod = 1.0;
-        for (int k = 0; k < np; ++k) {
-            if (k != j) {
-                prod *= (eta - lgl_nodes(k)) / (lgl_nodes(j) - lgl_nodes(k));
-            }
-        }
-        phi_eta(j) = prod;
-    }
-
-    VecX phi_zeta(np);
-    Real zeta = -1.0;
-    for (int k = 0; k < np; ++k) {
-        Real prod = 1.0;
-        for (int l = 0; l < np; ++l) {
-            if (l != k) {
-                prod *= (zeta - lgl_nodes(l)) / (lgl_nodes(k) - lgl_nodes(l));
-            }
-        }
-        phi_zeta(k) = prod;
-    }
-
-    // Interpolate scalar
-    Real value = 0.0;
-    for (int k = 0; k < np; ++k) {
-        for (int j = 0; j < np; ++j) {
-            for (int i = 0; i < np; ++i) {
-                int dof = i + np * (j + np * k);
-                Real weight = phi_xi(i) * phi_eta(j) * phi_zeta(k);
-                value += weight * data(dof);
-            }
-        }
-    }
-
-    return value;
+    // Delegate to the interpolator (uses Lagrange or Bernstein depending on method_)
+    (void)order;  // Use member order_ via interpolator
+    return get_interpolator().evaluate_scalar(data, xi, eta);
 }
 
 void SeabedVTKWriter::write() {

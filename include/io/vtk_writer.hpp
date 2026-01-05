@@ -18,6 +18,7 @@
 
 #include "core/types.hpp"
 #include "mesh/octree_adapter.hpp"
+#include "dg/bernstein_basis.hpp"
 #include <fstream>
 #include <memory>
 #include <string>
@@ -27,6 +28,7 @@
 // Forward declaration
 namespace drifter {
 struct BathymetryData;
+class SeabedInterpolator;
 }
 
 #ifdef DRIFTER_USE_MPI
@@ -274,12 +276,21 @@ private:
 
 /// @brief High-resolution seabed surface VTK writer
 /// Extracts bottom faces from hexahedral elements and outputs them at high resolution
-/// by evaluating Lagrange polynomials at many points on each face.
+/// by evaluating polynomials at many points on each face.
+///
+/// Supports two interpolation methods:
+/// - Lagrange: Standard high-order interpolation (may overshoot/undershoot)
+/// - Bernstein: Bounded interpolation with convex hull property (guaranteed bounded)
+///
+/// For seabed visualization, Bernstein interpolation is recommended to avoid
+/// spurious oscillations that can make the seabed appear above the surface.
 class SeabedVTKWriter {
 public:
     /// @brief Construct writer with output path
     /// @param filename Output VTK filename (without extension)
-    SeabedVTKWriter(const std::string& filename);
+    /// @param method Interpolation method (default: Bernstein for bounded output)
+    SeabedVTKWriter(const std::string& filename,
+                    SeabedInterpolation method = SeabedInterpolation::Bernstein);
 
     /// @brief Set the mesh and element coordinates
     /// @param mesh The octree mesh adapter
@@ -294,6 +305,13 @@ public:
     /// @param resolution Number of subdivisions per dimension on each face (default: 10)
     ///        Each bottom face will be subdivided into resolution x resolution quads
     void set_resolution(int resolution);
+
+    /// @brief Set interpolation method
+    /// @param method Lagrange (unbounded) or Bernstein (bounded)
+    void set_interpolation_method(SeabedInterpolation method);
+
+    /// @brief Get current interpolation method
+    SeabedInterpolation interpolation_method() const { return method_; }
 
     /// @brief Add scalar field data to output
     /// @param name Field name
@@ -313,6 +331,7 @@ private:
     std::string filename_;
     int resolution_ = 10;
     int order_ = 1;
+    SeabedInterpolation method_;
 
     const OctreeAdapter* mesh_ = nullptr;
     std::vector<VecX> element_coords_;
@@ -322,7 +341,13 @@ private:
     size_t num_points_ = 0;
     size_t num_cells_ = 0;
 
-    // Evaluate solution at a point on the bottom face using Lagrange interpolation
+    // Interpolator (created lazily when write() is called)
+    mutable std::unique_ptr<SeabedInterpolator> interpolator_;
+
+    // Get or create interpolator
+    const SeabedInterpolator& get_interpolator() const;
+
+    // Legacy methods (kept for backward compatibility, delegate to interpolator)
     Vec3 evaluate_point(const VecX& coords, Real xi, Real eta, int order) const;
     Real evaluate_scalar(const VecX& data, Real xi, Real eta, int order) const;
 };

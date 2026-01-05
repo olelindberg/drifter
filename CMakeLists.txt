@@ -121,6 +121,8 @@ set(MESH_SOURCES
 set(DG_SOURCES
     src/dg/basis.cpp
     src/dg/basis_hexahedron.cpp
+    src/dg/bernstein_basis.cpp
+    src/dg/nonconforming_projection.cpp
     src/dg/quadrature.cpp
     src/dg/quadrature_3d.cpp
     src/dg/mortar.cpp
