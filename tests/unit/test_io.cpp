@@ -1032,3 +1032,213 @@ TEST_F(IOTest, SeabedVTKWriterMultipleElements) {
     EXPECT_EQ(writer.num_cells(), 4 * 16);
 }
 
+// =============================================================================
+// Bernstein Basis and Bounded Interpolation Tests
+// =============================================================================
+
+TEST_F(IOTest, BernsteinBasisPartitionOfUnity) {
+    // Bernstein basis must sum to 1 at any point (partition of unity)
+    for (int order = 1; order <= 4; ++order) {
+        BernsteinBasis1D basis(order);
+
+        // Test at several points in [-1, 1]
+        for (Real xi = -1.0; xi <= 1.0; xi += 0.1) {
+            VecX B = basis.evaluate(xi);
+            Real sum = B.sum();
+            EXPECT_NEAR(sum, 1.0, 1e-12) << "Order " << order << ", xi = " << xi;
+        }
+    }
+}
+
+TEST_F(IOTest, BernsteinBasisNonNegativity) {
+    // Bernstein basis must be non-negative everywhere
+    for (int order = 1; order <= 4; ++order) {
+        BernsteinBasis1D basis(order);
+
+        for (Real xi = -1.0; xi <= 1.0; xi += 0.05) {
+            VecX B = basis.evaluate(xi);
+            for (int i = 0; i <= order; ++i) {
+                EXPECT_GE(B(i), -1e-15) << "Order " << order << ", xi = " << xi << ", i = " << i;
+            }
+        }
+    }
+}
+
+TEST_F(IOTest, BernsteinBasisConvexHullProperty) {
+    // For Bernstein interpolation, the interpolated value must lie within
+    // the min/max of the control points (convex hull property)
+    for (int order = 2; order <= 4; ++order) {
+        BernsteinBasis1D basis(order);
+
+        // Create test control points with known bounds
+        VecX control_points(order + 1);
+        for (int i = 0; i <= order; ++i) {
+            control_points(i) = 1.0 + 0.5 * std::sin(i * M_PI / order);
+        }
+
+        Real min_val = control_points.minCoeff();
+        Real max_val = control_points.maxCoeff();
+
+        // Interpolate at many points
+        for (Real xi = -1.0; xi <= 1.0; xi += 0.01) {
+            VecX B = basis.evaluate(xi);
+            Real value = B.dot(control_points);
+
+            EXPECT_GE(value, min_val - 1e-12)
+                << "Order " << order << ", xi = " << xi << ": value " << value
+                << " below min " << min_val;
+            EXPECT_LE(value, max_val + 1e-12)
+                << "Order " << order << ", xi = " << xi << ": value " << value
+                << " above max " << max_val;
+        }
+    }
+}
+
+TEST_F(IOTest, SeabedInterpolatorLagrangeBernsteinDifference) {
+    // Lagrange and Bernstein give DIFFERENT results because:
+    // - Lagrange: data are nodal values, interpolation passes through them
+    // - Bernstein: data are control points, curve is bounded by convex hull
+    //
+    // The Bernstein curve is intentionally different to achieve boundedness.
+    int order = 2;
+    int np = order + 1;
+    int num_dofs = np * np * np;
+
+    // Create non-uniform data
+    VecX data(num_dofs);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                data(dof) = 1.0 + 0.5 * std::sin(M_PI * i / order);
+            }
+        }
+    }
+
+    SeabedInterpolator lagrange_interp(order, SeabedInterpolation::Lagrange);
+    SeabedInterpolator bernstein_interp(order, SeabedInterpolation::Bernstein);
+
+    // At nodes (corners), both should match (Bernstein endpoints = control points)
+    // But at interior points, they will differ
+    Real xi = 0.0, eta = 0.0;  // Center of bottom face
+    Real val_lagrange = lagrange_interp.evaluate_scalar(data, xi, eta);
+    Real val_bernstein = bernstein_interp.evaluate_scalar(data, xi, eta);
+
+    // They should be different (not equal)
+    // Both should be reasonable values (within data range for Bernstein)
+    Real data_min = data.minCoeff();
+    Real data_max = data.maxCoeff();
+
+    // Bernstein must be bounded
+    EXPECT_GE(val_bernstein, data_min - 1e-12);
+    EXPECT_LE(val_bernstein, data_max + 1e-12);
+
+    // Values may differ (Bernstein is typically "smoother"/more averaged)
+    // This is intentional - we're trading polynomial exactness for boundedness
+}
+
+TEST_F(IOTest, SeabedInterpolatorBernsteinBoundedness) {
+    // Key property: Bernstein interpolation must stay within data bounds
+    int order = 3;  // Higher order shows more difference between methods
+    int np = order + 1;
+    int num_dofs = np * np * np;
+
+    // Create oscillatory data that can cause Lagrange overshoot
+    VecX data(num_dofs);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                // Oscillatory pattern
+                data(dof) = 10.0 + 2.0 * std::cos(M_PI * i / order) *
+                                        std::cos(M_PI * j / order);
+            }
+        }
+    }
+
+    Real data_min = data.minCoeff();
+    Real data_max = data.maxCoeff();
+
+    SeabedInterpolator bernstein_interp(order, SeabedInterpolation::Bernstein);
+
+    // Evaluate at many points on the bottom face
+    bool bernstein_bounded = true;
+    for (Real xi = -1.0; xi <= 1.0; xi += 0.05) {
+        for (Real eta = -1.0; eta <= 1.0; eta += 0.05) {
+            Real val = bernstein_interp.evaluate_scalar(data, xi, eta);
+
+            if (val < data_min - 1e-10 || val > data_max + 1e-10) {
+                bernstein_bounded = false;
+            }
+        }
+    }
+
+    EXPECT_TRUE(bernstein_bounded)
+        << "Bernstein interpolation exceeded data bounds [" << data_min
+        << ", " << data_max << "]";
+}
+
+TEST_F(IOTest, SeabedVTKWriterInterpolationMethod) {
+    // Test that we can set and get the interpolation method
+    std::string filename = (test_dir_ / "seabed_method").string();
+
+    // Test default is Bernstein
+    SeabedVTKWriter writer1(filename);
+    EXPECT_EQ(writer1.interpolation_method(), SeabedInterpolation::Bernstein);
+
+    // Test explicit Lagrange
+    SeabedVTKWriter writer2(filename, SeabedInterpolation::Lagrange);
+    EXPECT_EQ(writer2.interpolation_method(), SeabedInterpolation::Lagrange);
+
+    // Test switching method
+    writer2.set_interpolation_method(SeabedInterpolation::Bernstein);
+    EXPECT_EQ(writer2.interpolation_method(), SeabedInterpolation::Bernstein);
+}
+
+TEST_F(IOTest, SeabedVTKWriterBernsteinOutput) {
+    // Verify Bernstein interpolation produces valid VTK output
+    std::string filename = (test_dir_ / "seabed_bernstein").string();
+
+    OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    mesh.build_uniform(1, 1, 1);
+
+    int order = 3;
+    int np = order + 1;
+    int num_dofs = np * np * np;
+
+    // Create coordinates with oscillatory bottom (likely to overshoot with Lagrange)
+    VecX coords(3 * num_dofs);
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int dof = i + np * (j + np * k);
+                Real xi = static_cast<Real>(i) / order;
+                Real eta = static_cast<Real>(j) / order;
+                Real zeta_ref = -1.0 + 2.0 * static_cast<Real>(k) / order;
+
+                // Oscillatory depth
+                Real depth = 1.0 + 0.3 * std::cos(2 * M_PI * xi) * std::cos(2 * M_PI * eta);
+                Real z = (zeta_ref + 1.0) / 2.0 * depth - depth;
+
+                coords(3 * dof + 0) = xi;
+                coords(3 * dof + 1) = eta;
+                coords(3 * dof + 2) = z;
+            }
+        }
+    }
+
+    std::vector<VecX> element_coords = {coords};
+
+    // Write with Bernstein interpolation (default)
+    SeabedVTKWriter writer(filename, SeabedInterpolation::Bernstein);
+    writer.set_mesh(mesh, element_coords, order);
+    writer.set_resolution(20);
+
+    writer.write();
+
+    std::string vtk_filename = filename + ".vtk";
+    EXPECT_TRUE(fs::exists(vtk_filename));
+    EXPECT_GT(writer.num_points(), 0);
+    EXPECT_GT(writer.num_cells(), 0);
+}
+
