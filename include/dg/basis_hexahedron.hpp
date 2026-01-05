@@ -301,6 +301,10 @@ private:
     void build_mass_matrices();
     void build_grid_interpolation();
     void build_face_interpolation();
+
+    // Helper for tensor-product evaluation (eliminates LGL/GL duplication)
+    VecX evaluate_tensor_product(const Vec3& xi, const LagrangeBasis1D& basis_1d) const;
+    MatX evaluate_gradient_tensor_product(const Vec3& xi, const LagrangeBasis1D& basis_1d) const;
 };
 
 // =============================================================================
@@ -394,13 +398,15 @@ inline VecX LagrangeBasis1D::evaluate_derivative(Real xi) const {
     return dphi;
 }
 
-inline VecX HexahedronBasis::evaluate_lgl(const Vec3& xi) const {
-    VecX phi_xi = lgl_1d_.evaluate(xi(0));
-    VecX phi_eta = lgl_1d_.evaluate(xi(1));
-    VecX phi_zeta = lgl_1d_.evaluate(xi(2));
+inline VecX HexahedronBasis::evaluate_tensor_product(const Vec3& xi,
+                                                      const LagrangeBasis1D& basis_1d) const {
+    VecX phi_xi = basis_1d.evaluate(xi(0));
+    VecX phi_eta = basis_1d.evaluate(xi(1));
+    VecX phi_zeta = basis_1d.evaluate(xi(2));
 
     int np = order_ + 1;
-    VecX phi(num_dofs_lgl_);
+    int ndof = np * np * np;
+    VecX phi(ndof);
 
     for (int k = 0; k < np; ++k) {
         for (int j = 0; j < np; ++j) {
@@ -412,78 +418,50 @@ inline VecX HexahedronBasis::evaluate_lgl(const Vec3& xi) const {
     }
 
     return phi;
+}
+
+inline VecX HexahedronBasis::evaluate_lgl(const Vec3& xi) const {
+    return evaluate_tensor_product(xi, lgl_1d_);
 }
 
 inline VecX HexahedronBasis::evaluate_gl(const Vec3& xi) const {
-    VecX phi_xi = gl_1d_.evaluate(xi(0));
-    VecX phi_eta = gl_1d_.evaluate(xi(1));
-    VecX phi_zeta = gl_1d_.evaluate(xi(2));
+    return evaluate_tensor_product(xi, gl_1d_);
+}
+
+inline MatX HexahedronBasis::evaluate_gradient_tensor_product(const Vec3& xi,
+                                                               const LagrangeBasis1D& basis_1d) const {
+    VecX phi_xi = basis_1d.evaluate(xi(0));
+    VecX phi_eta = basis_1d.evaluate(xi(1));
+    VecX phi_zeta = basis_1d.evaluate(xi(2));
+
+    VecX dphi_xi = basis_1d.evaluate_derivative(xi(0));
+    VecX dphi_eta = basis_1d.evaluate_derivative(xi(1));
+    VecX dphi_zeta = basis_1d.evaluate_derivative(xi(2));
 
     int np = order_ + 1;
-    VecX phi(num_dofs_gl_);
+    int ndof = np * np * np;
+    MatX grad(ndof, 3);
 
     for (int k = 0; k < np; ++k) {
         for (int j = 0; j < np; ++j) {
             for (int i = 0; i < np; ++i) {
                 int idx = dof_index(i, j, k, order_);
-                phi(idx) = phi_xi(i) * phi_eta(j) * phi_zeta(k);
+                grad(idx, 0) = dphi_xi(i) * phi_eta(j) * phi_zeta(k);
+                grad(idx, 1) = phi_xi(i) * dphi_eta(j) * phi_zeta(k);
+                grad(idx, 2) = phi_xi(i) * phi_eta(j) * dphi_zeta(k);
             }
         }
     }
 
-    return phi;
+    return grad;
 }
 
 inline MatX HexahedronBasis::evaluate_gradient_lgl(const Vec3& xi) const {
-    VecX phi_xi = lgl_1d_.evaluate(xi(0));
-    VecX phi_eta = lgl_1d_.evaluate(xi(1));
-    VecX phi_zeta = lgl_1d_.evaluate(xi(2));
-
-    VecX dphi_xi = lgl_1d_.evaluate_derivative(xi(0));
-    VecX dphi_eta = lgl_1d_.evaluate_derivative(xi(1));
-    VecX dphi_zeta = lgl_1d_.evaluate_derivative(xi(2));
-
-    int np = order_ + 1;
-    MatX grad(num_dofs_lgl_, 3);
-
-    for (int k = 0; k < np; ++k) {
-        for (int j = 0; j < np; ++j) {
-            for (int i = 0; i < np; ++i) {
-                int idx = dof_index(i, j, k, order_);
-                grad(idx, 0) = dphi_xi(i) * phi_eta(j) * phi_zeta(k);
-                grad(idx, 1) = phi_xi(i) * dphi_eta(j) * phi_zeta(k);
-                grad(idx, 2) = phi_xi(i) * phi_eta(j) * dphi_zeta(k);
-            }
-        }
-    }
-
-    return grad;
+    return evaluate_gradient_tensor_product(xi, lgl_1d_);
 }
 
 inline MatX HexahedronBasis::evaluate_gradient_gl(const Vec3& xi) const {
-    VecX phi_xi = gl_1d_.evaluate(xi(0));
-    VecX phi_eta = gl_1d_.evaluate(xi(1));
-    VecX phi_zeta = gl_1d_.evaluate(xi(2));
-
-    VecX dphi_xi = gl_1d_.evaluate_derivative(xi(0));
-    VecX dphi_eta = gl_1d_.evaluate_derivative(xi(1));
-    VecX dphi_zeta = gl_1d_.evaluate_derivative(xi(2));
-
-    int np = order_ + 1;
-    MatX grad(num_dofs_gl_, 3);
-
-    for (int k = 0; k < np; ++k) {
-        for (int j = 0; j < np; ++j) {
-            for (int i = 0; i < np; ++i) {
-                int idx = dof_index(i, j, k, order_);
-                grad(idx, 0) = dphi_xi(i) * phi_eta(j) * phi_zeta(k);
-                grad(idx, 1) = phi_xi(i) * dphi_eta(j) * phi_zeta(k);
-                grad(idx, 2) = phi_xi(i) * phi_eta(j) * dphi_zeta(k);
-            }
-        }
-    }
-
-    return grad;
+    return evaluate_gradient_tensor_product(xi, gl_1d_);
 }
 
 }  // namespace drifter

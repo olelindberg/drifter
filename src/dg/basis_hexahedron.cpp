@@ -316,74 +316,83 @@ void HexahedronBasis::build_3d_nodes() {
     }
 }
 
-void HexahedronBasis::build_3d_differentiation_matrices() {
-    int np = order_ + 1;
-    int ndof = num_dofs_lgl_;
+namespace {
 
-    // LGL differentiation matrices using tensor product
-    // D_xi = D ⊗ I ⊗ I
-    // D_eta = I ⊗ D ⊗ I
-    // D_zeta = I ⊗ I ⊗ D
+/// Build 3D tensor-product differentiation matrices from 1D derivative matrix
+/// D_xi = D ⊗ I ⊗ I, D_eta = I ⊗ D ⊗ I, D_zeta = I ⊗ I ⊗ D
+void build_3d_diff_matrices_from_1d(const MatX& D_1d, int order,
+                                     MatX& D_xi, MatX& D_eta, MatX& D_zeta) {
+    int np = order + 1;
+    int ndof = np * np * np;
 
-    MatX I_1d = MatX::Identity(np, np);
-    const MatX& D_lgl = lgl_1d_.D;
-    const MatX& D_gl = gl_1d_.D;
+    D_xi.resize(ndof, ndof);
+    D_eta.resize(ndof, ndof);
+    D_zeta.resize(ndof, ndof);
 
-    // Build 3D matrices by Kronecker products
-    // For efficiency, we store these explicitly rather than computing on-the-fly
-
-    D_xi_lgl_.resize(ndof, ndof);
-    D_eta_lgl_.resize(ndof, ndof);
-    D_zeta_lgl_.resize(ndof, ndof);
-
-    D_xi_gl_.resize(ndof, ndof);
-    D_eta_gl_.resize(ndof, ndof);
-    D_zeta_gl_.resize(ndof, ndof);
-
-    // Fill using tensor product structure
     for (int k = 0; k < np; ++k) {
         for (int j = 0; j < np; ++j) {
             for (int i = 0; i < np; ++i) {
-                int row = dof_index(i, j, k, order_);
+                int row = HexahedronBasis::dof_index(i, j, k, order);
 
                 for (int kp = 0; kp < np; ++kp) {
                     for (int jp = 0; jp < np; ++jp) {
                         for (int ip = 0; ip < np; ++ip) {
-                            int col = dof_index(ip, jp, kp, order_);
+                            int col = HexahedronBasis::dof_index(ip, jp, kp, order);
 
                             // D_xi: differentiate in i, identity in j and k
-                            D_xi_lgl_(row, col) = D_lgl(i, ip) *
+                            D_xi(row, col) = D_1d(i, ip) *
                                 (j == jp ? 1.0 : 0.0) *
                                 (k == kp ? 1.0 : 0.0);
 
                             // D_eta: differentiate in j, identity in i and k
-                            D_eta_lgl_(row, col) = (i == ip ? 1.0 : 0.0) *
-                                D_lgl(j, jp) *
+                            D_eta(row, col) = (i == ip ? 1.0 : 0.0) *
+                                D_1d(j, jp) *
                                 (k == kp ? 1.0 : 0.0);
 
                             // D_zeta: differentiate in k, identity in i and j
-                            D_zeta_lgl_(row, col) = (i == ip ? 1.0 : 0.0) *
+                            D_zeta(row, col) = (i == ip ? 1.0 : 0.0) *
                                 (j == jp ? 1.0 : 0.0) *
-                                D_lgl(k, kp);
-
-                            // Same for GL grid
-                            D_xi_gl_(row, col) = D_gl(i, ip) *
-                                (j == jp ? 1.0 : 0.0) *
-                                (k == kp ? 1.0 : 0.0);
-
-                            D_eta_gl_(row, col) = (i == ip ? 1.0 : 0.0) *
-                                D_gl(j, jp) *
-                                (k == kp ? 1.0 : 0.0);
-
-                            D_zeta_gl_(row, col) = (i == ip ? 1.0 : 0.0) *
-                                (j == jp ? 1.0 : 0.0) *
-                                D_gl(k, kp);
+                                D_1d(k, kp);
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// Build 3D tensor-product interpolation matrix from 1D interpolation matrix
+/// I_3d = I_1d ⊗ I_1d ⊗ I_1d
+void build_3d_interp_matrix_from_1d(const MatX& I_1d, int order, MatX& I_3d) {
+    int np = order + 1;
+    int ndof = np * np * np;
+
+    I_3d = MatX::Zero(ndof, ndof);
+
+    for (int k = 0; k < np; ++k) {
+        for (int j = 0; j < np; ++j) {
+            for (int i = 0; i < np; ++i) {
+                int row = HexahedronBasis::dof_index(i, j, k, order);
+
+                for (int kp = 0; kp < np; ++kp) {
+                    for (int jp = 0; jp < np; ++jp) {
+                        for (int ip = 0; ip < np; ++ip) {
+                            int col = HexahedronBasis::dof_index(ip, jp, kp, order);
+
+                            I_3d(row, col) = I_1d(i, ip) * I_1d(j, jp) * I_1d(k, kp);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+}  // anonymous namespace
+
+void HexahedronBasis::build_3d_differentiation_matrices() {
+    build_3d_diff_matrices_from_1d(lgl_1d_.D, order_, D_xi_lgl_, D_eta_lgl_, D_zeta_lgl_);
+    build_3d_diff_matrices_from_1d(gl_1d_.D, order_, D_xi_gl_, D_eta_gl_, D_zeta_gl_);
 }
 
 void HexahedronBasis::build_mass_matrices() {
@@ -417,40 +426,11 @@ void HexahedronBasis::build_mass_matrices() {
 
 void HexahedronBasis::build_grid_interpolation() {
     // Build 3D interpolation matrices between LGL and GL grids
-    // Using tensor product: I_3d = I_1d ⊗ I_1d ⊗ I_1d
-
     MatX I_lgl_to_gl_1d = compute_interpolation_matrix_1d(lgl_1d_.nodes, gl_1d_.nodes);
     MatX I_gl_to_lgl_1d = compute_interpolation_matrix_1d(gl_1d_.nodes, lgl_1d_.nodes);
 
-    int np = order_ + 1;
-    int ndof = num_dofs_lgl_;
-
-    lgl_to_gl_ = MatX::Zero(ndof, ndof);
-    gl_to_lgl_ = MatX::Zero(ndof, ndof);
-
-    for (int k = 0; k < np; ++k) {
-        for (int j = 0; j < np; ++j) {
-            for (int i = 0; i < np; ++i) {
-                int row = dof_index(i, j, k, order_);
-
-                for (int kp = 0; kp < np; ++kp) {
-                    for (int jp = 0; jp < np; ++jp) {
-                        for (int ip = 0; ip < np; ++ip) {
-                            int col = dof_index(ip, jp, kp, order_);
-
-                            lgl_to_gl_(row, col) = I_lgl_to_gl_1d(i, ip) *
-                                                   I_lgl_to_gl_1d(j, jp) *
-                                                   I_lgl_to_gl_1d(k, kp);
-
-                            gl_to_lgl_(row, col) = I_gl_to_lgl_1d(i, ip) *
-                                                   I_gl_to_lgl_1d(j, jp) *
-                                                   I_gl_to_lgl_1d(k, kp);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    build_3d_interp_matrix_from_1d(I_lgl_to_gl_1d, order_, lgl_to_gl_);
+    build_3d_interp_matrix_from_1d(I_gl_to_lgl_1d, order_, gl_to_lgl_);
 }
 
 void HexahedronBasis::build_face_interpolation() {
