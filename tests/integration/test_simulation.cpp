@@ -1304,14 +1304,59 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
     const int max_level_y = 6;
     const int max_level_z = 0;  // No vertical refinement for 2D view
 
+    // Bathymetry gradient threshold for refinement
+    // Refine where |grad(h)| > threshold (dimensionless slope)
+    const Real bathymetry_gradient_threshold = 0.005;  // 0.5% slope
+
     // Create coastline refinement criterion
     CoastlineRefinement coastline_criterion(coastline_index, max_level_x);
 
-    // Build adaptive mesh: refine where element intersects coastline
+    // Lambda to compute bathymetry gradient magnitude in an element
+    auto compute_bathymetry_gradient = [&bathy_ptr](const ElementBounds& bounds) -> Real {
+        // Sample depths at corners and center
+        Real h00 = bathy_ptr->get_depth(bounds.xmin, bounds.ymin);
+        Real h10 = bathy_ptr->get_depth(bounds.xmax, bounds.ymin);
+        Real h01 = bathy_ptr->get_depth(bounds.xmin, bounds.ymax);
+        Real h11 = bathy_ptr->get_depth(bounds.xmax, bounds.ymax);
+
+        // Skip if any corner is land (depth = 0)
+        if (h00 <= 0 || h10 <= 0 || h01 <= 0 || h11 <= 0) {
+            return 0.0;
+        }
+
+        // Compute gradient using finite differences
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        // dh/dx at bottom and top edges
+        Real dhdx_bottom = (h10 - h00) / dx;
+        Real dhdx_top = (h11 - h01) / dx;
+        Real dhdx = 0.5 * (dhdx_bottom + dhdx_top);
+
+        // dh/dy at left and right edges
+        Real dhdy_left = (h01 - h00) / dy;
+        Real dhdy_right = (h11 - h10) / dy;
+        Real dhdy = 0.5 * (dhdy_left + dhdy_right);
+
+        // Gradient magnitude (dimensionless slope)
+        return std::sqrt(dhdx * dhdx + dhdy * dhdy);
+    };
+
+    // Build adaptive mesh: refine where element intersects coastline OR has steep bathymetry
     octree.build_adaptive(
-        [&coastline_criterion](const ElementBounds& bounds) -> bool {
-            // Use R-tree based intersection test
-            return coastline_criterion.should_refine(bounds, 0);
+        [&coastline_criterion, &compute_bathymetry_gradient, bathymetry_gradient_threshold](const ElementBounds& bounds) -> bool {
+            // Criterion 1: Coastline intersection (R-tree based)
+            if (coastline_criterion.should_refine(bounds, 0)) {
+                return true;
+            }
+
+            // Criterion 2: Steep bathymetry gradient
+            Real grad_mag = compute_bathymetry_gradient(bounds);
+            if (grad_mag > bathymetry_gradient_threshold) {
+                return true;
+            }
+
+            return false;
         },
         max_level_x, max_level_y, max_level_z);
 
@@ -1340,7 +1385,129 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
     // Get VTK point ordering
     auto vtk_point_order = create_vtk_point_ordering(poly_order);
 
-    // Collect all points with bathymetry-following coordinates
+    // First pass: collect bathymetry depths for all elements in tensor-product order
+    // Store elem_depths[elem_idx][node_idx]
+    std::vector<std::vector<Real>> all_elem_depths(octree.num_elements());
+
+    octree.for_each_element([&](Index e, const OctreeNode& node) {
+        const auto& bounds = node.bounds;
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        all_elem_depths[e].resize(nodes_per_elem);
+
+        for (size_t i = 0; i < ref_nodes.size(); ++i) {
+            const auto& ref_node = ref_nodes[i];
+            Real x = bounds.xmin + 0.5 * (ref_node.x() + 1.0) * dx;
+            Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
+            all_elem_depths[e][i] = bathy_ptr->get_depth(x, y);
+        }
+    });
+
+    // Second pass: project coarse cell bathymetry onto fine cell face nodes
+    // at non-conforming interfaces to ensure mesh continuity
+    const int n1d = poly_order + 1;
+
+    // Extract 1D LGL points from 3D reference nodes
+    std::vector<Real> lgl_pts(n1d);
+    for (int i = 0; i < n1d; ++i) {
+        lgl_pts[i] = ref_nodes[i].x();
+    }
+
+    // Lagrange interpolation function: evaluate coarse element's bathymetry
+    // polynomial at arbitrary reference coordinates (xi, eta)
+    auto interp_coarse_bathy = [&](const std::vector<Real>& coarse_depths,
+                                    Real xi, Real eta) -> Real {
+        Real result = 0.0;
+        for (int cj = 0; cj < n1d; ++cj) {
+            // Lagrange basis L_cj(eta)
+            Real L_eta = 1.0;
+            for (int j2 = 0; j2 < n1d; ++j2) {
+                if (j2 != cj) {
+                    L_eta *= (eta - lgl_pts[j2]) / (lgl_pts[cj] - lgl_pts[j2]);
+                }
+            }
+            for (int ci = 0; ci < n1d; ++ci) {
+                // Lagrange basis L_ci(xi)
+                Real L_xi = 1.0;
+                for (int i2 = 0; i2 < n1d; ++i2) {
+                    if (i2 != ci) {
+                        L_xi *= (xi - lgl_pts[i2]) / (lgl_pts[ci] - lgl_pts[i2]);
+                    }
+                }
+                // Use bottom face (k=0) for 2D bathymetry
+                int coarse_idx = ci + cj * n1d;
+                result += coarse_depths[coarse_idx] * L_xi * L_eta;
+            }
+        }
+        return result;
+    };
+
+    // Find non-conforming interfaces and project coarse bathymetry to fine cells
+    int num_projections = 0;
+    for (Index e = 0; e < octree.num_elements(); ++e) {
+        const OctreeNode& node = *octree.elements()[e];
+        const auto& bounds = node.bounds;
+
+        // Check each horizontal face for coarser neighbors
+        for (int face_id = 0; face_id < 4; ++face_id) {
+            NeighborInfo info = octree.get_neighbor(e, face_id);
+            if (info.is_boundary() || info.neighbor_elements.empty()) continue;
+
+            // Get the neighbor - for non-conforming, this returns the coarser element
+            Index neigh_e = info.neighbor_elements[0];
+            const OctreeNode& neigh_node = *octree.elements()[neigh_e];
+
+            // Check if neighbor is coarser (larger element size)
+            Real my_size = (bounds.xmax - bounds.xmin) * (bounds.ymax - bounds.ymin);
+            Real neigh_size = (neigh_node.bounds.xmax - neigh_node.bounds.xmin) *
+                              (neigh_node.bounds.ymax - neigh_node.bounds.ymin);
+
+            if (neigh_size > my_size * 1.5) {  // Neighbor is coarser
+                const auto& coarse_bounds = neigh_node.bounds;
+                num_projections++;
+
+                // Project coarse bathymetry onto this element's face nodes
+                for (int k = 0; k < n1d; ++k) {
+                    for (int j = 0; j < n1d; ++j) {
+                        for (int i = 0; i < n1d; ++i) {
+                            // Check if node is on the interface face
+                            bool on_face = false;
+                            if (face_id == 0 && i == 0) on_face = true;       // -x face
+                            if (face_id == 1 && i == n1d-1) on_face = true;   // +x face
+                            if (face_id == 2 && j == 0) on_face = true;       // -y face
+                            if (face_id == 3 && j == n1d-1) on_face = true;   // +y face
+
+                            if (!on_face) continue;
+
+                            int fine_idx = i + j * n1d + k * n1d * n1d;
+
+                            // Physical position of this fine node
+                            Real x = bounds.xmin + 0.5 * (lgl_pts[i] + 1.0) * (bounds.xmax - bounds.xmin);
+                            Real y = bounds.ymin + 0.5 * (lgl_pts[j] + 1.0) * (bounds.ymax - bounds.ymin);
+
+                            // Map to coarse element's reference coordinates [-1, 1]
+                            Real xi_c = 2.0 * (x - coarse_bounds.xmin) / (coarse_bounds.xmax - coarse_bounds.xmin) - 1.0;
+                            Real eta_c = 2.0 * (y - coarse_bounds.ymin) / (coarse_bounds.ymax - coarse_bounds.ymin) - 1.0;
+
+                            // Clamp to valid range
+                            xi_c = std::clamp(xi_c, -1.0, 1.0);
+                            eta_c = std::clamp(eta_c, -1.0, 1.0);
+
+                            // Evaluate coarse bathymetry polynomial at this point
+                            Real proj_depth = interp_coarse_bathy(all_elem_depths[neigh_e], xi_c, eta_c);
+
+                            // Update fine element's bathymetry at this face node
+                            all_elem_depths[e][fine_idx] = proj_depth;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::cout << "Projected coarse bathymetry at " << num_projections << " non-conforming faces\n";
+
+    // Final pass: build VTK points with projected bathymetry
     std::vector<Vec3> all_points;
     std::vector<Real> point_depths;
     std::vector<Real> point_levels;  // Store refinement level for visualization
@@ -1354,7 +1521,6 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
 
         // Collect points in tensor-product order first
         std::vector<Vec3> elem_points(nodes_per_elem);
-        std::vector<Real> elem_depths(nodes_per_elem);
 
         for (size_t i = 0; i < ref_nodes.size(); ++i) {
             const auto& ref_node = ref_nodes[i];
@@ -1362,18 +1528,18 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
             Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
             Real sigma = bounds.zmin + 0.5 * (ref_node.z() + 1.0) * dz_sigma;
 
-            Real local_depth = bathy_ptr->get_depth(x, y);
+            // Use the (potentially projected) depth
+            Real local_depth = all_elem_depths[e][i];
             Real z = sigma * local_depth;
 
             elem_points[i] = Vec3(x, y, z);
-            elem_depths[i] = local_depth;
         }
 
         // Reorder to VTK point order
         for (int vtk_id = 0; vtk_id < nodes_per_elem; ++vtk_id) {
             int tensor_idx = vtk_point_order[vtk_id];
             all_points.push_back(elem_points[tensor_idx]);
-            point_depths.push_back(elem_depths[tensor_idx]);
+            point_depths.push_back(all_elem_depths[e][tensor_idx]);
             point_levels.push_back(static_cast<Real>(node.level.level_x));
         }
     });
