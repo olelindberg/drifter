@@ -26,7 +26,12 @@ set(UNIT_TESTS
 set(INTEGRATION_TESTS
     integration/test_dg_operators.cpp
     integration/test_conservation.cpp
-    integration/test_simulation.cpp
+    integration/test_time_stepping.cpp
+    integration/test_mesh.cpp
+    integration/test_initial_conditions.cpp
+    integration/test_vtk_output.cpp
+    integration/test_simulation_full.cpp
+    integration/test_bathymetry.cpp
 )
 
 # Create unit test executable
