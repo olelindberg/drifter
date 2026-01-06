@@ -20,6 +20,7 @@ set(UNIT_TESTS
     unit/test_time_stepper.cpp
     unit/test_io.cpp
     unit/test_amr.cpp
+    unit/test_seabed_surface.cpp
 )
 
 # Integration tests

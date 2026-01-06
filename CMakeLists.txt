@@ -116,6 +116,7 @@ set(MESH_SOURCES
     src/mesh/vertical_tfi.cpp
     src/mesh/geotiff_reader.cpp
     src/mesh/coastline_refinement.cpp
+    src/mesh/seabed_surface.cpp
 )
 
 set(DG_SOURCES

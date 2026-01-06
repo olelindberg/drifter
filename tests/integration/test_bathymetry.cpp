@@ -4,8 +4,10 @@
 #include "mesh/octree_adapter.hpp"
 #include "mesh/geotiff_reader.hpp"
 #include "mesh/coastline_refinement.hpp"
+#include "mesh/seabed_surface.hpp"
 #include "dg/basis_hexahedron.hpp"
 #include "dg/bernstein_basis.hpp"
+#include "dg/nonconforming_projection.hpp"
 #include "io/vtk_writer.hpp"
 #include "test_integration_fixtures.hpp"
 #include <filesystem>
@@ -504,6 +506,38 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
     const auto& ref_nodes = basis.lgl_nodes();
     const int nodes_per_elem = static_cast<int>(ref_nodes.size());
 
+    // =========================================================================
+    // Use SeabedSurface class for bathymetry handling
+    // =========================================================================
+    // SeabedSurface handles:
+    // - Sampling bathymetry at LGL nodes
+    // - Converting to Bernstein coefficients
+    // - Applying non-conforming projection for interface continuity
+    SeabedSurface seabed(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed.set_from_bathymetry(*bathy_ptr);
+
+    std::cout << "SeabedSurface: " << seabed.num_elements() << " bottom-layer elements\n";
+
+    // Build depth array for all mesh elements (not just bottom layer)
+    // For VTK output, we need depths at all 3D element DOFs
+    std::vector<VecX> all_elem_depths(octree.num_elements());
+
+    octree.for_each_element([&](Index e, const OctreeNode& node) {
+        const auto& bounds = node.bounds;
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        all_elem_depths[e].resize(nodes_per_elem);
+
+        for (int i = 0; i < nodes_per_elem; ++i) {
+            const auto& ref_node = ref_nodes[i];
+            Real x = bounds.xmin + 0.5 * (ref_node.x() + 1.0) * dx;
+            Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
+            // Use SeabedSurface for depth evaluation (includes projection)
+            all_elem_depths[e](i) = seabed.depth(x, y);
+        }
+    });
+
     // Write VTK output for visualization
     std::string vtk_path = "/tmp/danish_bathymetry_adaptive.vtk";
     std::ofstream vtk_file(vtk_path);
@@ -516,117 +550,6 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
 
     // Get VTK point ordering
     auto vtk_point_order = create_vtk_point_ordering(poly_order);
-
-    // First pass: collect bathymetry depths for all elements in tensor-product order
-    // Store elem_depths[elem_idx][node_idx]
-    std::vector<std::vector<Real>> all_elem_depths(octree.num_elements());
-
-    octree.for_each_element([&](Index e, const OctreeNode& node) {
-        const auto& bounds = node.bounds;
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-
-        all_elem_depths[e].resize(nodes_per_elem);
-
-        for (size_t i = 0; i < ref_nodes.size(); ++i) {
-            const auto& ref_node = ref_nodes[i];
-            Real x = bounds.xmin + 0.5 * (ref_node.x() + 1.0) * dx;
-            Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
-            all_elem_depths[e][i] = bathy_ptr->get_depth(x, y);
-        }
-    });
-
-    // Second pass: project coarse cell bathymetry onto fine cell face nodes
-    // at non-conforming interfaces to ensure mesh continuity
-    const int n1d = poly_order + 1;
-
-    // Extract 1D LGL points from 3D reference nodes
-    std::vector<Real> lgl_pts(n1d);
-    for (int i = 0; i < n1d; ++i) {
-        lgl_pts[i] = ref_nodes[i].x();
-    }
-
-    // Create interpolator for non-conforming projection
-    // Use Bernstein for bounded interpolation that matches the VTK writer
-    SeabedInterpolator projection_interp(poly_order, SeabedInterpolation::Bernstein);
-
-    // Wrapper to evaluate coarse bathymetry polynomial at reference coordinates
-    auto interp_coarse_bathy = [&](const std::vector<Real>& coarse_depths,
-                                    Real xi, Real eta) -> Real {
-        // Convert std::vector to VecX for 2D bottom face data (k=0 layer)
-        VecX coarse_2d(n1d * n1d);
-        for (int j = 0; j < n1d; ++j) {
-            for (int i = 0; i < n1d; ++i) {
-                int idx_2d = i + n1d * j;
-                coarse_2d(idx_2d) = coarse_depths[idx_2d];  // k=0 layer
-            }
-        }
-        return projection_interp.evaluate_scalar_2d(coarse_2d, xi, eta);
-    };
-
-    // Find non-conforming interfaces and project coarse bathymetry to fine cells
-    int num_projections = 0;
-    for (Index e = 0; e < octree.num_elements(); ++e) {
-        const OctreeNode& node = *octree.elements()[e];
-        const auto& bounds = node.bounds;
-
-        // Check each horizontal face for coarser neighbors
-        for (int face_id = 0; face_id < 4; ++face_id) {
-            NeighborInfo info = octree.get_neighbor(e, face_id);
-            if (info.is_boundary() || info.neighbor_elements.empty()) continue;
-
-            // Get the neighbor - for non-conforming, this returns the coarser element
-            Index neigh_e = info.neighbor_elements[0];
-            const OctreeNode& neigh_node = *octree.elements()[neigh_e];
-
-            // Check if neighbor is coarser (larger element size)
-            Real my_size = (bounds.xmax - bounds.xmin) * (bounds.ymax - bounds.ymin);
-            Real neigh_size = (neigh_node.bounds.xmax - neigh_node.bounds.xmin) *
-                              (neigh_node.bounds.ymax - neigh_node.bounds.ymin);
-
-            if (neigh_size > my_size * 1.5) {  // Neighbor is coarser
-                const auto& coarse_bounds = neigh_node.bounds;
-                num_projections++;
-
-                // Project coarse bathymetry onto this element's face nodes
-                for (int k = 0; k < n1d; ++k) {
-                    for (int j = 0; j < n1d; ++j) {
-                        for (int i = 0; i < n1d; ++i) {
-                            // Check if node is on the interface face
-                            bool on_face = false;
-                            if (face_id == 0 && i == 0) on_face = true;       // -x face
-                            if (face_id == 1 && i == n1d-1) on_face = true;   // +x face
-                            if (face_id == 2 && j == 0) on_face = true;       // -y face
-                            if (face_id == 3 && j == n1d-1) on_face = true;   // +y face
-
-                            if (!on_face) continue;
-
-                            int fine_idx = i + j * n1d + k * n1d * n1d;
-
-                            // Physical position of this fine node
-                            Real x = bounds.xmin + 0.5 * (lgl_pts[i] + 1.0) * (bounds.xmax - bounds.xmin);
-                            Real y = bounds.ymin + 0.5 * (lgl_pts[j] + 1.0) * (bounds.ymax - bounds.ymin);
-
-                            // Map to coarse element's reference coordinates [-1, 1]
-                            Real xi_c = 2.0 * (x - coarse_bounds.xmin) / (coarse_bounds.xmax - coarse_bounds.xmin) - 1.0;
-                            Real eta_c = 2.0 * (y - coarse_bounds.ymin) / (coarse_bounds.ymax - coarse_bounds.ymin) - 1.0;
-
-                            // Clamp to valid range
-                            xi_c = std::clamp(xi_c, -1.0, 1.0);
-                            eta_c = std::clamp(eta_c, -1.0, 1.0);
-
-                            // Evaluate coarse bathymetry polynomial at this point
-                            Real proj_depth = interp_coarse_bathy(all_elem_depths[neigh_e], xi_c, eta_c);
-
-                            // Update fine element's bathymetry at this face node
-                            all_elem_depths[e][fine_idx] = proj_depth;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    std::cout << "Projected coarse bathymetry at " << num_projections << " non-conforming faces\n";
 
     // Final pass: build VTK points with projected bathymetry
     std::vector<Vec3> all_points;
@@ -650,7 +573,7 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
             Real sigma = bounds.zmin + 0.5 * (ref_node.z() + 1.0) * dz_sigma;
 
             // Use the (potentially projected) depth
-            Real local_depth = all_elem_depths[e][i];
+            Real local_depth = all_elem_depths[e](i);
             Real z = sigma * local_depth;
 
             elem_points[i] = Vec3(x, y, z);
@@ -660,7 +583,7 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
         for (int vtk_id = 0; vtk_id < nodes_per_elem; ++vtk_id) {
             int tensor_idx = vtk_point_order[vtk_id];
             all_points.push_back(elem_points[tensor_idx]);
-            point_depths.push_back(all_elem_depths[e][tensor_idx]);
+            point_depths.push_back(all_elem_depths[e](tensor_idx));
             point_levels.push_back(static_cast<Real>(node.level.level_x));
         }
     });
@@ -725,66 +648,19 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
     std::cout << "Elements refined near coastline with max level " << max_level_x << "\n";
 
     // =========================================================================
-    // Generate high-resolution seabed surface using SeabedVTKWriter
+    // Generate high-resolution seabed surface using SeabedSurface::write_vtk()
     // =========================================================================
+    // SeabedSurface already has coordinates and depth coefficients stored,
+    // so we can use its built-in VTK output method.
 
-    // Build element coordinates in the format expected by SeabedVTKWriter
-    // (interleaved x,y,z for each DOF)
-    std::vector<VecX> element_coords_interleaved;
-    std::vector<VecX> element_depth_data;
-
-    element_coords_interleaved.reserve(octree.num_elements());
-    element_depth_data.reserve(octree.num_elements());
-
-    octree.for_each_element([&](Index e, const OctreeNode& node) {
-        const auto& bounds = node.bounds;
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-        Real dz_sigma = bounds.zmax - bounds.zmin;
-
-        VecX coords(3 * nodes_per_elem);
-        VecX depths(nodes_per_elem);
-
-        for (int i = 0; i < nodes_per_elem; ++i) {
-            const auto& ref_node = ref_nodes[i];
-
-            Real x = bounds.xmin + 0.5 * (ref_node.x() + 1.0) * dx;
-            Real y = bounds.ymin + 0.5 * (ref_node.y() + 1.0) * dy;
-            Real sigma = bounds.zmin + 0.5 * (ref_node.z() + 1.0) * dz_sigma;
-
-            // Use the projected depth from earlier pass
-            Real local_depth = all_elem_depths[e][i];
-            Real z = sigma * local_depth;
-
-            coords(3 * i + 0) = x;
-            coords(3 * i + 1) = y;
-            coords(3 * i + 2) = z;
-            depths(i) = local_depth;
-        }
-
-        element_coords_interleaved.push_back(coords);
-        element_depth_data.push_back(depths);
-    });
-
-    // Note: Non-conforming projection was already applied to all_elem_depths above
-    // using the same Bernstein interpolation as the VTK writer
-
-    // Write high-resolution seabed surface
     std::string seabed_path = "/tmp/danish_seabed_adaptive";
-
-    SeabedVTKWriter seabed_writer(seabed_path);
-    seabed_writer.set_mesh(octree, element_coords_interleaved, poly_order);
-    seabed_writer.set_resolution(10);  // 10x10 quads per element face
-    seabed_writer.add_scalar_field("depth", element_depth_data);
-
-    seabed_writer.write();
+    seabed.write_vtk(seabed_path, 10);  // 10x10 quads per element face
 
     std::string seabed_vtk_path = seabed_path + ".vtu";
     EXPECT_TRUE(std::filesystem::exists(seabed_vtk_path));
 
     std::cout << "\nHigh-resolution seabed surface: " << seabed_vtk_path << "\n";
-    std::cout << "  Points: " << seabed_writer.num_points() << "\n";
-    std::cout << "  Cells (quads): " << seabed_writer.num_cells() << "\n";
+    std::cout << "  (Generated using SeabedSurface::write_vtk())\n";
     std::cout << "  Resolution: 10x10 subdivisions per element bottom face\n";
 }
 
