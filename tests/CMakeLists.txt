@@ -21,6 +21,9 @@ set(UNIT_TESTS
     unit/test_io.cpp
     unit/test_amr.cpp
     unit/test_seabed_surface.cpp
+    unit/test_wavelet_pyramid.cpp
+    unit/test_weno_sampler.cpp
+    unit/test_adaptive_bathymetry.cpp
 )
 
 # Integration tests

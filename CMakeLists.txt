@@ -119,6 +119,12 @@ set(MESH_SOURCES
     src/mesh/seabed_surface.cpp
 )
 
+set(BATHYMETRY_SOURCES
+    src/bathymetry/wavelet_pyramid.cpp
+    src/bathymetry/weno_sampler.cpp
+    src/bathymetry/adaptive_bathymetry.cpp
+)
+
 set(DG_SOURCES
     src/dg/basis.cpp
     src/dg/basis_hexahedron.cpp
@@ -185,6 +191,7 @@ set(PARALLEL_SOURCES
 add_library(drifter_lib STATIC
     ${CORE_SOURCES}
     ${MESH_SOURCES}
+    ${BATHYMETRY_SOURCES}
     ${DG_SOURCES}
     ${AMR_SOURCES}
     ${PHYSICS_SOURCES}

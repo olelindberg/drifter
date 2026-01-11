@@ -8,6 +8,7 @@
 #include "dg/basis_hexahedron.hpp"
 #include "dg/bernstein_basis.hpp"
 #include "dg/nonconforming_projection.hpp"
+#include "bathymetry/adaptive_bathymetry.hpp"
 #include "io/vtk_writer.hpp"
 #include "test_integration_fixtures.hpp"
 #include <filesystem>
@@ -778,4 +779,178 @@ TEST_F(SimulationTest, HighResolutionSeabedVTK) {
     std::cout << "  Cells (quads): " << seabed_writer.num_cells() << "\n";
     std::cout << "  Resolution: 20x20 subdivisions per element bottom face\n";
     std::cout << "Open in ParaView to visualize the smooth seabed surface\n";
+}
+
+// Compare direct sampling vs adaptive bathymetry (WENO5 + L2 projection)
+// Uses the same coastline-adaptive mesh as CoastlineAdaptiveOctreeMesh test
+TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
+    if (!GeoTiffReader::is_available()) {
+        GTEST_SKIP() << "GDAL not available, skipping GeoTIFF test";
+    }
+
+    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+    if (!std::filesystem::exists(geotiff_path)) {
+        GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
+    }
+
+    if (!std::filesystem::exists(LAND_POLYGON_GPKG_PATH)) {
+        GTEST_SKIP() << "Land polygon file not found: " << LAND_POLYGON_GPKG_PATH;
+    }
+
+    // Load bathymetry
+    GeoTiffReader reader;
+    BathymetryData bathy = reader.load(geotiff_path);
+    ASSERT_TRUE(bathy.is_valid());
+    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
+
+    std::cout << "\n=== Comparing Bathymetry Methods ===" << std::endl;
+    std::cout << "Bathymetry size: " << bathy_ptr->sizex << " x " << bathy_ptr->sizey << std::endl;
+
+    // Load coastline for adaptive refinement
+    CoastlineReader coastline_reader;
+    bool loaded = coastline_reader.load(LAND_POLYGON_GPKG_PATH,
+                                         LAND_POLYGON_LAYER,
+                                         LAND_POLYGON_PROJECTION);
+    ASSERT_TRUE(loaded);
+    coastline_reader.swap_xy();
+    coastline_reader.remove_small_polygons(1.0e6);
+
+    auto coastline_index = std::make_shared<CoastlineIndex>();
+    coastline_index->build(coastline_reader.polygons());
+
+    // Build adaptive octree (same as CoastlineAdaptiveOctreeMesh test)
+    OctreeAdapter octree(bathy_ptr->xmin, bathy_ptr->xmax,
+                         bathy_ptr->ymin, bathy_ptr->ymax,
+                         -1.0, 0.0);
+
+    const int max_level_x = 6;
+    const int max_level_y = 6;
+    const int max_level_z = 0;
+    const Real bathymetry_gradient_threshold = 0.005;
+
+    CoastlineRefinement coastline_criterion(coastline_index, max_level_x);
+
+    auto compute_bathymetry_gradient = [&bathy_ptr](const ElementBounds& bounds) -> Real {
+        Real h00 = bathy_ptr->get_depth(bounds.xmin, bounds.ymin);
+        Real h10 = bathy_ptr->get_depth(bounds.xmax, bounds.ymin);
+        Real h01 = bathy_ptr->get_depth(bounds.xmin, bounds.ymax);
+        Real h11 = bathy_ptr->get_depth(bounds.xmax, bounds.ymax);
+
+        if (h00 <= 0 || h10 <= 0 || h01 <= 0 || h11 <= 0) {
+            return 0.0;
+        }
+
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real dhdx = 0.5 * ((h10 - h00) / dx + (h11 - h01) / dx);
+        Real dhdy = 0.5 * ((h01 - h00) / dy + (h11 - h10) / dy);
+        return std::sqrt(dhdx * dhdx + dhdy * dhdy);
+    };
+
+    octree.build_adaptive(
+        [&coastline_criterion, &compute_bathymetry_gradient, bathymetry_gradient_threshold](const ElementBounds& bounds) -> bool {
+            if (coastline_criterion.should_refine(bounds, 0)) return true;
+            if (compute_bathymetry_gradient(bounds) > bathymetry_gradient_threshold) return true;
+            return false;
+        },
+        max_level_x, max_level_y, max_level_z);
+
+    octree.balance();
+
+    const int poly_order = 3;
+    std::cout << "Adaptive mesh: " << octree.num_elements() << " elements, order " << poly_order << std::endl;
+
+    // =========================================================================
+    // Method 1: Direct sampling (old method)
+    // =========================================================================
+    SeabedSurface seabed_direct(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed_direct.set_from_bathymetry(*bathy_ptr);
+
+    std::string direct_path = "/tmp/seabed_direct";
+    seabed_direct.write_vtk(direct_path, 10);
+    std::cout << "\nMethod 1 (Direct sampling): " << direct_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Method 2: Bilinear + L2 projection to Bernstein
+    // =========================================================================
+    AdaptiveBathymetry adaptive_bilinear(bathy_ptr);
+    adaptive_bilinear.set_sampling_method(SamplingMethod::Bilinear);
+
+    SeabedSurface seabed_bilinear(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed_bilinear.set_from_adaptive_bathymetry(adaptive_bilinear);
+
+    std::string bilinear_path = "/tmp/seabed_bilinear";
+    seabed_bilinear.write_vtk(bilinear_path, 10);
+    std::cout << "Method 2 (Bilinear + L2 projection): " << bilinear_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Method 3: WENO5 + L2 projection to Bernstein
+    // =========================================================================
+    AdaptiveBathymetry adaptive_weno5(bathy_ptr);
+    adaptive_weno5.set_sampling_method(SamplingMethod::WENO5);
+
+    SeabedSurface seabed_weno5(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed_weno5.set_from_adaptive_bathymetry(adaptive_weno5);
+
+    std::string weno5_path = "/tmp/seabed_weno5";
+    seabed_weno5.write_vtk(weno5_path, 10);
+    std::cout << "Method 3 (WENO5 + L2 projection): " << weno5_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Compare depths at sample points
+    // =========================================================================
+    Real xmin = bathy_ptr->xmin + 0.1 * (bathy_ptr->xmax - bathy_ptr->xmin);
+    Real xmax = bathy_ptr->xmax - 0.1 * (bathy_ptr->xmax - bathy_ptr->xmin);
+    Real ymin = bathy_ptr->ymin + 0.1 * (bathy_ptr->ymax - bathy_ptr->ymin);
+    Real ymax = bathy_ptr->ymax - 0.1 * (bathy_ptr->ymax - bathy_ptr->ymin);
+
+    Real max_diff_bilinear = 0.0, sum_diff_sq_bilinear = 0.0;
+    Real max_diff_weno5 = 0.0, sum_diff_sq_weno5 = 0.0;
+    int num_samples = 0;
+
+    for (Real x = xmin; x <= xmax; x += (xmax - xmin) / 20) {
+        for (Real y = ymin; y <= ymax; y += (ymax - ymin) / 20) {
+            Real h_direct = seabed_direct.depth(x, y);
+            Real h_bilinear = seabed_bilinear.depth(x, y);
+            Real h_weno5 = seabed_weno5.depth(x, y);
+
+            if (h_direct > 0 && h_bilinear > 0 && h_weno5 > 0) {
+                Real diff_bilinear = std::abs(h_direct - h_bilinear);
+                Real diff_weno5 = std::abs(h_direct - h_weno5);
+
+                max_diff_bilinear = std::max(max_diff_bilinear, diff_bilinear);
+                max_diff_weno5 = std::max(max_diff_weno5, diff_weno5);
+                sum_diff_sq_bilinear += diff_bilinear * diff_bilinear;
+                sum_diff_sq_weno5 += diff_weno5 * diff_weno5;
+                num_samples++;
+            }
+        }
+    }
+
+    Real rms_bilinear = std::sqrt(sum_diff_sq_bilinear / num_samples);
+    Real rms_weno5 = std::sqrt(sum_diff_sq_weno5 / num_samples);
+
+    std::cout << "\n=== Comparison Results (vs Direct sampling) ===" << std::endl;
+    std::cout << "Samples compared: " << num_samples << std::endl;
+    std::cout << "\nBilinear + L2 projection:" << std::endl;
+    std::cout << "  Max difference: " << max_diff_bilinear << " m" << std::endl;
+    std::cout << "  RMS difference: " << rms_bilinear << " m" << std::endl;
+    std::cout << "\nWENO5 + L2 projection:" << std::endl;
+    std::cout << "  Max difference: " << max_diff_weno5 << " m" << std::endl;
+    std::cout << "  RMS difference: " << rms_weno5 << " m" << std::endl;
+
+    std::cout << "\n=== Files for ParaView comparison ===" << std::endl;
+    std::cout << "1. Direct sampling:          " << direct_path << ".vtu" << std::endl;
+    std::cout << "2. Bilinear + L2 projection: " << bilinear_path << ".vtu" << std::endl;
+    std::cout << "3. WENO5 + L2 projection:    " << weno5_path << ".vtu" << std::endl;
+    std::cout << "\nOpen in ParaView, color by 'depth', use same color scale" << std::endl;
+
+    // All methods should produce valid results
+    EXPECT_TRUE(std::filesystem::exists(direct_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(bilinear_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(weno5_path + ".vtu"));
+
+    // The RMS differences should be reasonable
+    EXPECT_LT(rms_bilinear, 10.0) << "Bilinear RMS difference should be small";
+    EXPECT_LT(rms_weno5, 10.0) << "WENO5 RMS difference should be small";
 }

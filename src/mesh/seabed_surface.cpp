@@ -1,9 +1,13 @@
 #include "mesh/seabed_surface.hpp"
+#include "bathymetry/adaptive_bathymetry.hpp"
+#include "dg/bernstein_basis.hpp"
 #include "dg/nonconforming_projection.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <map>
 
 namespace drifter {
 
@@ -105,6 +109,65 @@ void SeabedSurface::set_from_bathymetry(const BathymetryData& bathy) {
 
     // Apply non-conforming projection for interface continuity
     apply_nonconforming_projection();
+
+    // Update coordinates to match projected coefficients
+    update_coordinates_from_coefficients();
+}
+
+void SeabedSurface::set_from_adaptive_bathymetry(const AdaptiveBathymetry& adaptive) {
+    const int n1d = order_ + 1;
+
+    const auto& elements = mesh_->elements();
+
+    // Project bathymetry onto each bottom element using WENO5 + L2 projection
+    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
+        Index mesh_idx = bottom_elements_[s];
+        const auto& bounds = elements[mesh_idx]->bounds;
+
+        // Use adaptive projection (WENO5 sampling + L2 projection to Bernstein)
+        depth_coeffs_[s] = adaptive.project_element(bounds, order_);
+    }
+
+    // Apply Bernstein-aware non-conforming projection for interface continuity
+    apply_bernstein_nonconforming_projection();
+
+    // Update coordinates AFTER projection to ensure consistency
+    update_coordinates_from_coefficients();
+}
+
+void SeabedSurface::update_coordinates_from_coefficients() {
+    const int n1d = order_ + 1;
+    const auto& elements = mesh_->elements();
+    const SeabedInterpolator& interp = get_interpolator();
+    const VecX& lgl_1d = interp.lgl_nodes();
+
+    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
+        Index mesh_idx = bottom_elements_[s];
+        const auto& bounds = elements[mesh_idx]->bounds;
+
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        VecX& coords = coordinates_[s];
+
+        for (int j = 0; j < n1d; ++j) {
+            for (int i = 0; i < n1d; ++i) {
+                int idx_2d = i + n1d * j;
+
+                Real xi = lgl_1d(i);
+                Real eta = lgl_1d(j);
+
+                Real x = bounds.xmin + 0.5 * (xi + 1.0) * dx;
+                Real y = bounds.ymin + 0.5 * (eta + 1.0) * dy;
+
+                // Evaluate depth from (projected) Bernstein coefficients
+                Real h = interp.evaluate_scalar_2d(depth_coeffs_[s], xi, eta);
+
+                coords(3 * idx_2d + 0) = x;
+                coords(3 * idx_2d + 1) = y;
+                coords(3 * idx_2d + 2) = -h;  // z at seabed
+            }
+        }
+    }
 }
 
 void SeabedSurface::set_element_coefficients(size_t seabed_elem_idx, const VecX& coeffs) {
@@ -114,33 +177,460 @@ void SeabedSurface::set_element_coefficients(size_t seabed_elem_idx, const VecX&
 }
 
 void SeabedSurface::apply_nonconforming_projection() {
-    // Use the existing projection function
-    // But we need to adapt since it expects mesh element indexing
-    // We'll create a temporary vector indexed by mesh elements
+    // The 2D projection function works with mesh elements, but we only have
+    // bottom-layer elements. We need to project between bottom elements that
+    // have 2:1 size ratios in the horizontal direction.
 
+    const int n1d = order_ + 1;
     const auto& elements = mesh_->elements();
-    size_t num_mesh_elements = elements.size();
 
-    // Create mesh-indexed depth data (zeros for non-bottom elements)
-    std::vector<VecX> mesh_indexed_depths(num_mesh_elements);
-    int n2d = (order_ + 1) * (order_ + 1);
+    // Get interpolator for evaluation
+    const SeabedInterpolator& interp = get_interpolator();
+    const VecX& lgl_nodes = interp.lgl_nodes();
 
-    for (size_t e = 0; e < num_mesh_elements; ++e) {
-        auto it = mesh_to_seabed_.find(static_cast<Index>(e));
-        if (it != mesh_to_seabed_.end()) {
-            mesh_indexed_depths[e] = depth_coeffs_[it->second];
-        } else {
-            mesh_indexed_depths[e] = VecX::Zero(n2d);
+    // For each fine element, check if any horizontal neighbor is coarser
+    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
+        Index my_mesh_idx = bottom_elements_[s];
+        const auto& my_bounds = elements[my_mesh_idx]->bounds;
+        Real my_area = (my_bounds.xmax - my_bounds.xmin) *
+                       (my_bounds.ymax - my_bounds.ymin);
+
+        // Check horizontal faces (0: -x, 1: +x, 2: -y, 3: +y)
+        for (int face_id = 0; face_id < 4; ++face_id) {
+            NeighborInfo info = mesh_->get_neighbor(my_mesh_idx, face_id);
+            if (info.is_boundary() || info.neighbor_elements.empty()) continue;
+
+            // Find if the neighbor is a bottom element
+            Index neigh_mesh_idx = info.neighbor_elements[0];
+            auto neigh_it = mesh_to_seabed_.find(neigh_mesh_idx);
+            if (neigh_it == mesh_to_seabed_.end()) continue;  // Neighbor not a bottom element
+
+            size_t neigh_s = neigh_it->second;
+            const auto& neigh_bounds = elements[neigh_mesh_idx]->bounds;
+            Real neigh_area = (neigh_bounds.xmax - neigh_bounds.xmin) *
+                              (neigh_bounds.ymax - neigh_bounds.ymin);
+
+            // Check if neighbor is coarser (larger area = coarser element)
+            if (neigh_area <= my_area * 1.5) continue;
+
+            // Neighbor is coarser - project its polynomial onto our face nodes
+            const VecX& coarse_data = depth_coeffs_[neigh_s];
+
+            // For each DOF on the shared face
+            for (int j = 0; j < n1d; ++j) {
+                for (int i = 0; i < n1d; ++i) {
+                    // Check if this DOF is on the interface face
+                    bool on_face = false;
+                    if (face_id == 0 && i == 0) on_face = true;       // -x face
+                    else if (face_id == 1 && i == n1d-1) on_face = true;   // +x face
+                    else if (face_id == 2 && j == 0) on_face = true;       // -y face
+                    else if (face_id == 3 && j == n1d-1) on_face = true;   // +y face
+
+                    if (!on_face) continue;
+
+                    // Get physical coordinates of this DOF
+                    Real xi_ref = lgl_nodes(i);
+                    Real eta_ref = lgl_nodes(j);
+
+                    Real phys_x = my_bounds.xmin + 0.5 * (xi_ref + 1.0) *
+                                  (my_bounds.xmax - my_bounds.xmin);
+                    Real phys_y = my_bounds.ymin + 0.5 * (eta_ref + 1.0) *
+                                  (my_bounds.ymax - my_bounds.ymin);
+
+                    // Transform to coarse element's reference coordinates
+                    Real coarse_xi = 2.0 * (phys_x - neigh_bounds.xmin) /
+                                     (neigh_bounds.xmax - neigh_bounds.xmin) - 1.0;
+                    Real coarse_eta = 2.0 * (phys_y - neigh_bounds.ymin) /
+                                      (neigh_bounds.ymax - neigh_bounds.ymin) - 1.0;
+
+                    // Clamp to [-1, 1]
+                    coarse_xi = std::max(-1.0, std::min(1.0, coarse_xi));
+                    coarse_eta = std::max(-1.0, std::min(1.0, coarse_eta));
+
+                    // Interpolate coarse element's polynomial at this point
+                    Real projected_value = interp.evaluate_scalar_2d(coarse_data, coarse_xi, coarse_eta);
+
+                    // Overwrite the fine element's DOF value
+                    int idx = i + n1d * j;
+                    depth_coeffs_[s](idx) = projected_value;
+                }
+            }
+        }
+    }
+}
+
+void SeabedSurface::apply_bernstein_nonconforming_projection() {
+    // For Bernstein basis, edge continuity requires matching edge coefficients.
+    //
+    // Key property: For a 2D tensor-product Bernstein polynomial
+    //   f(ξ, η) = Σᵢⱼ cᵢⱼ · Bᵢ(ξ) · Bⱼ(η)
+    //
+    // On edge ξ = -1: f(-1, η) = Σⱼ c₀ⱼ · Bⱼ(η)  (only i=0 coefficients matter)
+    // On edge ξ = +1: f(+1, η) = Σⱼ cₙⱼ · Bⱼ(η)  (only i=n coefficients matter)
+    // On edge η = -1: f(ξ, -1) = Σᵢ cᵢ₀ · Bᵢ(ξ)  (only j=0 coefficients matter)
+    // On edge η = +1: f(ξ, +1) = Σᵢ cᵢₙ · Bᵢ(ξ)  (only j=n coefficients matter)
+    //
+    // For ALL interfaces (both conforming and non-conforming):
+    // - Conforming: copy edge coefficients from element with smaller index
+    // - Non-conforming: use de Casteljau subdivision to match coarse element's edge
+
+    const int n1d = order_ + 1;
+    const auto& elements = mesh_->elements();
+
+    // Get interpolator for evaluation
+    const SeabedInterpolator& interp = get_interpolator();
+    BernsteinBasis1D basis(order_);
+
+    // Lambda: de Casteljau subdivision - extract Bernstein coeffs for [t0, t1] from [0, 1]
+    auto subdivide_bernstein = [&](const VecX& coeffs, Real t0, Real t1) -> VecX {
+        // First split at t1 to get [0, t1] portion (left part)
+        // Then split at t0/t1 to get [t0, t1] portion
+        int n = order_;
+
+        // de Casteljau to split at t1: gives us coefficients for [0, t1]
+        std::vector<Real> work(coeffs.data(), coeffs.data() + n1d);
+        for (int r = 1; r <= n; ++r) {
+            for (int i = 0; i <= n - r; ++i) {
+                work[i] = (1.0 - t1) * work[i] + t1 * work[i + 1];
+            }
+        }
+        // Now work[0..n] contains the left part [0, t1], but we need to
+        // do this properly to get ALL new coefficients
+
+        // Proper subdivision: after splitting at t, left coeffs are the
+        // diagonal of the de Casteljau triangle
+        std::vector<std::vector<Real>> triangle(n1d);
+        for (int i = 0; i < n1d; ++i) {
+            triangle[i].resize(n1d - i);
+            triangle[i][0] = coeffs(i);
+        }
+
+        // Build de Casteljau triangle for parameter t1
+        for (int r = 1; r <= n; ++r) {
+            for (int i = 0; i <= n - r; ++i) {
+                triangle[i][r] = (1.0 - t1) * triangle[i][r-1] + t1 * triangle[i+1][r-1];
+            }
+        }
+
+        // Left segment [0, t1] coefficients: diagonal c[i][i]
+        VecX left_coeffs(n1d);
+        for (int i = 0; i <= n; ++i) {
+            left_coeffs(i) = triangle[0][i];
+        }
+
+        // If t0 > 0, we need to further subdivide [0, t1] at t0/t1
+        if (t0 > 1e-10) {
+            Real s = t0 / t1;  // Parameter in [0, 1] for the [0, t1] curve
+
+            // Build de Casteljau triangle for parameter s on left_coeffs
+            for (int i = 0; i < n1d; ++i) {
+                triangle[i][0] = left_coeffs(i);
+            }
+            for (int r = 1; r <= n; ++r) {
+                for (int i = 0; i <= n - r; ++i) {
+                    triangle[i][r] = (1.0 - s) * triangle[i][r-1] + s * triangle[i+1][r-1];
+                }
+            }
+
+            // Right segment [s, 1] of the [0, t1] curve = [t0, t1] of original
+            // Right coefficients: anti-diagonal from top-right to bottom-left
+            // triangle[0][n] = evaluated point, triangle[n][0] = last original coeff
+            VecX result(n1d);
+            for (int i = 0; i <= n; ++i) {
+                result(i) = triangle[i][n-i];
+            }
+            return result;
+        }
+
+        return left_coeffs;
+    };
+
+    // For each element, check all horizontal neighbors and ensure edge continuity
+    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
+        Index my_mesh_idx = bottom_elements_[s];
+        const auto& my_bounds = elements[my_mesh_idx]->bounds;
+        Real my_dx = my_bounds.xmax - my_bounds.xmin;
+        Real my_dy = my_bounds.ymax - my_bounds.ymin;
+
+        // Check horizontal faces (0: -x, 1: +x, 2: -y, 3: +y)
+        for (int face_id = 0; face_id < 4; ++face_id) {
+            NeighborInfo info = mesh_->get_neighbor(my_mesh_idx, face_id);
+            if (info.is_boundary() || info.neighbor_elements.empty()) continue;
+
+            Index neigh_mesh_idx = info.neighbor_elements[0];
+            auto neigh_it = mesh_to_seabed_.find(neigh_mesh_idx);
+            if (neigh_it == mesh_to_seabed_.end()) continue;
+
+            size_t neigh_s = neigh_it->second;
+            const auto& neigh_bounds = elements[neigh_mesh_idx]->bounds;
+            Real neigh_dx = neigh_bounds.xmax - neigh_bounds.xmin;
+            Real neigh_dy = neigh_bounds.ymax - neigh_bounds.ymin;
+
+            // Determine relationship: conforming (same size) or non-conforming (2:1)
+            bool is_coarser = false;
+            bool is_conforming = false;
+            if (face_id == 0 || face_id == 1) {
+                // x-face: compare y-size
+                is_coarser = neigh_dy > my_dy * 1.5;
+                is_conforming = std::abs(neigh_dy - my_dy) < my_dy * 0.1;
+            } else {
+                // y-face: compare x-size
+                is_coarser = neigh_dx > my_dx * 1.5;
+                is_conforming = std::abs(neigh_dx - my_dx) < my_dx * 0.1;
+            }
+
+            // For conforming interfaces: average edge coefficients from both elements
+            // This preserves information from both L2 projections rather than discarding one
+            if (is_conforming) {
+                // Only process once per edge pair (when s < neigh_s)
+                if (s < neigh_s) {
+                    VecX& my_coeffs = depth_coeffs_[s];
+                    VecX& neigh_coeffs = depth_coeffs_[neigh_s];
+
+                    // Average edge coefficients and assign to both elements
+                    if (face_id == 0) {
+                        // My -x edge (i=0) matches neighbor's +x edge (i=n)
+                        for (int j = 0; j < n1d; ++j) {
+                            Real avg = 0.5 * (my_coeffs(0 + n1d * j) + neigh_coeffs(order_ + n1d * j));
+                            my_coeffs(0 + n1d * j) = avg;
+                            neigh_coeffs(order_ + n1d * j) = avg;
+                        }
+                    } else if (face_id == 1) {
+                        // My +x edge (i=n) matches neighbor's -x edge (i=0)
+                        for (int j = 0; j < n1d; ++j) {
+                            Real avg = 0.5 * (my_coeffs(order_ + n1d * j) + neigh_coeffs(0 + n1d * j));
+                            my_coeffs(order_ + n1d * j) = avg;
+                            neigh_coeffs(0 + n1d * j) = avg;
+                        }
+                    } else if (face_id == 2) {
+                        // My -y edge (j=0) matches neighbor's +y edge (j=n)
+                        for (int i = 0; i < n1d; ++i) {
+                            Real avg = 0.5 * (my_coeffs(i + n1d * 0) + neigh_coeffs(i + n1d * order_));
+                            my_coeffs(i + n1d * 0) = avg;
+                            neigh_coeffs(i + n1d * order_) = avg;
+                        }
+                    } else {  // face_id == 3
+                        // My +y edge (j=n) matches neighbor's -y edge (j=0)
+                        for (int i = 0; i < n1d; ++i) {
+                            Real avg = 0.5 * (my_coeffs(i + n1d * order_) + neigh_coeffs(i + n1d * 0));
+                            my_coeffs(i + n1d * order_) = avg;
+                            neigh_coeffs(i + n1d * 0) = avg;
+                        }
+                    }
+                }
+                continue;  // Skip to next face
+            }
+
+            // For non-conforming: only process if neighbor is coarser
+            if (!is_coarser) continue;
+
+            const VecX& coarse_coeffs = depth_coeffs_[neigh_s];
+
+            // Extract the coarse element's edge polynomial (1D Bernstein coeffs)
+            // and compute the fine element's edge coefficients via subdivision
+            VecX coarse_edge(n1d);
+            Real t0, t1;  // Parameter range on coarse edge that fine edge covers
+
+            if (face_id == 0) {
+                // Fine's -x face matches part of coarse's +x face
+                // Coarse edge: ξ = +1, η varies -> coeffs c[n][j]
+                for (int j = 0; j < n1d; ++j) {
+                    coarse_edge(j) = coarse_coeffs(order_ + n1d * j);
+                }
+                // Fine element's y-range in coarse's η parameter space [0, 1]
+                t0 = (my_bounds.ymin - neigh_bounds.ymin) / neigh_dy;
+                t1 = (my_bounds.ymax - neigh_bounds.ymin) / neigh_dy;
+
+            } else if (face_id == 1) {
+                // Fine's +x face matches part of coarse's -x face
+                // Coarse edge: ξ = -1, η varies -> coeffs c[0][j]
+                for (int j = 0; j < n1d; ++j) {
+                    coarse_edge(j) = coarse_coeffs(0 + n1d * j);
+                }
+                t0 = (my_bounds.ymin - neigh_bounds.ymin) / neigh_dy;
+                t1 = (my_bounds.ymax - neigh_bounds.ymin) / neigh_dy;
+
+            } else if (face_id == 2) {
+                // Fine's -y face matches part of coarse's +y face
+                // Coarse edge: η = +1, ξ varies -> coeffs c[i][n]
+                for (int i = 0; i < n1d; ++i) {
+                    coarse_edge(i) = coarse_coeffs(i + n1d * order_);
+                }
+                t0 = (my_bounds.xmin - neigh_bounds.xmin) / neigh_dx;
+                t1 = (my_bounds.xmax - neigh_bounds.xmin) / neigh_dx;
+
+            } else {  // face_id == 3
+                // Fine's +y face matches part of coarse's -y face
+                // Coarse edge: η = -1, ξ varies -> coeffs c[i][0]
+                for (int i = 0; i < n1d; ++i) {
+                    coarse_edge(i) = coarse_coeffs(i + n1d * 0);
+                }
+                t0 = (my_bounds.xmin - neigh_bounds.xmin) / neigh_dx;
+                t1 = (my_bounds.xmax - neigh_bounds.xmin) / neigh_dx;
+            }
+
+            // Clamp parameter range
+            t0 = std::max(0.0, std::min(1.0, t0));
+            t1 = std::max(0.0, std::min(1.0, t1));
+
+            // Subdivide to get Bernstein coefficients for [t0, t1] portion
+            VecX fine_edge = subdivide_bernstein(coarse_edge, t0, t1);
+
+            // Write subdivided coefficients to fine element's edge DOFs
+            VecX& fine_coeffs = depth_coeffs_[s];
+            if (face_id == 0) {
+                // -x face: i = 0
+                for (int j = 0; j < n1d; ++j) {
+                    fine_coeffs(0 + n1d * j) = fine_edge(j);
+                }
+            } else if (face_id == 1) {
+                // +x face: i = n
+                for (int j = 0; j < n1d; ++j) {
+                    fine_coeffs(order_ + n1d * j) = fine_edge(j);
+                }
+            } else if (face_id == 2) {
+                // -y face: j = 0
+                for (int i = 0; i < n1d; ++i) {
+                    fine_coeffs(i + n1d * 0) = fine_edge(i);
+                }
+            } else {  // face_id == 3
+                // +y face: j = n
+                for (int i = 0; i < n1d; ++i) {
+                    fine_coeffs(i + n1d * order_) = fine_edge(i);
+                }
+            }
         }
     }
 
-    // Apply projection (modifies in-place)
-    project_coarse_to_fine_2d(*mesh_, mesh_indexed_depths, order_, method_);
+    // =========================================================================
+    // Vertex consistency pass
+    // =========================================================================
+    // All elements sharing a vertex must have the same corner coefficient.
+    // For non-conforming meshes, a fine element's corner may lie on a coarse
+    // element's edge midpoint - in that case, the fine corner must match
+    // the coarse polynomial evaluated at that point.
 
-    // Copy back to our storage
+    // Corner indices in 2D coefficient array c[i + n1d * j]:
+    // (0,0) -> index 0,           corner at (xmin, ymin)
+    // (n,0) -> index order_,      corner at (xmax, ymin)
+    // (0,n) -> index n1d*order_,  corner at (xmin, ymax)
+    // (n,n) -> index order_ + n1d*order_, corner at (xmax, ymax)
+
+    struct VertexKey {
+        Real x, y;
+        bool operator<(const VertexKey& other) const {
+            if (std::abs(x - other.x) > 1e-6) return x < other.x;
+            return y < other.y;
+        }
+    };
+
+    struct VertexInfo {
+        size_t elem_idx;
+        int corner_idx;
+        bool is_edge_midpoint;  // True if this is a coarse element's edge midpoint
+    };
+
+    std::map<VertexKey, std::vector<VertexInfo>> vertex_to_elements;
+
+    // First pass: collect all element corners
     for (size_t s = 0; s < bottom_elements_.size(); ++s) {
         Index mesh_idx = bottom_elements_[s];
-        depth_coeffs_[s] = mesh_indexed_depths[mesh_idx];
+        const auto& bounds = elements[mesh_idx]->bounds;
+
+        std::array<std::pair<VertexKey, int>, 4> corners = {{
+            {{bounds.xmin, bounds.ymin}, 0},
+            {{bounds.xmax, bounds.ymin}, order_},
+            {{bounds.xmin, bounds.ymax}, n1d * order_},
+            {{bounds.xmax, bounds.ymax}, order_ + n1d * order_}
+        }};
+
+        for (const auto& [vkey, corner_idx] : corners) {
+            vertex_to_elements[vkey].push_back({s, corner_idx, false});
+        }
+    }
+
+    // Second pass: for each vertex, check if it lies on a coarse element's edge
+    // If so, evaluate the coarse polynomial at that point
+    for (auto& [vkey, elem_list] : vertex_to_elements) {
+        if (elem_list.size() <= 1) continue;
+
+        // Check each element to see if this vertex lies on its edge (but not corner)
+        for (size_t s = 0; s < bottom_elements_.size(); ++s) {
+            Index mesh_idx = bottom_elements_[s];
+            const auto& bounds = elements[mesh_idx]->bounds;
+
+            const Real tol = 1e-6;
+            bool on_xmin = std::abs(vkey.x - bounds.xmin) < tol;
+            bool on_xmax = std::abs(vkey.x - bounds.xmax) < tol;
+            bool on_ymin = std::abs(vkey.y - bounds.ymin) < tol;
+            bool on_ymax = std::abs(vkey.y - bounds.ymax) < tol;
+            bool in_x = vkey.x > bounds.xmin + tol && vkey.x < bounds.xmax - tol;
+            bool in_y = vkey.y > bounds.ymin + tol && vkey.y < bounds.ymax - tol;
+
+            // Check if vertex is on an edge but not at a corner
+            bool on_edge_not_corner = false;
+            if ((on_xmin || on_xmax) && in_y) on_edge_not_corner = true;
+            if ((on_ymin || on_ymax) && in_x) on_edge_not_corner = true;
+
+            if (on_edge_not_corner) {
+                // This element is coarser and the vertex lies on its edge
+                // Add it to the list with a special marker
+                bool already_in_list = false;
+                for (const auto& info : elem_list) {
+                    if (info.elem_idx == s) {
+                        already_in_list = true;
+                        break;
+                    }
+                }
+                if (!already_in_list) {
+                    // Use -1 as corner_idx to indicate "evaluate at point"
+                    elem_list.push_back({s, -1, true});
+                }
+            }
+        }
+    }
+
+    // Third pass: enforce consistency at each vertex
+    for (auto& [vkey, elem_list] : vertex_to_elements) {
+        if (elem_list.size() <= 1) continue;
+
+        // Compute weighted average, giving coarse edge midpoints higher weight
+        // since they've already been processed for edge continuity
+        Real sum = 0.0;
+        Real weight_sum = 0.0;
+
+        for (const auto& info : elem_list) {
+            Real val;
+            Real weight;
+
+            if (info.is_edge_midpoint) {
+                // Evaluate coarse polynomial at this point
+                Index mesh_idx = bottom_elements_[info.elem_idx];
+                const auto& bounds = elements[mesh_idx]->bounds;
+
+                Real xi = 2.0 * (vkey.x - bounds.xmin) / (bounds.xmax - bounds.xmin) - 1.0;
+                Real eta = 2.0 * (vkey.y - bounds.ymin) / (bounds.ymax - bounds.ymin) - 1.0;
+
+                val = interp.evaluate_scalar_2d(depth_coeffs_[info.elem_idx], xi, eta);
+                weight = 2.0;  // Higher weight for coarse element
+            } else {
+                val = depth_coeffs_[info.elem_idx](info.corner_idx);
+                weight = 1.0;
+            }
+
+            sum += weight * val;
+            weight_sum += weight;
+        }
+
+        Real avg = sum / weight_sum;
+
+        // Assign to all fine element corners (not to coarse elements since
+        // their edge is already set and changing corners would break edge continuity)
+        for (const auto& info : elem_list) {
+            if (!info.is_edge_midpoint) {
+                depth_coeffs_[info.elem_idx](info.corner_idx) = avg;
+            }
+        }
     }
 }
 

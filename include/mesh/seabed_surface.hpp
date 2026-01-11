@@ -17,6 +17,11 @@
 #include <vector>
 
 namespace drifter {
+// Forward declaration
+class AdaptiveBathymetry;
+}  // namespace drifter
+
+namespace drifter {
 
 /// @brief 2D seabed surface representation for bottom-layer octree elements
 ///
@@ -41,6 +46,12 @@ public:
     /// @param bathy Bathymetry data (e.g., from GeoTIFF)
     void set_from_bathymetry(const BathymetryData& bathy);
 
+    /// @brief Initialize from adaptive bathymetry with wavelet-WENO-Bernstein pipeline
+    /// Uses WENO5 sampling from wavelet pyramid and L2 projection to Bernstein basis.
+    /// This provides better handling of steep gradients and discontinuities.
+    /// @param adaptive Adaptive bathymetry processor
+    void set_from_adaptive_bathymetry(const AdaptiveBathymetry& adaptive);
+
     /// @brief Set coefficients directly for a specific element
     /// @param seabed_elem_idx Index in bottom_elements_ (not mesh element index)
     /// @param coeffs Bernstein coefficients (order+1)^2 values
@@ -49,7 +60,14 @@ public:
     /// @brief Apply non-conforming projection to ensure interface continuity
     /// Called automatically by set_from_bathymetry(), but can be called
     /// manually after set_element_coefficients() if needed.
+    /// For Lagrange basis: directly overwrites interface DOFs.
+    /// For Bernstein basis: uses constrained L2 re-projection.
     void apply_nonconforming_projection();
+
+    /// @brief Apply non-conforming projection for Bernstein basis
+    /// Uses constrained least-squares to match coarse element at interface
+    /// while minimizing change to the polynomial in the interior.
+    void apply_bernstein_nonconforming_projection();
 
     /// @brief Evaluate depth at a point
     /// @param x, y World coordinates
@@ -145,6 +163,9 @@ private:
     void identify_bottom_elements();
     void allocate_storage();
     const SeabedInterpolator& get_interpolator() const;
+
+    // Update z-coordinates from depth coefficients (call after projection)
+    void update_coordinates_from_coefficients();
 
     // Find which seabed element contains point (x, y)
     // Returns -1 if not found
