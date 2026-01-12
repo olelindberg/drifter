@@ -897,6 +897,44 @@ TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
     std::cout << "Method 3 (WENO5 + L2 projection): " << weno5_path << ".vtu" << std::endl;
 
     // =========================================================================
+    // Method 4: Bilinear + Light Smoothing (0.1) + L2 projection to Bernstein
+    // =========================================================================
+    AdaptiveBathymetry adaptive_smoothed(bathy_ptr);
+    adaptive_smoothed.set_sampling_method(SamplingMethod::Bilinear);
+    adaptive_smoothed.set_smoothing_factor(0.1);  // Light scale-dependent smoothing
+
+    SeabedSurface seabed_smoothed(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed_smoothed.set_from_adaptive_bathymetry(adaptive_smoothed);
+
+    std::string smoothed_path = "/tmp/seabed_smoothed";
+    seabed_smoothed.write_vtk(smoothed_path, 10);
+    std::cout << "Method 4 (Bilinear + Smoothing 0.1): " << smoothed_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Method 5: Bilinear + Heavy Smoothing (2.0) + L2 projection to Bernstein
+    // =========================================================================
+    AdaptiveBathymetry adaptive_heavy(bathy_ptr);
+    adaptive_heavy.set_sampling_method(SamplingMethod::Bilinear);
+    adaptive_heavy.set_smoothing_factor(2.0);  // Heavy smoothing
+
+    SeabedSurface seabed_heavy(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed_heavy.set_from_adaptive_bathymetry(adaptive_heavy);
+
+    std::string heavy_path = "/tmp/seabed_heavy_smooth";
+    seabed_heavy.write_vtk(heavy_path, 10);
+    std::cout << "Method 5 (Bilinear + Smoothing 1.0): " << heavy_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Method 6: Direct sampling with smoothing (no L2 projection, no pixel cap)
+    // =========================================================================
+    SeabedSurface seabed_direct_smoothed(octree, poly_order, SeabedInterpolation::Lagrange);
+    seabed_direct_smoothed.set_from_bathymetry_smoothed(*bathy_ptr, 0.5);
+
+    std::string direct_smoothed_path = "/tmp/seabed_direct_smoothed";
+    seabed_direct_smoothed.write_vtk(direct_smoothed_path, 10);
+    std::cout << "Method 6 (Direct + Smoothing 0.5):   " << direct_smoothed_path << ".vtu" << std::endl;
+
+    // =========================================================================
     // Compare depths at sample points
     // =========================================================================
     Real xmin = bathy_ptr->xmin + 0.1 * (bathy_ptr->xmax - bathy_ptr->xmin);
@@ -906,6 +944,8 @@ TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
 
     Real max_diff_bilinear = 0.0, sum_diff_sq_bilinear = 0.0;
     Real max_diff_weno5 = 0.0, sum_diff_sq_weno5 = 0.0;
+    Real max_diff_smoothed = 0.0, sum_diff_sq_smoothed = 0.0;
+    Real max_diff_heavy = 0.0, sum_diff_sq_heavy = 0.0;
     int num_samples = 0;
 
     for (Real x = xmin; x <= xmax; x += (xmax - xmin) / 20) {
@@ -913,15 +953,23 @@ TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
             Real h_direct = seabed_direct.depth(x, y);
             Real h_bilinear = seabed_bilinear.depth(x, y);
             Real h_weno5 = seabed_weno5.depth(x, y);
+            Real h_smoothed = seabed_smoothed.depth(x, y);
+            Real h_heavy = seabed_heavy.depth(x, y);
 
-            if (h_direct > 0 && h_bilinear > 0 && h_weno5 > 0) {
+            if (h_direct > 0 && h_bilinear > 0 && h_weno5 > 0 && h_smoothed > 0 && h_heavy > 0) {
                 Real diff_bilinear = std::abs(h_direct - h_bilinear);
                 Real diff_weno5 = std::abs(h_direct - h_weno5);
+                Real diff_smoothed = std::abs(h_direct - h_smoothed);
+                Real diff_heavy = std::abs(h_direct - h_heavy);
 
                 max_diff_bilinear = std::max(max_diff_bilinear, diff_bilinear);
                 max_diff_weno5 = std::max(max_diff_weno5, diff_weno5);
+                max_diff_smoothed = std::max(max_diff_smoothed, diff_smoothed);
+                max_diff_heavy = std::max(max_diff_heavy, diff_heavy);
                 sum_diff_sq_bilinear += diff_bilinear * diff_bilinear;
                 sum_diff_sq_weno5 += diff_weno5 * diff_weno5;
+                sum_diff_sq_smoothed += diff_smoothed * diff_smoothed;
+                sum_diff_sq_heavy += diff_heavy * diff_heavy;
                 num_samples++;
             }
         }
@@ -929,6 +977,8 @@ TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
 
     Real rms_bilinear = std::sqrt(sum_diff_sq_bilinear / num_samples);
     Real rms_weno5 = std::sqrt(sum_diff_sq_weno5 / num_samples);
+    Real rms_smoothed = std::sqrt(sum_diff_sq_smoothed / num_samples);
+    Real rms_heavy = std::sqrt(sum_diff_sq_heavy / num_samples);
 
     std::cout << "\n=== Comparison Results (vs Direct sampling) ===" << std::endl;
     std::cout << "Samples compared: " << num_samples << std::endl;
@@ -938,19 +988,33 @@ TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
     std::cout << "\nWENO5 + L2 projection:" << std::endl;
     std::cout << "  Max difference: " << max_diff_weno5 << " m" << std::endl;
     std::cout << "  RMS difference: " << rms_weno5 << " m" << std::endl;
+    std::cout << "\nBilinear + Smoothing (0.1):" << std::endl;
+    std::cout << "  Max difference: " << max_diff_smoothed << " m" << std::endl;
+    std::cout << "  RMS difference: " << rms_smoothed << " m" << std::endl;
+    std::cout << "\nBilinear + Heavy Smoothing (2.0):" << std::endl;
+    std::cout << "  Max difference: " << max_diff_heavy << " m" << std::endl;
+    std::cout << "  RMS difference: " << rms_heavy << " m" << std::endl;
 
     std::cout << "\n=== Files for ParaView comparison ===" << std::endl;
-    std::cout << "1. Direct sampling:          " << direct_path << ".vtu" << std::endl;
-    std::cout << "2. Bilinear + L2 projection: " << bilinear_path << ".vtu" << std::endl;
-    std::cout << "3. WENO5 + L2 projection:    " << weno5_path << ".vtu" << std::endl;
+    std::cout << "1. Direct sampling:              " << direct_path << ".vtu" << std::endl;
+    std::cout << "2. Bilinear + L2 projection:     " << bilinear_path << ".vtu" << std::endl;
+    std::cout << "3. WENO5 + L2 projection:        " << weno5_path << ".vtu" << std::endl;
+    std::cout << "4. Bilinear + Smoothing (0.1):   " << smoothed_path << ".vtu" << std::endl;
+    std::cout << "5. Bilinear + Smoothing (2.0):   " << heavy_path << ".vtu" << std::endl;
+    std::cout << "6. Direct + Smoothing (0.5):     " << direct_smoothed_path << ".vtu" << std::endl;
     std::cout << "\nOpen in ParaView, color by 'depth', use same color scale" << std::endl;
 
     // All methods should produce valid results
     EXPECT_TRUE(std::filesystem::exists(direct_path + ".vtu"));
     EXPECT_TRUE(std::filesystem::exists(bilinear_path + ".vtu"));
     EXPECT_TRUE(std::filesystem::exists(weno5_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(smoothed_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(heavy_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(direct_smoothed_path + ".vtu"));
 
     // The RMS differences should be reasonable
     EXPECT_LT(rms_bilinear, 10.0) << "Bilinear RMS difference should be small";
     EXPECT_LT(rms_weno5, 10.0) << "WENO5 RMS difference should be small";
+    EXPECT_LT(rms_smoothed, 15.0) << "Smoothed RMS difference should be reasonable";
+    EXPECT_LT(rms_heavy, 20.0) << "Heavy smoothed RMS difference should be reasonable";
 }

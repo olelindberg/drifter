@@ -186,16 +186,24 @@ VecX AdaptiveBathymetry::sample_at_quadrature(const ElementBounds& bounds,
     int nq = quad.size();
     VecX f_quad(nq);
 
+    // Compute filter radius from element size (scale-dependent smoothing)
+    Real dx = bounds.xmax - bounds.xmin;
+    Real dy = bounds.ymax - bounds.ymin;
+    Real filter_radius = smoothing_factor_ * std::min(dx, dy);
+
     for (int q = 0; q < nq; ++q) {
         Real xi = quad.nodes()[q](0);
         Real eta = quad.nodes()[q](1);
 
         // Map reference coordinates to world coordinates
-        Real x = bounds.xmin + 0.5 * (xi + 1.0) * (bounds.xmax - bounds.xmin);
-        Real y = bounds.ymin + 0.5 * (eta + 1.0) * (bounds.ymax - bounds.ymin);
+        Real x = bounds.xmin + 0.5 * (xi + 1.0) * dx;
+        Real y = bounds.ymin + 0.5 * (eta + 1.0) * dy;
 
-        // Sample using selected method
-        if (sampling_method_ == SamplingMethod::WENO5) {
+        // Sample using selected method, with optional smoothing
+        if (smoothing_factor_ > 0.0) {
+            // Use local box filter averaging
+            f_quad(q) = sample_smoothed(x, y, filter_radius);
+        } else if (sampling_method_ == SamplingMethod::WENO5) {
             f_quad(q) = sampler_->sample(x, y);
         } else {
             // Bilinear interpolation from raw data
@@ -204,6 +212,62 @@ VecX AdaptiveBathymetry::sample_at_quadrature(const ElementBounds& bounds,
     }
 
     return f_quad;
+}
+
+Real AdaptiveBathymetry::sample_smoothed(Real x, Real y, Real filter_radius) const {
+    // Compute pixel size from geotransform (assume square-ish pixels)
+    Real pixel_width = std::abs(raw_data_->geotransform[1]);
+    Real pixel_height = std::abs(raw_data_->geotransform[5]);
+    Real pixel_size = std::min(pixel_width, pixel_height);
+
+    // Convert world radius to pixel radius
+    int kernel_radius = std::max(1, static_cast<int>(filter_radius / pixel_size));
+
+    // Limit kernel size for efficiency (max 30 pixels radius)
+    kernel_radius = std::min(kernel_radius, 30);
+
+    // Get pixel coordinates of center
+    double px_d, py_d;
+    raw_data_->world_to_pixel(x, y, px_d, py_d);
+    int px = static_cast<int>(std::round(px_d));
+    int py = static_cast<int>(std::round(py_d));
+
+    // Box filter: simple average over kernel
+    Real sum = 0.0;
+    int count = 0;
+
+    for (int di = -kernel_radius; di <= kernel_radius; ++di) {
+        for (int dj = -kernel_radius; dj <= kernel_radius; ++dj) {
+            int pi = px + di;
+            int pj = py + dj;
+
+            // Check bounds
+            if (pi >= 0 && pi < raw_data_->sizex &&
+                pj >= 0 && pj < raw_data_->sizey) {
+                float val = raw_data_->elevation[pj * raw_data_->sizex + pi];
+
+                // Skip NoData values
+                if (std::abs(val - raw_data_->nodata_value) > 1e-6f && val < 1e30f) {
+                    sum += val;
+                    ++count;
+                }
+            }
+        }
+    }
+
+    if (count == 0) {
+        // Fall back to unsmoothed sampling if no valid pixels
+        return raw_data_->get_depth(x, y);
+    }
+
+    // Convert elevation to depth
+    Real avg_elevation = sum / count;
+    if (raw_data_->is_depth_positive) {
+        return avg_elevation > 0.0 ? avg_elevation : 0.0;
+    } else {
+        // Negative elevation = water depth
+        return avg_elevation < 0.0 ? -avg_elevation : 0.0;
+    }
 }
 
 Real AdaptiveBathymetry::evaluate_bernstein(const VecX& coeffs, Real xi, Real eta,

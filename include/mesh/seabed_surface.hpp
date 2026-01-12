@@ -46,6 +46,13 @@ public:
     /// @param bathy Bathymetry data (e.g., from GeoTIFF)
     void set_from_bathymetry(const BathymetryData& bathy);
 
+    /// @brief Initialize from bathymetry with scale-dependent box filter smoothing
+    /// Samples bathymetry at LGL nodes using local averaging with no pixel cap,
+    /// allowing large smoothing radii for coarse elements.
+    /// @param bathy Bathymetry data (e.g., from GeoTIFF)
+    /// @param smoothing_factor Filter radius = factor * min(element_size), e.g. 0.5
+    void set_from_bathymetry_smoothed(const BathymetryData& bathy, Real smoothing_factor);
+
     /// @brief Initialize from adaptive bathymetry with wavelet-WENO-Bernstein pipeline
     /// Uses WENO5 sampling from wavelet pyramid and L2 projection to Bernstein basis.
     /// This provides better handling of steep gradients and discontinuities.
@@ -173,6 +180,9 @@ private:
 
     // Transform world coords to reference coords for an element
     void world_to_reference(size_t seabed_idx, Real x, Real y, Real& xi, Real& eta) const;
+
+    // Sample bathymetry with box filter averaging (no pixel cap)
+    Real sample_smoothed(const BathymetryData& bathy, Real x, Real y, Real filter_radius) const;
 };
 
 }  // namespace drifter

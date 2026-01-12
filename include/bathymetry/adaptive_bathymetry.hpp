@@ -79,12 +79,21 @@ public:
     /// @brief Get the current sampling method
     SamplingMethod sampling_method() const { return sampling_method_; }
 
+    /// @brief Set smoothing factor for scale-dependent local averaging
+    /// @param factor Smoothing factor (filter_radius = factor * element_size)
+    ///               0.0 = no smoothing, 0.3 = moderate, 0.5 = heavy
+    void set_smoothing_factor(Real factor) { smoothing_factor_ = factor; }
+
+    /// @brief Get the current smoothing factor
+    Real smoothing_factor() const { return smoothing_factor_; }
+
 private:
     std::shared_ptr<BathymetryData> raw_data_;
     std::unique_ptr<WENO5Sampler> sampler_;
 
     int overintegration_factor_ = 2;
     SamplingMethod sampling_method_ = SamplingMethod::WENO5;
+    Real smoothing_factor_ = 0.0;  ///< Scale-dependent smoothing (0 = disabled)
 
     // Cached projection matrices and quadrature rules per order
     mutable std::map<int, GaussQuadrature2D> quad_cache_;
@@ -120,6 +129,12 @@ private:
     /// @param order Polynomial order
     /// @return Evaluated value
     Real evaluate_bernstein(const VecX& coeffs, Real xi, Real eta, int order) const;
+
+    /// @brief Sample with local box filter averaging
+    /// @param x, y World coordinates
+    /// @param filter_radius Radius of box filter in world units
+    /// @return Smoothed depth value
+    Real sample_smoothed(Real x, Real y, Real filter_radius) const;
 };
 
 }  // namespace drifter

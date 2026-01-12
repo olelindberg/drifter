@@ -114,6 +114,113 @@ void SeabedSurface::set_from_bathymetry(const BathymetryData& bathy) {
     update_coordinates_from_coefficients();
 }
 
+Real SeabedSurface::sample_smoothed(const BathymetryData& bathy, Real x, Real y,
+                                    Real filter_radius) const {
+    // Compute pixel size from geotransform
+    Real pixel_width = std::abs(bathy.geotransform[1]);
+    Real pixel_height = std::abs(bathy.geotransform[5]);
+    Real pixel_size = std::min(pixel_width, pixel_height);
+
+    // Convert world radius to pixel radius - NO CAP for large elements
+    int kernel_radius = std::max(1, static_cast<int>(filter_radius / pixel_size));
+
+    // Get pixel coordinates of center
+    double px_d, py_d;
+    bathy.world_to_pixel(x, y, px_d, py_d);
+    int px = static_cast<int>(std::round(px_d));
+    int py = static_cast<int>(std::round(py_d));
+
+    // Box filter: simple average over kernel
+    Real sum = 0.0;
+    int count = 0;
+
+    for (int di = -kernel_radius; di <= kernel_radius; ++di) {
+        for (int dj = -kernel_radius; dj <= kernel_radius; ++dj) {
+            int pi = px + di;
+            int pj = py + dj;
+
+            // Check bounds
+            if (pi >= 0 && pi < bathy.sizex && pj >= 0 && pj < bathy.sizey) {
+                float val = bathy.elevation[pj * bathy.sizex + pi];
+
+                // Skip NoData values
+                if (std::abs(val - bathy.nodata_value) > 1e-6f && val < 1e30f) {
+                    sum += val;
+                    ++count;
+                }
+            }
+        }
+    }
+
+    if (count == 0) {
+        // Fall back to unsmoothed sampling if no valid pixels
+        return bathy.get_depth(x, y);
+    }
+
+    // Convert elevation to depth
+    Real avg_elevation = sum / count;
+    if (bathy.is_depth_positive) {
+        return avg_elevation > 0.0 ? avg_elevation : 0.0;
+    } else {
+        // Negative elevation = water depth
+        return avg_elevation < 0.0 ? -avg_elevation : 0.0;
+    }
+}
+
+void SeabedSurface::set_from_bathymetry_smoothed(const BathymetryData& bathy,
+                                                 Real smoothing_factor) {
+    const int n1d = order_ + 1;
+
+    // Get 1D LGL nodes for sampling (from interpolator)
+    const SeabedInterpolator& interp = get_interpolator();
+    const VecX& lgl_1d = interp.lgl_nodes();
+
+    const auto& elements = mesh_->elements();
+
+    // Sample bathymetry at each bottom element's DOF positions with smoothing
+    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
+        Index mesh_idx = bottom_elements_[s];
+        const auto& bounds = elements[mesh_idx]->bounds;
+
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real filter_radius = smoothing_factor * std::min(dx, dy);
+
+        VecX& depths = depth_coeffs_[s];
+        VecX& coords = coordinates_[s];
+
+        // Sample on bottom face using 1D LGL nodes
+        for (int j = 0; j < n1d; ++j) {
+            for (int i = 0; i < n1d; ++i) {
+                int idx_2d = i + n1d * j;
+
+                // Reference coords on bottom face (1D LGL nodes)
+                Real xi = lgl_1d(i);
+                Real eta = lgl_1d(j);
+
+                // Map to physical coords
+                Real x = bounds.xmin + 0.5 * (xi + 1.0) * dx;
+                Real y = bounds.ymin + 0.5 * (eta + 1.0) * dy;
+
+                // Get smoothed bathymetry depth
+                Real h = sample_smoothed(bathy, x, y, filter_radius);
+                depths(idx_2d) = h;
+
+                // Store coordinates (z = -h at seabed in sigma coords)
+                coords(3 * idx_2d + 0) = x;
+                coords(3 * idx_2d + 1) = y;
+                coords(3 * idx_2d + 2) = -h;
+            }
+        }
+    }
+
+    // Apply non-conforming projection for interface continuity
+    apply_nonconforming_projection();
+
+    // Update coordinates to match projected coefficients
+    update_coordinates_from_coefficients();
+}
+
 void SeabedSurface::set_from_adaptive_bathymetry(const AdaptiveBathymetry& adaptive) {
     const int n1d = order_ + 1;
 
