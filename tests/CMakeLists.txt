@@ -24,6 +24,10 @@ set(UNIT_TESTS
     unit/test_wavelet_pyramid.cpp
     unit/test_weno_sampler.cpp
     unit/test_adaptive_bathymetry.cpp
+    unit/test_quintic_basis_2d.cpp
+    unit/test_quadtree_adapter.cpp
+    unit/test_cg_dof_manager.cpp
+    unit/test_biharmonic_assembler.cpp
 )
 
 # Integration tests
@@ -36,6 +40,7 @@ set(INTEGRATION_TESTS
     integration/test_vtk_output.cpp
     integration/test_simulation_full.cpp
     integration/test_bathymetry.cpp
+    integration/test_cg_bathymetry_smoother.cpp
 )
 
 # Create unit test executable

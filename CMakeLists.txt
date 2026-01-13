@@ -123,6 +123,11 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/wavelet_pyramid.cpp
     src/bathymetry/weno_sampler.cpp
     src/bathymetry/adaptive_bathymetry.cpp
+    src/bathymetry/quintic_basis_2d.cpp
+    src/bathymetry/quadtree_adapter.cpp
+    src/bathymetry/cg_dof_manager.cpp
+    src/bathymetry/biharmonic_assembler.cpp
+    src/bathymetry/cg_bathymetry_smoother.cpp
 )
 
 set(DG_SOURCES
