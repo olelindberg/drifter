@@ -17,6 +17,7 @@
 //   VecX bernstein_coeffs = lagrange_to_bernstein(order) * lagrange_coeffs;
 
 #include "core/types.hpp"
+#include "bathymetry/quintic_basis_2d.hpp"
 #include <memory>
 #include <vector>
 
@@ -128,7 +129,8 @@ private:
 /// @brief Interpolation method for seabed surface
 enum class SeabedInterpolation {
     Lagrange,   // Standard Lagrange interpolation (may overshoot)
-    Bernstein   // Bernstein basis with convex hull property (bounded)
+    Bernstein,  // Bernstein basis with convex hull property (bounded)
+    Quintic     // Quintic Lagrange basis (order 5) for C² continuity
 };
 
 /// @brief Seabed interpolator with selectable basis
@@ -184,6 +186,9 @@ private:
 
     // Bernstein basis (for Bernstein mode)
     std::unique_ptr<BernsteinBasis3D> bernstein_basis_;
+
+    // Quintic basis (for Quintic mode - always order 5)
+    std::unique_ptr<QuinticBasis2D> quintic_basis_;
 
     // Cached conversion matrix
     MatX L2B_3d_;

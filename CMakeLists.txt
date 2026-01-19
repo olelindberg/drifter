@@ -124,10 +124,16 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/weno_sampler.cpp
     src/bathymetry/adaptive_bathymetry.cpp
     src/bathymetry/quintic_basis_2d.cpp
+    src/bathymetry/lagrange_basis_2d.cpp
     src/bathymetry/quadtree_adapter.cpp
     src/bathymetry/cg_dof_manager.cpp
     src/bathymetry/biharmonic_assembler.cpp
     src/bathymetry/cg_bathymetry_smoother.cpp
+    src/bathymetry/bezier_basis_2d.cpp
+    src/bathymetry/thin_plate_hessian.cpp
+    src/bathymetry/bezier_c2_constraints.cpp
+    src/bathymetry/bezier_data_fitting.cpp
+    src/bathymetry/bezier_bathymetry_smoother.cpp
 )
 
 set(DG_SOURCES

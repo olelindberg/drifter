@@ -3,16 +3,18 @@
 // CGBathymetrySmoother - Main interface for CG bathymetry smoothing
 //
 // This class provides the top-level interface for smoothing noisy bathymetry
-// data using a C² continuous Galerkin (CG) finite element method. The
-// smoothing is based on minimizing a thin plate spline energy functional:
+// data using a continuous Galerkin (CG) finite element method with interior
+// penalty for C¹ continuity. The smoothing is based on minimizing a thin plate
+// spline energy functional:
 //
-//   E(u) = α∫|∇²u|² dA + β∫(u - u_data)² dA
+//   E(u) = α∫|∇²u|² dA + β∫(u - u_data)² dA + γ∫[[∂u/∂n]]² ds
 //
-// where α controls smoothness (curvature penalty) and β controls data fidelity.
+// where α controls smoothness (curvature penalty), β controls data fidelity,
+// and γ is the IPDG penalty for C¹ continuity at element interfaces.
 //
 // Usage:
 //   OctreeAdapter octree(...);  // 3D mesh
-//   CGBathymetrySmoother smoother(octree, alpha, beta);
+//   CGBathymetrySmoother smoother(octree, alpha, beta, order);
 //   smoother.set_bathymetry_data(geotiff_function);
 //   smoother.solve();
 //
@@ -24,7 +26,7 @@
 
 #include "core/types.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
-#include "bathymetry/quintic_basis_2d.hpp"
+#include "bathymetry/lagrange_basis_2d.hpp"
 #include "bathymetry/cg_dof_manager.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include "mesh/seabed_surface.hpp"
@@ -36,7 +38,7 @@ namespace drifter {
 // Forward declarations
 class OctreeAdapter;
 
-/// @brief C² continuous Galerkin bathymetry smoother
+/// @brief CG bathymetry smoother with IPDG for C¹ continuity
 ///
 /// Provides thin plate spline smoothing of bathymetry data on a 2D mesh
 /// that mirrors the bottom face of a 3D octree mesh.
@@ -46,13 +48,19 @@ public:
     /// @param octree 3D mesh (bottom face used for 2D smoothing)
     /// @param alpha Smoothing weight (curvature penalty)
     /// @param beta Data fitting weight
-    CGBathymetrySmoother(const OctreeAdapter& octree, Real alpha, Real beta);
+    /// @param order Polynomial order (default 3 = bicubic)
+    /// @param penalty IPDG penalty parameter (default 500)
+    CGBathymetrySmoother(const OctreeAdapter& octree, Real alpha, Real beta,
+                         int order = 3, Real penalty = 500.0);
 
     /// @brief Construct smoother from standalone 2D mesh
     /// @param mesh 2D quadtree mesh
     /// @param alpha Smoothing weight
     /// @param beta Data fitting weight
-    CGBathymetrySmoother(const QuadtreeAdapter& mesh, Real alpha, Real beta);
+    /// @param order Polynomial order (default 3 = bicubic)
+    /// @param penalty IPDG penalty parameter (default 500)
+    CGBathymetrySmoother(const QuadtreeAdapter& mesh, Real alpha, Real beta,
+                         int order = 3, Real penalty = 500.0);
 
     /// @brief Set bathymetry data from a function
     /// @param bathy_func Function returning depth at (x, y)
@@ -64,8 +72,8 @@ public:
 
     /// @brief Solve the smoothing problem
     ///
-    /// Assembles and solves the biharmonic system:
-    ///   (α K_biharm + β M) u = β M u_data
+    /// Assembles and solves the biharmonic system with IPDG penalty:
+    ///   (α K_biharm + β M + γ K_penalty) u = β M u_data
     void solve();
 
     /// @brief Check if solution is available
@@ -105,6 +113,16 @@ public:
     /// @param seabed Target seabed surface
     void transfer_to_seabed(SeabedSurface& seabed) const;
 
+    /// @brief Write smoothed bathymetry directly to VTK file
+    ///
+    /// Writes the CG solution as a high-resolution 2D surface mesh,
+    /// sampling directly from the basis functions without
+    /// going through SeabedSurface (avoids L2 projection artifacts).
+    ///
+    /// @param filename Base filename (will append .vtu)
+    /// @param resolution Number of subdivisions per element edge
+    void write_vtk(const std::string& filename, int resolution = 10) const;
+
     // =========================================================================
     // Parameter access
     // =========================================================================
@@ -114,6 +132,12 @@ public:
 
     /// Get data fitting weight
     Real beta() const { return beta_; }
+
+    /// Get IPDG penalty parameter
+    Real penalty() const { return penalty_; }
+
+    /// Get polynomial order
+    int order() const { return order_; }
 
     /// Get the 2D mesh
     const QuadtreeAdapter& mesh() const { return *quadtree_; }
@@ -129,8 +153,11 @@ private:
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
     const QuadtreeAdapter* quadtree_ = nullptr;
 
+    /// Polynomial order
+    int order_;
+
     /// Basis functions
-    QuinticBasis2D basis_;
+    std::unique_ptr<LagrangeBasis2D> basis_;
 
     /// DOF manager
     std::unique_ptr<CGDofManager> dof_manager_;
@@ -144,6 +171,7 @@ private:
     /// Smoothing parameters
     Real alpha_;
     Real beta_;
+    Real penalty_;
 
     /// Solution
     VecX solution_free_;
@@ -161,6 +189,12 @@ private:
 
     /// Evaluate gradient within an element
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
+
+    /// Apply Dirichlet BCs at domain corners only
+    void apply_corner_dirichlet();
+
+    /// Apply Dirichlet BCs on all boundary DOFs
+    void apply_boundary_dirichlet();
 };
 
 }  // namespace drifter

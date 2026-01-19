@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "bathymetry/cg_dof_manager.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
-#include "bathymetry/quintic_basis_2d.hpp"
+#include "bathymetry/lagrange_basis_2d.hpp"
 #include <cmath>
 
 using namespace drifter;
@@ -9,12 +9,13 @@ using namespace drifter;
 class CGDofManagerTest : public ::testing::Test {
 protected:
     static constexpr Real TOLERANCE = 1e-12;
+    static constexpr int ORDER = 5;  // Use quintic for backward compatibility
 
     std::unique_ptr<QuadtreeAdapter> mesh_;
-    std::unique_ptr<QuinticBasis2D> basis_;
+    std::unique_ptr<LagrangeBasis2D> basis_;
 
     void SetUp() override {
-        basis_ = std::make_unique<QuinticBasis2D>();
+        basis_ = std::make_unique<LagrangeBasis2D>(ORDER);
     }
 
     void create_uniform_mesh(int nx, int ny) {
@@ -282,7 +283,11 @@ TEST_F(CGDofManagerTest, TransformRhsPreservesSum) {
     // Create a simple RHS vector
     VecX f = VecX::Ones(dofs.num_global_dofs());
 
-    VecX f_red = dofs.transform_rhs(f);
+    // Create identity stiffness matrix (no Dirichlet BCs in this test)
+    SpMat K(dofs.num_global_dofs(), dofs.num_global_dofs());
+    K.setIdentity();
+
+    VecX f_red = dofs.transform_rhs(f, K);
 
     // For uniform mesh (no constraints), sums should be equal
     EXPECT_NEAR(f.sum(), f_red.sum(), TOLERANCE);
@@ -298,8 +303,12 @@ TEST_F(CGDofManagerTest, ExpandSolutionRoundTrip) {
     // Expand to global space and back
     VecX u_global = dofs.expand_solution(u_free);
 
+    // Create identity stiffness matrix (no Dirichlet BCs in this test)
+    SpMat K(dofs.num_global_dofs(), dofs.num_global_dofs());
+    K.setIdentity();
+
     // For uniform mesh, going back should recover original
-    VecX u_back = dofs.transform_rhs(u_global);
+    VecX u_back = dofs.transform_rhs(u_global, K);
 
     // The expanded solution should have correct size
     EXPECT_EQ(u_global.size(), dofs.num_global_dofs());
@@ -412,12 +421,13 @@ TEST_F(CGDofManagerTest, AllElementDofsAccessor) {
 class CGDofManagerNonConformingTest : public ::testing::Test {
 protected:
     static constexpr Real TOLERANCE = 1e-10;
+    static constexpr int ORDER = 5;  // Use quintic for backward compatibility
 
     std::unique_ptr<QuadtreeAdapter> mesh_;
-    std::unique_ptr<QuinticBasis2D> basis_;
+    std::unique_ptr<LagrangeBasis2D> basis_;
 
     void SetUp() override {
-        basis_ = std::make_unique<QuinticBasis2D>();
+        basis_ = std::make_unique<LagrangeBasis2D>(ORDER);
     }
 
     // Create a simple 2:1 non-conforming mesh:
@@ -580,8 +590,8 @@ TEST_F(CGDofManagerNonConformingTest, LinearFunctionContinuityAtInterface) {
         const auto& elem_dofs = dofs.element_dofs(e);
         const VecX& nodes = basis_->nodes_1d();
 
-        for (int j = 0; j < QuinticBasis2D::N1D; ++j) {
-            for (int i = 0; i < QuinticBasis2D::N1D; ++i) {
+        for (int j = 0; j < basis_->num_nodes_1d(); ++j) {
+            for (int i = 0; i < basis_->num_nodes_1d(); ++i) {
                 int local = basis_->dof_index(i, j);
                 Index global = elem_dofs[local];
 

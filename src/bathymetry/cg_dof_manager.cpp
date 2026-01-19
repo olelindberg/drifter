@@ -9,7 +9,7 @@ namespace drifter {
 // Using 1e8 with int64_t to support coordinates up to ~92,000,000
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGDofManager::CGDofManager(const QuadtreeAdapter& mesh, const QuinticBasis2D& basis)
+CGDofManager::CGDofManager(const QuadtreeAdapter& mesh, const LagrangeBasis2D& basis)
     : mesh_(mesh), basis_(basis) {
 
     Index num_elements = mesh_.num_elements();
@@ -19,10 +19,12 @@ CGDofManager::CGDofManager(const QuadtreeAdapter& mesh, const QuinticBasis2D& ba
         return;
     }
 
+    int ndof = basis_.num_dofs();
+
     // Initialize element DOF vectors
     elem_to_global_.resize(num_elements);
     for (Index e = 0; e < num_elements; ++e) {
-        elem_to_global_[e].resize(QuinticBasis2D::NDOF, -1);
+        elem_to_global_[e].resize(ndof, -1);
     }
 
     // Three-pass DOF assignment (following wobbler CG2DMesh pattern)
@@ -97,15 +99,16 @@ std::vector<Vec2> CGDofManager::get_edge_dof_positions(Index elem, int edge_id) 
 
     // LGL nodes on [-1,1] - ALL nodes including endpoints
     const VecX& nodes = basis_.nodes_1d();
+    int n1d = basis_.num_nodes_1d();
 
     // For each edge, compute the physical positions of the DOFs
-    // The indexing must match edge_dofs() in QuinticBasis2D:
+    // The indexing must match edge_dofs() in LagrangeBasis2D:
     // - Edge 0 (left, xi=-1):  dofs ordered by j (eta varies)
     // - Edge 1 (right, xi=+1): dofs ordered by j (eta varies)
     // - Edge 2 (bottom, eta=-1): dofs ordered by i (xi varies)
     // - Edge 3 (top, eta=+1):    dofs ordered by i (xi varies)
 
-    for (int k = 0; k < QuinticBasis2D::N1D; ++k) {
+    for (int k = 0; k < n1d; ++k) {
         Vec2 pos;
         switch (edge_id) {
             case 0:  // Left edge (x = xmin), j varies
@@ -185,8 +188,8 @@ void CGDofManager::assign_edge_dofs() {
             std::vector<int> local_dofs = basis_.edge_dofs(edge);
             std::vector<Vec2> positions = get_edge_dof_positions(e, edge);
 
-            // edge_dofs returns all 6 DOFs on edge (including corners at index 0 and 5)
-            // Skip corners (indices 0 and N1D-1) - they were assigned in assign_vertex_dofs
+            // edge_dofs returns all n1d DOFs on edge (including corners at index 0 and n1d-1)
+            // Skip corners (indices 0 and n1d-1) - they were assigned in assign_vertex_dofs
             for (size_t i = 1; i < local_dofs.size() - 1; ++i) {
                 int local_dof = local_dofs[i];
                 const Vec2& pos = positions[i];
@@ -208,9 +211,10 @@ void CGDofManager::assign_edge_dofs() {
 
 void CGDofManager::assign_interior_dofs() {
     // Interior DOFs are unique per element (not shared)
+    int ndof = basis_.num_dofs();
 
     for (Index e = 0; e < mesh_.num_elements(); ++e) {
-        for (int local_dof = 0; local_dof < QuinticBasis2D::NDOF; ++local_dof) {
+        for (int local_dof = 0; local_dof < ndof; ++local_dof) {
             if (elem_to_global_[e][local_dof] < 0) {
                 // This is an interior DOF
                 elem_to_global_[e][local_dof] = num_global_dofs_++;
@@ -296,9 +300,8 @@ static VecX lagrange_basis(const VecX& nodes, Real t) {
 }
 
 void CGDofManager::build_c2_constraints() {
-    // Build C² constraints at hanging nodes for non-conforming interfaces
-    // For biharmonic smoothing, we only need C¹ continuity in weak form,
-    // which requires value (C⁰) constraints on hanging DOFs
+    // Build C⁰ constraints at hanging nodes for non-conforming interfaces
+    // C¹ continuity is enforced via IPDG penalty in the assembler
 
     constraints_.clear();
     constrained_dofs_.clear();
@@ -309,6 +312,7 @@ void CGDofManager::build_c2_constraints() {
     }
 
     const VecX& nodes = basis_.nodes_1d();
+    int n1d = basis_.num_nodes_1d();
 
     for (const auto& hanging : hanging_edges_) {
         // Get DOFs on the fine edge (these are potential slave DOFs)
@@ -351,6 +355,9 @@ void CGDofManager::build_c2_constraints() {
             Real fine_coord = coarse_edge_runs_in_y ? fine_pos(1) : fine_pos(0);
 
             // Map to parameter on coarse edge [-1, 1]
+            // The fine element spans only HALF of the coarse edge
+            // subedge_index=0 means fine element is on the first half: coarse t in [-1, 0]
+            // subedge_index=1 means fine element is on the second half: coarse t in [0, 1]
             Real t_coarse = -1.0 + 2.0 * (fine_coord - coarse_start) / coarse_length;
 
             // Clamp to valid range (handle numerical errors at endpoints)
@@ -359,7 +366,7 @@ void CGDofManager::build_c2_constraints() {
             // Check if this DOF position coincides with a coarse DOF position
             // (corners and endpoints may already be shared)
             bool is_shared = false;
-            for (int j = 0; j < QuinticBasis2D::N1D; ++j) {
+            for (int j = 0; j < n1d; ++j) {
                 Real t_coarse_node = nodes(j);
                 if (std::abs(t_coarse - t_coarse_node) < 1e-10) {
                     is_shared = true;
@@ -466,14 +473,82 @@ SpMat CGDofManager::transform_matrix(const SpMat& K) const {
     return T.transpose() * K * T;
 }
 
-VecX CGDofManager::transform_rhs(const VecX& f) const {
+VecX CGDofManager::transform_rhs(const VecX& f, const SpMat& K) const {
     SpMat T = build_transformation_matrix();
-    return T.transpose() * f;
+    VecX f_modified = f;
+
+    // For Dirichlet constraints, modify RHS: f -= K * u_dirichlet
+    for (const auto& constraint : constraints_) {
+        if (constraint.master_dofs.empty()) {
+            // This is a Dirichlet BC
+            Index slave = constraint.slave_dof;
+            Real value = constraint.rhs_value;
+
+            // Subtract contribution from RHS: f_i -= K_i,slave * value
+            for (SpMat::InnerIterator it(K, slave); it; ++it) {
+                f_modified(it.row()) -= it.value() * value;
+            }
+        }
+    }
+
+    return T.transpose() * f_modified;
 }
 
 VecX CGDofManager::expand_solution(const VecX& u_free) const {
     SpMat T = build_transformation_matrix();
-    return T * u_free;
+    VecX u_global = T * u_free;
+
+    // Set Dirichlet values directly
+    for (const auto& constraint : constraints_) {
+        if (constraint.master_dofs.empty()) {
+            u_global(constraint.slave_dof) = constraint.rhs_value;
+        }
+    }
+
+    return u_global;
+}
+
+std::vector<Index> CGDofManager::domain_corner_dofs() const {
+    const auto& domain = mesh_.domain_bounds();
+    std::vector<Vec2> corner_positions = {
+        {domain.xmin, domain.ymin},
+        {domain.xmax, domain.ymin},
+        {domain.xmin, domain.ymax},
+        {domain.xmax, domain.ymax}
+    };
+
+    std::vector<Index> dofs;
+    for (const auto& pos : corner_positions) {
+        Index dof = find_dof_at_position(pos);
+        if (dof >= 0) {
+            dofs.push_back(dof);
+        }
+    }
+    return dofs;
+}
+
+void CGDofManager::apply_corner_dirichlet(const std::vector<Real>& corner_values) {
+    auto corner_dofs = domain_corner_dofs();
+
+    for (size_t i = 0; i < corner_dofs.size() && i < corner_values.size(); ++i) {
+        apply_single_dirichlet(corner_dofs[i], corner_values[i]);
+    }
+}
+
+void CGDofManager::apply_single_dirichlet(Index dof, Real value) {
+    if (constrained_dofs_.find(dof) == constrained_dofs_.end()) {
+        C2Constraint constraint;
+        constraint.slave_dof = dof;
+        constraint.type = C2Constraint::Type::Value;
+        constraint.rhs_value = value;
+        // Empty master_dofs indicates Dirichlet BC
+        constraints_.push_back(constraint);
+        constrained_dofs_.insert(dof);
+
+        // Rebuild DOF mappings after adding constraint
+        build_dof_mappings();
+        transformation_matrix_built_ = false;
+    }
 }
 
 }  // namespace drifter

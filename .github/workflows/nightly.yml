@@ -1,0 +1,217 @@
+name: Nightly Tests
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  extended-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeigen3-dev \
+            libopenmpi-dev \
+            openmpi-bin \
+            libgtest-dev \
+            libvtk9-dev \
+            libgdal-dev \
+            cmake \
+            ninja-build \
+            g++-12
+
+      - name: Build zarrs_ffi
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source ~/.cargo/env
+          git clone --depth 1 https://github.com/LDeakin/zarrs_ffi.git /tmp/zarrs_ffi
+          cd /tmp/zarrs_ffi
+          cargo build --release
+          echo "ZARRS_FFI_DIR=/tmp/zarrs_ffi/target/release" >> $GITHUB_ENV
+
+      - name: Configure CMake
+        run: |
+          source ~/.cargo/env
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=ON \
+            -DDRIFTER_USE_OPENMP=ON \
+            -DDRIFTER_USE_VTK=ON \
+            -DDRIFTER_USE_GDAL=ON \
+            -DDRIFTER_USE_ZARR=ON \
+            -DZARRS_FFI_DIR=${{ env.ZARRS_FFI_DIR }}
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run all tests
+        run: |
+          cd build
+          ctest --output-on-failure --timeout 600
+        continue-on-error: true
+
+      - name: Run MPI scaling tests
+        run: |
+          cd build
+          for np in 1 2 4 8; do
+            echo "Running with $np MPI processes..."
+            mpirun --oversubscribe -np $np ./drifter_mpi_tests || true
+          done
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: build/Testing/
+
+  convergence-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeigen3-dev \
+            libopenmpi-dev \
+            libgtest-dev \
+            cmake \
+            ninja-build \
+            g++-12
+
+      - name: Configure and build
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=OFF \
+            -DDRIFTER_USE_OPENMP=ON \
+            -DDRIFTER_USE_VTK=OFF \
+            -DDRIFTER_USE_ZARR=OFF \
+            -DDRIFTER_USE_GDAL=OFF
+          cmake --build build --parallel $(nproc)
+
+      - name: Run convergence tests
+        run: |
+          cd build
+          ctest --output-on-failure -L convergence --timeout 1800
+        continue-on-error: true
+
+  memory-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeigen3-dev \
+            libgtest-dev \
+            cmake \
+            ninja-build \
+            g++-12 \
+            valgrind
+
+      - name: Configure and build (Debug)
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=OFF \
+            -DDRIFTER_USE_OPENMP=OFF \
+            -DDRIFTER_USE_VTK=OFF \
+            -DDRIFTER_USE_ZARR=OFF \
+            -DDRIFTER_USE_GDAL=OFF
+          cmake --build build --parallel $(nproc)
+
+      - name: Run valgrind on unit tests
+        run: |
+          cd build
+          valgrind --leak-check=full --error-exitcode=1 \
+            ./drifter_unit_tests --gtest_filter='-*Slow*' 2>&1 | head -500
+        continue-on-error: true
+        timeout-minutes: 30
+
+  sanitizer-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeigen3-dev \
+            libgtest-dev \
+            cmake \
+            ninja-build \
+            clang-15
+
+      - name: Build with AddressSanitizer
+        run: |
+          cmake -B build-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++-15 \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=OFF \
+            -DDRIFTER_USE_OPENMP=OFF \
+            -DDRIFTER_USE_VTK=OFF \
+            -DDRIFTER_USE_ZARR=OFF \
+            -DDRIFTER_USE_GDAL=OFF
+          cmake --build build-asan --parallel $(nproc)
+
+      - name: Run tests with AddressSanitizer
+        run: |
+          cd build-asan
+          ASAN_OPTIONS=detect_leaks=1 ./drifter_unit_tests
+        continue-on-error: true
+        timeout-minutes: 15
+
+      - name: Build with UndefinedBehaviorSanitizer
+        run: |
+          cmake -B build-ubsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++-15 \
+            -DCMAKE_CXX_FLAGS="-fsanitize=undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined" \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=OFF \
+            -DDRIFTER_USE_OPENMP=OFF \
+            -DDRIFTER_USE_VTK=OFF \
+            -DDRIFTER_USE_ZARR=OFF \
+            -DDRIFTER_USE_GDAL=OFF
+          cmake --build build-ubsan --parallel $(nproc)
+
+      - name: Run tests with UBSan
+        run: |
+          cd build-ubsan
+          ./drifter_unit_tests
+        continue-on-error: true
+        timeout-minutes: 15

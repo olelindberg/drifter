@@ -93,6 +93,37 @@ The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home
 
 4. **VTK output**: Uses VTK 5.1 format with `VTK_LAGRANGE_HEXAHEDRON` (type 72) for high-order elements
 
+5. **Dirichlet boundary conditions**: Use row/column elimination in the stiffness matrix Q:
+   - For each Dirichlet DOF `i`: move coupling terms to RHS, then set `Q(i,:) = 0`, `Q(:,i) = 0`, `Q(i,i) = 1`, `c(i) = -value`
+   - For C² constraints with Dirichlet DOFs: compute `b_c2 = -A_c2 * x_dir`, then zero Dirichlet columns in A_c2
+
+### Bezier Bathymetry Smoother (`bathymetry/`)
+
+Fits quintic Bezier surfaces (36 DOFs per element, 6×6 control points) to bathymetry data with C² continuity at element interfaces.
+
+**Key files:**
+- `BezierBathymetrySmoother` - Main solver using constrained QP (KKT system)
+- `BezierBasis2D` - Quintic tensor-product Bernstein basis evaluation
+- `ThinPlateHessian` - Curvature regularization energy `E = ∫[(z_uu + z_vv)² + 2z_uv²]`
+- `BezierC2ConstraintBuilder` - C² continuity constraints at shared vertices
+- `BezierDataFittingAssembler` - Least-squares data fitting term
+
+**Configuration (`BezierSmootherConfig`):**
+- `lambda` - Data fitting weight (0 = pure thin plate/soap film, higher = closer to data)
+- `gradient_weight` - First derivative penalty (slope smoothing)
+- `enable_boundary_dirichlet` - Pin boundary corner DOFs to input data
+
+**Critical design decisions:**
+1. **Dirichlet BCs only at corners**: Apply Dirichlet constraints only at corner DOFs (vertices), not interior edge DOFs. This preserves C² constraints at shared boundary vertices, which involve derivative terms depending on multiple edge DOFs.
+
+2. **Thin plate scaling for physical coordinates**: The energy must account for element size (dx, dy):
+   - `scale_uu_uu = dy/dx³` (for z_uu² term)
+   - `scale_vv_vv = dx/dy³` (for z_vv² term)
+   - `scale_uu_vv = 1/(dx·dy)` (for cross term)
+   - `scale_uv_uv = 2/(dx·dy)` (for z_uv² term)
+
+3. **C² constraints at vertices (9 per shared vertex)**: z, z_u, z_v, z_uu, z_uv, z_vv, z_uuv, z_uvv, z_uuvv - with proper scaling by element size.
+
 ## Testing
 
 Tests use GoogleTest framework with fixtures in `tests/test_utils.hpp`:
@@ -111,3 +142,8 @@ Test organization:
 
 Required: Eigen3, Boost (Geometry), MPI, OpenMP, GTest
 Optional: GDAL (geospatial), VTK, zarrs_ffi (Zarr output)
+
+
+## User notes:
+
+Always separate i/o code from algorithmic code

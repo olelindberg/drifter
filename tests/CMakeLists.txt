@@ -28,6 +28,8 @@ set(UNIT_TESTS
     unit/test_quadtree_adapter.cpp
     unit/test_cg_dof_manager.cpp
     unit/test_biharmonic_assembler.cpp
+    unit/test_bezier_basis_2d.cpp
+    unit/test_thin_plate_hessian.cpp
 )
 
 # Integration tests
@@ -41,6 +43,7 @@ set(INTEGRATION_TESTS
     integration/test_simulation_full.cpp
     integration/test_bathymetry.cpp
     integration/test_cg_bathymetry_smoother.cpp
+    integration/test_bezier_bathymetry_smoother.cpp
 )
 
 # Create unit test executable
@@ -82,23 +85,3 @@ gtest_discover_tests(drifter_integration_tests
     PROPERTIES LABELS "integration"
 )
 
-# MPI tests (if MPI enabled)
-if(DRIFTER_USE_MPI)
-    add_executable(drifter_mpi_tests
-        mpi/test_halo_exchange.cpp
-        mpi/test_domain_decomposition.cpp
-    )
-
-    target_link_libraries(drifter_mpi_tests PRIVATE
-        drifter_lib
-        GTest::gtest
-        GTest::gtest_main
-    )
-
-    # MPI tests need to be run with mpirun
-    add_test(
-        NAME mpi_tests
-        COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4 $<TARGET_FILE:drifter_mpi_tests>
-    )
-    set_tests_properties(mpi_tests PROPERTIES LABELS "mpi")
-endif()

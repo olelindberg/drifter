@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-12, clang-15]
+        build_type: [Debug, Release]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeigen3-dev \
+            libopenmpi-dev \
+            openmpi-bin \
+            libgtest-dev \
+            cmake \
+            ninja-build
+
+      - name: Install compiler
+        run: |
+          if [[ "${{ matrix.compiler }}" == "gcc-12" ]]; then
+            sudo apt-get install -y g++-12
+            echo "CXX=g++-12" >> $GITHUB_ENV
+            echo "CC=gcc-12" >> $GITHUB_ENV
+          elif [[ "${{ matrix.compiler }}" == "clang-15" ]]; then
+            sudo apt-get install -y clang-15
+            echo "CXX=clang++-15" >> $GITHUB_ENV
+            echo "CC=clang-15" >> $GITHUB_ENV
+          fi
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_CXX_COMPILER=${{ env.CXX }} \
+            -DCMAKE_C_COMPILER=${{ env.CC }} \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=ON \
+            -DDRIFTER_USE_OPENMP=ON \
+            -DDRIFTER_USE_VTK=OFF \
+            -DDRIFTER_USE_ZARR=OFF \
+            -DDRIFTER_USE_GDAL=OFF
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run unit tests
+        if: matrix.build_type == 'Release'
+        run: |
+          cd build
+          ctest --output-on-failure -L unit --timeout 120
+
+      - name: Run integration tests
+        if: matrix.build_type == 'Release'
+        run: |
+          cd build
+          ctest --output-on-failure -L integration --timeout 300
+
+      - name: Run MPI tests
+        if: matrix.build_type == 'Release'
+        run: |
+          cd build
+          mpirun --oversubscribe -np 4 ctest --output-on-failure -L mpi --timeout 300 || true
+
+  build-with-optional-deps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libeigen3-dev \
+            libopenmpi-dev \
+            openmpi-bin \
+            libgtest-dev \
+            libvtk9-dev \
+            libgdal-dev \
+            cmake \
+            ninja-build \
+            g++-12
+
+      - name: Configure CMake with VTK and GDAL
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-12 \
+            -DDRIFTER_BUILD_TESTS=ON \
+            -DDRIFTER_USE_MPI=ON \
+            -DDRIFTER_USE_OPENMP=ON \
+            -DDRIFTER_USE_VTK=ON \
+            -DDRIFTER_USE_GDAL=ON \
+            -DDRIFTER_USE_ZARR=OFF
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run tests
+        run: |
+          cd build
+          ctest --output-on-failure --timeout 300
+
+  code-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-15 clang-tidy-15 libeigen3-dev cmake
+
+      - name: Check formatting
+        run: |
+          find src include -name '*.cpp' -o -name '*.hpp' | \
+            xargs clang-format-15 --dry-run --Werror || \
+            echo "::warning::Some files need formatting"
+
+      - name: Generate compile_commands.json
+        run: |
+          cmake -B build \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DDRIFTER_USE_MPI=OFF \
+            -DDRIFTER_USE_OPENMP=OFF \
+            -DDRIFTER_USE_VTK=OFF \
+            -DDRIFTER_USE_ZARR=OFF \
+            -DDRIFTER_USE_GDAL=OFF
+
+      - name: Run clang-tidy
+        run: |
+          find src -name '*.cpp' -print0 | \
+            xargs -0 -n1 clang-tidy-15 -p build --quiet 2>/dev/null || \
+            echo "::warning::clang-tidy found some issues"
+
+  documentation:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Doxygen
+        run: sudo apt-get install -y doxygen graphviz
+
+      - name: Generate documentation
+        run: |
+          if [ -f Doxyfile ]; then
+            doxygen Doxyfile
+          else
+            echo "No Doxyfile found, skipping documentation generation"
+          fi

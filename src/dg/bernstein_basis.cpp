@@ -1,5 +1,6 @@
 #include "dg/bernstein_basis.hpp"
 #include "dg/basis_hexahedron.hpp"
+#include "bathymetry/quintic_basis_2d.hpp"
 #include <cmath>
 #include <stdexcept>
 
@@ -236,6 +237,12 @@ SeabedInterpolator::SeabedInterpolator(int order, SeabedInterpolation method)
         bernstein_basis_ = std::make_unique<BernsteinBasis3D>(order);
         L2B_3d_ = bernstein_basis_->lagrange_to_bernstein_matrix();
     }
+
+    // Build Quintic basis if using that method
+    if (method == SeabedInterpolation::Quintic) {
+        // Quintic is always order 5, override the passed order for interpolation
+        quintic_basis_ = std::make_unique<QuinticBasis2D>();
+    }
 }
 
 VecX SeabedInterpolator::evaluate_lagrange_1d(Real xi) const {
@@ -282,7 +289,17 @@ Vec3 SeabedInterpolator::evaluate_point(const VecX& coords, Real xi, Real eta) c
 
     Vec3 point(0, 0, 0);
 
-    if (method_ == SeabedInterpolation::Lagrange) {
+    if (method_ == SeabedInterpolation::Quintic) {
+        // Quintic Lagrange interpolation in 2D (36 DOFs)
+        // coords for quintic should be 3*36 = 108 values
+        VecX phi = quintic_basis_->evaluate(xi, eta);
+        int ndof = QuinticBasis2D::NDOF;
+        for (int dof = 0; dof < ndof; ++dof) {
+            point(0) += phi(dof) * coords(3 * dof + 0);
+            point(1) += phi(dof) * coords(3 * dof + 1);
+            point(2) += phi(dof) * coords(3 * dof + 2);
+        }
+    } else if (method_ == SeabedInterpolation::Lagrange) {
         // Standard Lagrange interpolation
         VecX phi = evaluate_lagrange_bottom_face(xi, eta);
 
@@ -318,7 +335,11 @@ Vec3 SeabedInterpolator::evaluate_point(const VecX& coords, Real xi, Real eta) c
 Real SeabedInterpolator::evaluate_scalar(const VecX& data, Real xi, Real eta) const {
     Real value = 0.0;
 
-    if (method_ == SeabedInterpolation::Lagrange) {
+    if (method_ == SeabedInterpolation::Quintic) {
+        // Quintic Lagrange interpolation in 2D (36 DOFs)
+        VecX phi = quintic_basis_->evaluate(xi, eta);
+        value = phi.dot(data);
+    } else if (method_ == SeabedInterpolation::Lagrange) {
         // Standard Lagrange interpolation
         VecX phi = evaluate_lagrange_bottom_face(xi, eta);
 
@@ -356,7 +377,11 @@ Real SeabedInterpolator::evaluate_scalar_2d(const VecX& data_2d, Real xi, Real e
 
     Real value = 0.0;
 
-    if (method_ == SeabedInterpolation::Lagrange) {
+    if (method_ == SeabedInterpolation::Quintic) {
+        // Quintic Lagrange interpolation (order 5, 36 DOFs)
+        VecX phi = quintic_basis_->evaluate(xi, eta);
+        value = phi.dot(data_2d);
+    } else if (method_ == SeabedInterpolation::Lagrange) {
         // Lagrange interpolation in 2D
         VecX phi_xi = evaluate_lagrange_1d(xi);
         VecX phi_eta = evaluate_lagrange_1d(eta);

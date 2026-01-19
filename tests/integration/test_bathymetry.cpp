@@ -9,6 +9,7 @@
 #include "dg/bernstein_basis.hpp"
 #include "dg/nonconforming_projection.hpp"
 #include "bathymetry/adaptive_bathymetry.hpp"
+#include "bathymetry/cg_bathymetry_smoother.hpp"
 #include "io/vtk_writer.hpp"
 #include "test_integration_fixtures.hpp"
 #include <filesystem>
@@ -1017,4 +1018,322 @@ TEST_F(SimulationTest, CompareAdaptiveBathymetryMethods) {
     EXPECT_LT(rms_weno5, 10.0) << "WENO5 RMS difference should be small";
     EXPECT_LT(rms_smoothed, 15.0) << "Smoothed RMS difference should be reasonable";
     EXPECT_LT(rms_heavy, 20.0) << "Heavy smoothed RMS difference should be reasonable";
+}
+
+// Test CGBathymetrySmoother with real GeoTIFF bathymetry data
+// Uses C² continuous Galerkin biharmonic smoother for global smoothing
+TEST_F(SimulationTest, CGBathymetrySmootherWithRealData) {
+    if (!GeoTiffReader::is_available()) {
+        GTEST_SKIP() << "GDAL not available, skipping GeoTIFF test";
+    }
+
+    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+    if (!std::filesystem::exists(geotiff_path)) {
+        GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
+    }
+
+    if (!std::filesystem::exists(LAND_POLYGON_GPKG_PATH)) {
+        GTEST_SKIP() << "Land polygon file not found: " << LAND_POLYGON_GPKG_PATH;
+    }
+
+    // Load bathymetry
+    GeoTiffReader reader;
+    BathymetryData bathy = reader.load(geotiff_path);
+    ASSERT_TRUE(bathy.is_valid());
+    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
+
+    std::cout << "\n=== CG Bathymetry Smoother with Real Data ===" << std::endl;
+    std::cout << "Bathymetry size: " << bathy_ptr->sizex << " x " << bathy_ptr->sizey << std::endl;
+    std::cout << "Domain bounds: [" << bathy_ptr->xmin << ", " << bathy_ptr->xmax << "] x ["
+              << bathy_ptr->ymin << ", " << bathy_ptr->ymax << "]" << std::endl;
+    std::cout << "Domain size: " << (bathy_ptr->xmax - bathy_ptr->xmin) << " x "
+              << (bathy_ptr->ymax - bathy_ptr->ymin) << " meters" << std::endl;
+
+    // Load coastline for adaptive refinement
+    CoastlineReader coastline_reader;
+    bool loaded = coastline_reader.load(LAND_POLYGON_GPKG_PATH,
+                                         LAND_POLYGON_LAYER,
+                                         LAND_POLYGON_PROJECTION);
+    ASSERT_TRUE(loaded);
+    coastline_reader.swap_xy();
+    coastline_reader.remove_small_polygons(1.0e6);
+
+    auto coastline_index = std::make_shared<CoastlineIndex>();
+    coastline_index->build(coastline_reader.polygons());
+
+    // Build adaptive octree
+    OctreeAdapter octree(bathy_ptr->xmin, bathy_ptr->xmax,
+                         bathy_ptr->ymin, bathy_ptr->ymax,
+                         -1.0, 0.0);
+
+    const int max_level_x = 5;  // Reduced for faster test
+    const int max_level_y = 5;
+    const int max_level_z = 0;
+    const Real bathymetry_gradient_threshold = 0.005;
+
+    CoastlineRefinement coastline_criterion(coastline_index, max_level_x);
+
+    auto compute_bathymetry_gradient = [&bathy_ptr](const ElementBounds& bounds) -> Real {
+        Real h00 = bathy_ptr->get_depth(bounds.xmin, bounds.ymin);
+        Real h10 = bathy_ptr->get_depth(bounds.xmax, bounds.ymin);
+        Real h01 = bathy_ptr->get_depth(bounds.xmin, bounds.ymax);
+        Real h11 = bathy_ptr->get_depth(bounds.xmax, bounds.ymax);
+
+        if (h00 <= 0 || h10 <= 0 || h01 <= 0 || h11 <= 0) {
+            return 0.0;
+        }
+
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real dhdx = 0.5 * ((h10 - h00) / dx + (h11 - h01) / dx);
+        Real dhdy = 0.5 * ((h01 - h00) / dy + (h11 - h10) / dy);
+        return std::sqrt(dhdx * dhdx + dhdy * dhdy);
+    };
+
+    octree.build_adaptive(
+        [&coastline_criterion, &compute_bathymetry_gradient, bathymetry_gradient_threshold](const ElementBounds& bounds) -> bool {
+            if (coastline_criterion.should_refine(bounds, 0)) return true;
+            if (compute_bathymetry_gradient(bounds) > bathymetry_gradient_threshold) return true;
+            return false;
+        },
+        max_level_x, max_level_y, max_level_z);
+
+    octree.balance();
+
+    const int poly_order = 3;
+    std::cout << "Adaptive mesh: " << octree.num_elements() << " elements, order " << poly_order << std::endl;
+
+    // =========================================================================
+    // Method 1: Direct sampling (baseline)
+    // =========================================================================
+    SeabedSurface seabed_direct(octree, poly_order, SeabedInterpolation::Bernstein);
+    seabed_direct.set_from_bathymetry(*bathy_ptr);
+
+    std::string direct_path = "/tmp/seabed_cg_direct";
+    seabed_direct.write_vtk(direct_path, 10);
+    std::cout << "\nMethod 1 (Direct sampling): " << direct_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Method 2: CG Biharmonic Smoother
+    // =========================================================================
+    // Create wrapper for BathymetryData to use with CGBathymetrySmoother
+    auto bathy_func = [&bathy_ptr](Real x, Real y) -> Real {
+        return bathy_ptr->get_depth(x, y);
+    };
+
+    // Smoother parameters:
+    // alpha = smoothing weight (curvature penalty)
+    // beta = data fitting weight
+    //
+    // IMPORTANT: The biharmonic term scales as α/h⁴ where h is element size.
+    // For large domains, α must be scaled up significantly.
+    // Effective smoothing ratio: α/h⁴ vs β*h² → need α ~ β*h⁶ for balance
+    //
+    // With characteristic element size h ~ 40km = 40000m:
+    // For light smoothing, use α = smoothing_ratio * h⁶
+    Real h_characteristic = std::sqrt(
+        (bathy_ptr->xmax - bathy_ptr->xmin) * (bathy_ptr->ymax - bathy_ptr->ymin) /
+        octree.num_elements());
+    Real h6 = std::pow(h_characteristic, 6);
+
+    // The biharmonic term ∫∇²u·∇²v scales as 1/h^4 (from second derivatives)
+    // The mass term ∫u·v scales as h^2 (from integration)
+    // To have comparable magnitudes: alpha/h^4 ~ beta*h^2 => alpha ~ beta*h^6
+    //
+    // For numerical stability, we use moderate values and let the relative
+    // ratio control smoothing. alpha=0.001, beta=1.0 with h~30km should give
+    // biharmonic ~ 0.001/(30000)^4 ~ 10^-22 vs mass ~ 1*(30000)^2 ~ 10^9
+    // Still dominated by mass, but that's fine for light smoothing.
+    //
+    // Alternative: use normalized alpha that accounts for element size internally.
+    // For now, let's just use reasonable values and accept that smoothing will be very light.
+    Real alpha = 0.001;  // Smoothing weight (not scaled by h^6)
+    Real beta = 1.0;     // Data fitting weight
+
+    std::cout << "\nCharacteristic element size: " << h_characteristic << " m" << std::endl;
+    std::cout << "h^6 scaling factor: " << h6 << std::endl;
+
+    std::cout << "\nCG Smoother parameters: alpha=" << alpha << ", beta=" << beta << std::endl;
+
+    CGBathymetrySmoother smoother(octree, alpha, beta);
+    smoother.set_bathymetry_data(bathy_func);
+
+    std::cout << "Solving biharmonic system..." << std::endl;
+    smoother.solve();
+    std::cout << "Solved with " << smoother.num_dofs() << " DOFs" << std::endl;
+    std::cout << "Constraints: " << smoother.dof_manager().constraints().size() << std::endl;
+    std::cout << "Free DOFs: " << smoother.dof_manager().num_free_dofs() << std::endl;
+
+    // Check constraint weights for oscillation issues
+    const auto& constraints = smoother.dof_manager().constraints();
+    Real max_weight = 0.0;
+    Real min_weight = 0.0;
+    int constrained_master_count = 0;
+    for (const auto& c : constraints) {
+        for (size_t i = 0; i < c.weights.size(); ++i) {
+            Real w = c.weights[i];
+            max_weight = std::max(max_weight, w);
+            min_weight = std::min(min_weight, w);
+            // Check if master DOF is itself constrained
+            if (smoother.dof_manager().is_constrained(c.master_dofs[i])) {
+                constrained_master_count++;
+            }
+        }
+    }
+    std::cout << "Constraint weight range: [" << min_weight << ", " << max_weight << "]" << std::endl;
+    std::cout << "Master DOFs that are themselves constrained: " << constrained_master_count << std::endl;
+    if (max_weight > 2.0 || min_weight < -1.0) {
+        std::cout << "WARNING: Large constraint weights may cause oscillations!" << std::endl;
+    }
+    if (constrained_master_count > 0) {
+        std::cout << "WARNING: Some constraints reference other constrained DOFs - need chain resolution!" << std::endl;
+    }
+
+    // Verify that constrained DOFs satisfy their constraints
+    const auto& sol2 = smoother.solution();
+    int violated_count = 0;
+    Real max_violation = 0.0;
+    for (const auto& c : constraints) {
+        if (c.master_dofs.empty()) continue;  // Skip Dirichlet constraints
+        Real expected = 0.0;
+        for (size_t i = 0; i < c.master_dofs.size(); ++i) {
+            expected += c.weights[i] * sol2(c.master_dofs[i]);
+        }
+        Real actual = sol2(c.slave_dof);
+        Real violation = std::abs(expected - actual);
+        if (violation > 1e-6) {
+            violated_count++;
+            max_violation = std::max(max_violation, violation);
+        }
+    }
+    std::cout << "Constraint violations: " << violated_count << "/" << constraints.size()
+              << " (max violation: " << max_violation << ")" << std::endl;
+
+    // Check min/max solution values
+    const auto& sol = smoother.solution();
+    Real sol_min = sol.minCoeff();
+    Real sol_max = sol.maxCoeff();
+    std::cout << "Solution range: [" << sol_min << ", " << sol_max << "]" << std::endl;
+    if (sol_min < -100.0 || sol_max > 1000.0) {
+        std::cout << "WARNING: Solution has extreme values!" << std::endl;
+    }
+
+    // Find which DOFs have negative values
+    int neg_count = 0;
+    int neg_constrained = 0;
+    for (Index i = 0; i < sol.size(); ++i) {
+        if (sol(i) < -0.1) {
+            neg_count++;
+            if (smoother.dof_manager().is_constrained(i)) {
+                neg_constrained++;
+            }
+        }
+    }
+    std::cout << "Negative DOFs (<-0.1): " << neg_count << " total, "
+              << neg_constrained << " are constrained" << std::endl;
+
+    // Write VTK directly from CG solution (avoids L2 projection artifacts)
+    std::string cg_path = "/tmp/seabed_cg_smooth";
+    smoother.write_vtk(cg_path, 10);
+    std::cout << "Method 2 (CG Biharmonic): " << cg_path << ".vtu" << std::endl;
+
+    // =========================================================================
+    // Method 3: CG Smoother with stronger smoothing
+    // =========================================================================
+    Real alpha_strong = 0.1;  // 100x more smoothing (still light due to h^4 scaling)
+
+    CGBathymetrySmoother smoother_strong(octree, alpha_strong, beta);
+    smoother_strong.set_bathymetry_data(bathy_func);
+    smoother_strong.solve();
+
+    std::string cg_strong_path = "/tmp/seabed_cg_smooth_strong";
+    smoother_strong.write_vtk(cg_strong_path, 10);
+    std::cout << "Method 3 (CG Strong): " << cg_strong_path << ".vtu (alpha=" << alpha_strong << ")" << std::endl;
+
+    // =========================================================================
+    // Compare depths at sample points
+    // =========================================================================
+    // Compare depths at sample points (using smoother.evaluate directly)
+    // =========================================================================
+    Real xmin = bathy_ptr->xmin + 0.1 * (bathy_ptr->xmax - bathy_ptr->xmin);
+    Real xmax = bathy_ptr->xmax - 0.1 * (bathy_ptr->xmax - bathy_ptr->xmin);
+    Real ymin = bathy_ptr->ymin + 0.1 * (bathy_ptr->ymax - bathy_ptr->ymin);
+    Real ymax = bathy_ptr->ymax - 0.1 * (bathy_ptr->ymax - bathy_ptr->ymin);
+
+    Real max_diff_cg = 0.0, sum_diff_sq_cg = 0.0;
+    Real max_diff_cg_strong = 0.0, sum_diff_sq_cg_strong = 0.0;
+    int num_samples = 0;
+
+    for (Real x = xmin; x <= xmax; x += (xmax - xmin) / 20) {
+        for (Real y = ymin; y <= ymax; y += (ymax - ymin) / 20) {
+            Real h_raw = bathy_ptr->get_depth(x, y);
+            Real h_cg = smoother.evaluate(x, y);
+            Real h_cg_strong = smoother_strong.evaluate(x, y);
+
+            if (h_raw > 0 && !std::isnan(h_cg) && !std::isnan(h_cg_strong)) {
+                Real diff_cg = std::abs(h_raw - h_cg);
+                Real diff_cg_strong = std::abs(h_raw - h_cg_strong);
+
+                max_diff_cg = std::max(max_diff_cg, diff_cg);
+                max_diff_cg_strong = std::max(max_diff_cg_strong, diff_cg_strong);
+                sum_diff_sq_cg += diff_cg * diff_cg;
+                sum_diff_sq_cg_strong += diff_cg_strong * diff_cg_strong;
+                num_samples++;
+            }
+        }
+    }
+
+    Real rms_cg = std::sqrt(sum_diff_sq_cg / num_samples);
+    Real rms_cg_strong = std::sqrt(sum_diff_sq_cg_strong / num_samples);
+
+    std::cout << "\n=== Comparison Results (vs Raw bathymetry) ===" << std::endl;
+    std::cout << "Samples compared: " << num_samples << std::endl;
+    std::cout << "\nCG Biharmonic (alpha=" << alpha << "):" << std::endl;
+    std::cout << "  Max difference: " << max_diff_cg << " m" << std::endl;
+    std::cout << "  RMS difference: " << rms_cg << " m" << std::endl;
+    std::cout << "\nCG Strong (alpha=" << alpha_strong << "):" << std::endl;
+    std::cout << "  Max difference: " << max_diff_cg_strong << " m" << std::endl;
+    std::cout << "  RMS difference: " << rms_cg_strong << " m" << std::endl;
+
+    std::cout << "\n=== Files for ParaView comparison ===" << std::endl;
+    std::cout << "1. Direct sampling:          " << direct_path << ".vtu" << std::endl;
+    std::cout << "2. CG Biharmonic (light):    " << cg_path << ".vtu" << std::endl;
+    std::cout << "3. CG Biharmonic (strong):   " << cg_strong_path << ".vtu" << std::endl;
+    std::cout << "\nOpen in ParaView, color by 'depth', use same color scale" << std::endl;
+    std::cout << "The CG VTK files include 'raw_bathy' and 'difference' fields for comparison" << std::endl;
+
+    // All methods should produce valid results
+    EXPECT_TRUE(std::filesystem::exists(direct_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(cg_path + ".vtu"));
+    EXPECT_TRUE(std::filesystem::exists(cg_strong_path + ".vtu"));
+
+    // CG smoother should produce reasonable differences
+    EXPECT_LT(rms_cg, 20.0) << "CG RMS difference should be reasonable";
+    EXPECT_LT(rms_cg_strong, 30.0) << "CG strong RMS difference should be reasonable";
+
+    // =========================================================================
+    // Method 4: Uniform 4x4 mesh (no hanging nodes) for comparison
+    // =========================================================================
+    QuadtreeAdapter uniform_mesh;
+    uniform_mesh.build_uniform(bathy_ptr->xmin, bathy_ptr->xmax,
+                                bathy_ptr->ymin, bathy_ptr->ymax, 4, 4);
+
+    std::cout << "\n=== Uniform 4x4 mesh test ===" << std::endl;
+    std::cout << "Elements: " << uniform_mesh.num_elements() << std::endl;
+
+    CGBathymetrySmoother smoother_uniform(uniform_mesh, 0.001, 1.0);
+    smoother_uniform.set_bathymetry_data(bathy_func);
+    smoother_uniform.solve();
+
+    std::cout << "DOFs: " << smoother_uniform.num_dofs() << std::endl;
+    std::cout << "Constraints: " << smoother_uniform.dof_manager().constraints().size() << std::endl;
+
+    const auto& sol_uniform = smoother_uniform.solution();
+    std::cout << "Solution range: [" << sol_uniform.minCoeff() << ", " << sol_uniform.maxCoeff() << "]" << std::endl;
+
+    std::string uniform_path = "/tmp/seabed_cg_uniform4x4";
+    smoother_uniform.write_vtk(uniform_path, 20);
+    std::cout << "Uniform mesh output: " << uniform_path << ".vtu" << std::endl;
+
+    EXPECT_TRUE(std::filesystem::exists(uniform_path + ".vtu"));
 }

@@ -2,7 +2,7 @@
 
 // CGDofManager - Global DOF numbering for CG bathymetry smoothing
 //
-// Manages Continuous Galerkin (CG) degrees of freedom for the 2D quintic
+// Manages Continuous Galerkin (CG) degrees of freedom for the 2D
 // element mesh used in bathymetry smoothing. Unlike DG where each element
 // has independent DOFs, CG shares DOFs at element interfaces.
 //
@@ -11,9 +11,10 @@
 // 2. Edge DOFs (shared along edges)
 // 3. Interior DOFs (unique per element)
 //
-// For C² continuity at non-conforming interfaces (hanging nodes), this class
-// also manages constraint equations that relate hanging DOFs to their coarse
-// neighbors via polynomial interpolation.
+// For C⁰ continuity at non-conforming interfaces (hanging nodes), this class
+// manages constraint equations that relate hanging DOFs to their coarse
+// neighbors via polynomial interpolation. C¹ continuity is enforced via
+// IPDG penalty in the BiharmonicAssembler.
 //
 // Usage:
 //   CGDofManager dofs(quadtree, basis);
@@ -22,7 +23,7 @@
 
 #include "core/types.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
-#include "bathymetry/quintic_basis_2d.hpp"
+#include "bathymetry/lagrange_basis_2d.hpp"
 #include <vector>
 #include <map>
 #include <set>
@@ -47,13 +48,11 @@ struct HangingEdgeInfo {
     int subedge_index;
 };
 
-/// @brief C² constraint at a hanging node
+/// @brief C⁰ constraint at a hanging node
 ///
 /// At non-conforming interfaces, DOFs on the fine side must satisfy
-/// C² continuity constraints with the coarse side:
+/// C⁰ continuity constraints with the coarse side:
 /// - Value continuity: u_fine = interpolated(u_coarse)
-/// - Gradient continuity: ∂u/∂n_fine = interpolated(∂u/∂n_coarse)
-/// - Hessian continuity: ∂²u/∂n²_fine = interpolated(∂²u/∂n²_coarse)
 struct C2Constraint {
     /// Index of the constrained (slave) DOF
     Index slave_dof;
@@ -64,16 +63,19 @@ struct C2Constraint {
     /// Interpolation weights for each master DOF
     std::vector<Real> weights;
 
+    /// RHS value for Dirichlet constraints (when master_dofs is empty)
+    Real rhs_value = 0.0;
+
     /// Constraint type (for debugging)
     enum class Type {
         Value,      // u constraint
-        Gradient,   // ∂u/∂n constraint
-        Hessian     // ∂²u/∂n² constraint
+        Gradient,   // ∂u/∂n constraint (reserved for future use)
+        Hessian     // ∂²u/∂n² constraint (reserved for future use)
     };
     Type type = Type::Value;
 };
 
-/// @brief Global DOF numbering with C² constraint handling
+/// @brief Global DOF numbering with constraint handling
 ///
 /// Manages CG degree of freedom numbering and constraints for the
 /// biharmonic bathymetry smoothing problem.
@@ -81,8 +83,8 @@ class CGDofManager {
 public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh
-    /// @param basis Quintic basis functions
-    CGDofManager(const QuadtreeAdapter& mesh, const QuinticBasis2D& basis);
+    /// @param basis Lagrange basis functions
+    CGDofManager(const QuadtreeAdapter& mesh, const LagrangeBasis2D& basis);
 
     // =========================================================================
     // DOF queries
@@ -94,7 +96,10 @@ public:
     /// Number of free DOFs (after constraint elimination)
     Index num_free_dofs() const { return num_free_dofs_; }
 
-    /// Get global DOF indices for an element (36 DOFs for quintic)
+    /// Number of DOFs per element
+    int num_element_dofs() const { return basis_.num_dofs(); }
+
+    /// Get global DOF indices for an element
     const std::vector<Index>& element_dofs(Index elem) const;
 
     /// Get local-to-global DOF mapping for all elements
@@ -108,11 +113,23 @@ public:
     /// Get all DOFs on domain boundary
     const std::vector<Index>& boundary_dofs() const { return boundary_dofs_; }
 
+    /// Get DOF indices at domain corners (4 corners)
+    std::vector<Index> domain_corner_dofs() const;
+
     // =========================================================================
     // Constraint handling
     // =========================================================================
 
-    /// Get all C² constraints
+    /// Apply Dirichlet constraints at domain corners
+    /// @param corner_values Values at corners: [bottom-left, bottom-right, top-left, top-right]
+    void apply_corner_dirichlet(const std::vector<Real>& corner_values);
+
+    /// Apply a single Dirichlet constraint
+    /// @param dof DOF index to constrain
+    /// @param value Dirichlet value
+    void apply_single_dirichlet(Index dof, Real value);
+
+    /// Get all constraints
     const std::vector<C2Constraint>& constraints() const { return constraints_; }
 
     /// Check if a DOF is constrained (slave)
@@ -133,8 +150,9 @@ public:
 
     /// @brief Transform RHS vector via constraint elimination
     /// @param f Global RHS vector (num_global_dofs)
-    /// @return Reduced vector f_red = T^T * f (num_free_dofs)
-    VecX transform_rhs(const VecX& f) const;
+    /// @param K Global stiffness matrix (for Dirichlet BC contribution)
+    /// @return Reduced vector f_red = T^T * f_modified (num_free_dofs)
+    VecX transform_rhs(const VecX& f, const SpMat& K) const;
 
     /// @brief Expand solution from free DOFs to global DOFs
     /// @param u_free Solution in free DOF space (num_free_dofs)
@@ -156,11 +174,11 @@ public:
     const QuadtreeAdapter& mesh() const { return mesh_; }
 
     /// Get the basis
-    const QuinticBasis2D& basis() const { return basis_; }
+    const LagrangeBasis2D& basis() const { return basis_; }
 
 private:
     const QuadtreeAdapter& mesh_;
-    const QuinticBasis2D& basis_;
+    const LagrangeBasis2D& basis_;
 
     /// Number of DOFs
     Index num_global_dofs_ = 0;
@@ -174,7 +192,7 @@ private:
     std::vector<Index> boundary_dofs_;
     std::set<Index> boundary_dof_set_;
 
-    /// C² constraints at hanging nodes
+    /// Constraints at hanging nodes
     std::vector<C2Constraint> constraints_;
 
     /// Constrained DOF set (for fast lookup)
@@ -216,7 +234,7 @@ private:
     /// Detect hanging nodes at non-conforming interfaces
     void detect_hanging_nodes();
 
-    /// Build C² constraints for hanging nodes
+    /// Build constraints for hanging nodes
     void build_c2_constraints();
 
     /// Build the global-to-free and free-to-global mappings
