@@ -101,6 +101,39 @@ The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home
 
 Fits quintic Bezier surfaces (36 DOFs per element, 6×6 control points) to bathymetry data with C² continuity at element interfaces.
 
+**Optimization Problem:**
+
+The smoother solves a constrained quadratic program:
+
+```
+minimize    ½ xᵀQx + cᵀx
+subject to  Ax = b       (C² continuity constraints)
+```
+
+where:
+- `x` = vector of all Bezier control points (36 per element)
+- `Q` = regularization matrix (thin plate energy + gradient penalty)
+- `c` = data fitting linear term (from least-squares: `c = -λ Bᵀd` where B is basis evaluation, d is data)
+- `A` = C² constraint matrix (continuity of z, ∂z/∂u, ∂z/∂v, ∂²z/∂u², ∂²z/∂u∂v, ∂²z/∂v², and higher derivatives at shared vertices)
+- `b` = constraint RHS (zero for interior continuity, nonzero when Dirichlet BCs are eliminated)
+
+The objective combines:
+1. **Thin plate energy** (curvature minimization): `E_tp = ∫∫ (z_uu + z_vv)² + 2z_uv² du dv`
+2. **Gradient penalty** (slope smoothing): `E_grad = ∫∫ z_u² + z_v² du dv`
+3. **Data fitting** (least-squares): `E_data = λ Σᵢ (z(uᵢ,vᵢ) - dᵢ)²`
+
+Solved via KKT system:
+```
+[ Q   Aᵀ ] [ x ]   [ -c ]
+[ A   0  ] [ μ ] = [  b ]
+```
+
+After KKT solve, the solution is projected onto the constraint manifold to ensure exact constraint satisfaction:
+```
+x = x - Aᵀ(AAᵀ)⁻¹(Ax - b)
+```
+This corrects numerical drift when λ is large and the data fitting term dominates.
+
 **Key files:**
 - `BezierBathymetrySmoother` - Main solver using constrained QP (KKT system)
 - `BezierBasis2D` - Quintic tensor-product Bernstein basis evaluation
@@ -146,4 +179,5 @@ Optional: GDAL (geospatial), VTK, zarrs_ffi (Zarr output)
 
 ## User notes:
 
-Always separate i/o code from algorithmic code
+- Always separate i/o code from algorithmic code
+- Newer add "Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>" to git commit messages

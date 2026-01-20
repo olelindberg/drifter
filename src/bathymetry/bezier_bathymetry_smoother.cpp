@@ -287,6 +287,19 @@ void BezierBathymetrySmoother::solve_kkt() {
     }
 
     solution_ = sol.head(n);
+
+    // Project solution onto constraint manifold for exact satisfaction
+    // This corrects any numerical drift from ill-conditioning when lambda is large
+    VecX constraint_residual = A_c2 * solution_ - b_c2;
+    if (constraint_residual.norm() > 1e-14) {
+        // Solve (A A^T) lambda = residual, then x = x - A^T * lambda
+        MatX AAt = MatX(A_c2) * MatX(A_c2).transpose();
+        Eigen::LDLT<MatX> ldlt_AAt(AAt);
+        if (ldlt_AAt.info() == Eigen::Success) {
+            VecX lambda_corr = ldlt_AAt.solve(constraint_residual);
+            solution_ -= MatX(A_c2).transpose() * lambda_corr;
+        }
+    }
 }
 
 void BezierBathymetrySmoother::solve_with_bounds() {
