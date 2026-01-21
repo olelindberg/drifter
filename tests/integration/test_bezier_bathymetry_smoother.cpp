@@ -136,6 +136,117 @@ protected:
     std::cout << "Wrote raw GeoTIFF data (" << nx << "x" << ny << " pixels) to "
               << filename << ".vtu\n";
   }
+
+  /// Write raw bathymetry function data to VTK per element
+  template <typename BathyFunc>
+  void write_raw_bathy_vtk(const QuadtreeAdapter &quadtree,
+                           const BathyFunc &bathy, int samples_per_elem,
+                           const std::string &filename) {
+    std::ofstream file(filename + ".vtu");
+    if (!file)
+      return;
+
+    Index num_elems = quadtree.num_elements();
+    Index pts_per_elem = samples_per_elem * samples_per_elem;
+    Index cells_per_elem = (samples_per_elem - 1) * (samples_per_elem - 1);
+    Index total_pts = num_elems * pts_per_elem;
+    Index total_cells = num_elems * cells_per_elem;
+
+    file << "<?xml version=\"1.0\"?>\n";
+    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+            "byte_order=\"LittleEndian\">\n";
+    file << "<UnstructuredGrid>\n";
+    file << "<Piece NumberOfPoints=\"" << total_pts << "\" NumberOfCells=\""
+         << total_cells << "\">\n";
+
+    // Points
+    file << "<Points>\n";
+    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" "
+            "format=\"ascii\">\n";
+
+    for (Index e = 0; e < num_elems; ++e) {
+      const auto &bounds = quadtree.element_bounds(e);
+      Real dx = (bounds.xmax - bounds.xmin) / (samples_per_elem - 1);
+      Real dy = (bounds.ymax - bounds.ymin) / (samples_per_elem - 1);
+
+      for (int j = 0; j < samples_per_elem; ++j) {
+        for (int i = 0; i < samples_per_elem; ++i) {
+          Real x = bounds.xmin + i * dx;
+          Real y = bounds.ymin + j * dy;
+          Real z = bathy(x, y);
+          file << std::setprecision(12) << x << " " << y << " " << z << "\n";
+        }
+      }
+    }
+
+    file << "</DataArray>\n";
+    file << "</Points>\n";
+
+    // Cells (quads per element)
+    file << "<Cells>\n";
+    file << "<DataArray type=\"Int64\" Name=\"connectivity\" "
+            "format=\"ascii\">\n";
+
+    for (Index e = 0; e < num_elems; ++e) {
+      Index base = e * pts_per_elem;
+      for (int j = 0; j < samples_per_elem - 1; ++j) {
+        for (int i = 0; i < samples_per_elem - 1; ++i) {
+          Index p0 = base + i + samples_per_elem * j;
+          Index p1 = p0 + 1;
+          Index p2 = p0 + samples_per_elem + 1;
+          Index p3 = p0 + samples_per_elem;
+          file << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
+        }
+      }
+    }
+
+    file << "</DataArray>\n";
+    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+
+    for (Index c = 1; c <= total_cells; ++c) {
+      file << 4 * c << "\n";
+    }
+
+    file << "</DataArray>\n";
+    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+
+    for (Index c = 0; c < total_cells; ++c) {
+      file << "9\n"; // VTK_QUAD
+    }
+
+    file << "</DataArray>\n";
+    file << "</Cells>\n";
+
+    // Point data: depth
+    file << "<PointData Scalars=\"depth\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
+
+    for (Index e = 0; e < num_elems; ++e) {
+      const auto &bounds = quadtree.element_bounds(e);
+      Real dx = (bounds.xmax - bounds.xmin) / (samples_per_elem - 1);
+      Real dy = (bounds.ymax - bounds.ymin) / (samples_per_elem - 1);
+
+      for (int j = 0; j < samples_per_elem; ++j) {
+        for (int i = 0; i < samples_per_elem; ++i) {
+          Real x = bounds.xmin + i * dx;
+          Real y = bounds.ymin + j * dy;
+          Real z = bathy(x, y);
+          file << std::setprecision(12) << z << "\n";
+        }
+      }
+    }
+
+    file << "</DataArray>\n";
+    file << "</PointData>\n";
+
+    file << "</Piece>\n";
+    file << "</UnstructuredGrid>\n";
+    file << "</VTKFile>\n";
+
+    std::cout << "Wrote raw bathymetry data (" << num_elems << " elements, "
+              << samples_per_elem << "x" << samples_per_elem
+              << " samples/elem) to " << filename << ".vtu\n";
+  }
 };
 
 // =============================================================================
@@ -200,10 +311,7 @@ TEST_F(BezierBathymetrySmootherTest, SolveSingleElementConstant) {
 TEST_F(BezierBathymetrySmootherTest, SolveConstantBathymetry) {
   auto quadtree = create_quadtree(2, 2);
 
-  BezierSmootherConfig config;
-  config.lambda = 0.01; // Need some regularization with C² constraints
-
-  BezierBathymetrySmoother smoother(*quadtree, config);
+  BezierBathymetrySmoother smoother(*quadtree);
 
   Real constant_depth = 50.0;
   smoother.set_bathymetry_data(
@@ -531,12 +639,9 @@ TEST_F(BezierBathymetrySmootherTest, VTKOutput) {
 TEST_F(BezierBathymetrySmootherTest, LargerMesh) {
   auto quadtree = create_quadtree(4, 4); // 16 elements
 
-  BezierSmootherConfig config;
-  config.lambda = 0.01;
-
   auto bathy = [](Real x, Real y) { return 100.0 + 0.5 * x - 0.3 * y; };
 
-  BezierBathymetrySmoother smoother(*quadtree, config);
+  BezierBathymetrySmoother smoother(*quadtree);
   smoother.set_bathymetry_data(bathy);
   smoother.solve();
 
@@ -620,13 +725,7 @@ TEST_F(BezierBathymetrySmootherTest, GeoTiffBathymetry) {
     return static_cast<Real>(bathy.get_depth(x, y));
   };
 
-  BezierSmootherConfig config;
-  config.lambda =
-      0.01; // With Frobenius norm scaling, this gives smooth results
-  config.gradient_weight = 0.0; // Keep pure thin plate for smoothness
-  config.enable_boundary_dirichlet = true; // Enforce boundary values from data
-
-  BezierBathymetrySmoother smoother(*quadtree, config);
+  BezierBathymetrySmoother smoother(*quadtree);
   smoother.set_bathymetry_data(bathy_func);
 
   std::cout << "Solving with " << smoother.num_dofs() << " DOFs...\n";
@@ -750,10 +849,7 @@ TEST_F(BezierBathymetrySmootherTest, GeoTiffHigherResolution) {
     return static_cast<Real>(bathy.get_depth(x, y));
   };
 
-  BezierSmootherConfig config;
-  config.lambda = 0.1; // With Frobenius norm scaling, this gives smooth results
-
-  BezierBathymetrySmoother smoother(*quadtree, config);
+  BezierBathymetrySmoother smoother(*quadtree);
   smoother.set_bathymetry_data(bathy_func);
   smoother.solve();
 
@@ -805,11 +901,7 @@ TEST_F(BezierBathymetrySmootherTest, DirichletSingleElement) {
   const Real depth = 50.0;
   auto bathy = [depth](Real /*x*/, Real /*y*/) { return depth; };
 
-  BezierSmootherConfig config;
-  config.lambda = 0.01;
-  config.enable_boundary_dirichlet = true;
-
-  BezierBathymetrySmoother smoother(*quadtree, config);
+  BezierBathymetrySmoother smoother(*quadtree);
   smoother.set_bathymetry_data(bathy);
   smoother.solve();
 
@@ -861,11 +953,7 @@ TEST_F(BezierBathymetrySmootherTest, DirichletMultiElement) {
   // Linear bathymetry: z = 10 + 0.5*x + 0.3*y
   auto bathy = [](Real x, Real y) { return 10.0 + 0.5 * x + 0.3 * y; };
 
-  BezierSmootherConfig config;
-  config.lambda = 0.01;
-  config.enable_boundary_dirichlet = true;
-
-  BezierBathymetrySmoother smoother(*quadtree, config);
+  BezierBathymetrySmoother smoother(*quadtree);
   smoother.set_bathymetry_data(bathy);
   smoother.solve();
 
@@ -1076,4 +1164,126 @@ TEST_F(BezierBathymetrySmootherTest, GeoTiffWithDirichlet) {
       << "C² violated (no Dirichlet)";
   EXPECT_LT(violation_with_dir / norm_with_dir, 1e-3)
       << "C² violated (with Dirichlet)";
+}
+
+// =============================================================================
+// Non-conforming (AMR) mesh tests
+// =============================================================================
+
+TEST_F(BezierBathymetrySmootherTest, NonConformingOnePlusFour) {
+  // Create a non-conforming mesh: 1 coarse element + 4 fine elements
+  // Layout:
+  //   +-------+---+---+
+  //   |       | 2 | 3 |
+  //   |   0   +---+---+
+  //   |       | 1 | 4 |
+  //   +-------+---+---+
+  // Element 0: [0,50] x [0,100] (coarse, level 0 in x)
+  // Elements 1-4: [50,100] x [0,100] subdivided into 2x2 (level 1 in both)
+
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+
+  // Add coarse element on left half
+  quadtree->add_element(QuadBounds{0.0, 50.0, 0.0, 100.0}, QuadLevel{0, 0});
+
+  // Add 4 fine elements on right half (2x2 grid)
+  quadtree->add_element(QuadBounds{50.0, 75.0, 0.0, 50.0}, QuadLevel{1, 1});
+  quadtree->add_element(QuadBounds{50.0, 75.0, 50.0, 100.0}, QuadLevel{1, 1});
+  quadtree->add_element(QuadBounds{75.0, 100.0, 50.0, 100.0}, QuadLevel{1, 1});
+  quadtree->add_element(QuadBounds{75.0, 100.0, 0.0, 50.0}, QuadLevel{1, 1});
+
+  ASSERT_EQ(quadtree->num_elements(), 5);
+
+  // Verify non-conforming interface on right edge of element 0
+  auto neighbor_info = quadtree->get_neighbor(0, 1); // right edge
+  EXPECT_EQ(neighbor_info.type, EdgeNeighborInfo::Type::CoarseToFine);
+  EXPECT_EQ(neighbor_info.neighbor_elements.size(), 2);
+
+  std::cout << "Created non-conforming mesh: 1 coarse + 4 fine elements\n";
+  std::cout << "Total DOFs: " << 5 * 36 << "\n";
+
+  // Debug: print all neighbor relationships
+  std::cout << "\nNeighbor relationships:\n";
+  for (Index e = 0; e < quadtree->num_elements(); ++e) {
+    const auto &bounds = quadtree->element_bounds(e);
+    std::cout << "Element " << e << ": [" << bounds.xmin << "," << bounds.xmax
+              << "] x [" << bounds.ymin << "," << bounds.ymax << "]\n";
+    for (int edge = 0; edge < 4; ++edge) {
+      auto info = quadtree->get_neighbor(e, edge);
+      std::string edge_name[] = {"left", "right", "bottom", "top"};
+      std::cout << "  " << edge_name[edge] << ": ";
+      if (info.is_boundary()) {
+        std::cout << "boundary\n";
+      } else if (info.is_conforming()) {
+        std::cout << "conforming -> elem " << info.neighbor_elements[0] << "\n";
+      } else if (info.type == EdgeNeighborInfo::Type::CoarseToFine) {
+        std::cout << "coarse->fine -> elems ";
+        for (auto n : info.neighbor_elements)
+          std::cout << n << " ";
+        std::cout << "\n";
+      } else {
+        std::cout << "fine->coarse -> elem " << info.neighbor_elements[0] << "\n";
+      }
+    }
+  }
+  std::cout << "\n";
+
+  // Sinusoidal bathymetry to exercise smoothing
+  auto bathy = [](Real x, Real y) {
+    return 50.0 + 20.0 * std::sin(x * M_PI / 50.0) * std::cos(y * M_PI / 50.0);
+  };
+
+  BezierBathymetrySmoother smoother(*quadtree);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check C² continuity at non-conforming interface
+  Real violation = smoother.constraint_violation();
+  Real sol_norm = smoother.solution().norm();
+  Real relative_violation = (sol_norm > 1e-10) ? violation / sol_norm : violation;
+
+  std::cout << "C² constraint violation: " << violation
+            << " (relative: " << relative_violation << ")\n";
+
+  EXPECT_LT(relative_violation, 1e-3) << "C² constraints not satisfied";
+
+  // Sample depth at several points including the non-conforming interface
+  std::vector<std::pair<Real, Real>> test_points = {
+      {25.0, 50.0},  // center of coarse element
+      {62.5, 25.0},  // center of fine element 1
+      {62.5, 75.0},  // center of fine element 2
+      {87.5, 75.0},  // center of fine element 3
+      {87.5, 25.0},  // center of fine element 4
+      {50.0, 25.0},  // on non-conforming interface (bottom)
+      {50.0, 75.0},  // on non-conforming interface (top)
+      {50.0, 50.0},  // on non-conforming interface (middle/vertex)
+  };
+
+  std::cout << "\nDepth comparisons:\n";
+  for (const auto &[x, y] : test_points) {
+    Real expected = bathy(x, y);
+    Real computed = smoother.evaluate(x, y);
+    Real error = std::abs(computed - expected);
+
+    std::cout << "  (" << x << ", " << y << "): expected=" << expected
+              << ", computed=" << computed << ", error=" << error << "\n";
+
+    // Allow smoothing error (coarse element smooths significantly with low lambda)
+    EXPECT_LT(error, 20.0) << "At (" << x << ", " << y << ")";
+  }
+
+  // Write VTK for visualization
+  std::string vtk_path = "/tmp/bezier_nonconforming_1plus4";
+  smoother.write_vtk(vtk_path, 5);
+  std::cout << "\nWrote VTK output to " << vtk_path << ".vtu\n";
+
+  std::string cp_path = "/tmp/bezier_nonconforming_1plus4_control_points";
+  smoother.write_control_points_vtk(cp_path);
+  std::cout << "Wrote control points to " << cp_path << ".vtu\n";
+
+  // Write raw bathymetry data per element
+  std::string raw_path = "/tmp/bezier_nonconforming_1plus4_raw";
+  write_raw_bathy_vtk(*quadtree, bathy, 10, raw_path);
 }

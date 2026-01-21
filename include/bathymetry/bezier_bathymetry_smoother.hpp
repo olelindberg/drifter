@@ -31,9 +31,9 @@ class OctreeAdapter;
 /// @brief Configuration for Bezier bathymetry smoother
 struct BezierSmootherConfig {
   Real lambda =
-      10.0; ///< Data fitting weight relative to smoothness (lower = smoother)
+      0.01; ///< Data fitting weight relative to smoothness (lower = smoother)
   Real gradient_weight =
-      1.0; ///< Weight for gradient penalty (first derivative regularization)
+      0.0; ///< Weight for gradient penalty (first derivative regularization)
   int ngauss_data = 6;   ///< Gauss points per direction for data sampling
   int ngauss_energy = 6; ///< Gauss points for energy integration
 
