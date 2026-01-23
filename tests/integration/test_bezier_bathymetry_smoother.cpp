@@ -4,10 +4,13 @@
 #include "mesh/geotiff_reader.hpp"
 #include "mesh/octree_adapter.hpp"
 #include "test_integration_fixtures.hpp"
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <gtest/gtest.h>
+#include <map>
 
 using namespace drifter;
 
@@ -1704,4 +1707,468 @@ TEST_F(BezierBathymetrySmootherTest, NonConformingOnePlusFour) {
   // Write raw bathymetry data per element
   std::string raw_path = "/tmp/bezier_nonconforming_1plus4_raw";
   write_raw_bathy_vtk(*quadtree, bathy, 10, raw_path);
+}
+
+// ============================================================================
+// Multiresolution Tests with 5 Levels (L0-L4) and Many Hanging Nodes
+// ============================================================================
+
+/// Creates a multiresolution mesh by subdividing the bottom row at each level.
+/// L0: 1 element (entire domain)
+/// L1: 2×2 elements (subdivide L0). Keep top row (2), subdivide bottom row (2)
+/// L2: 2×2 per subdivided L1 = 8 elements. Keep top 4, subdivide bottom 4.
+/// etc.
+/// All subdivisions are 2×2. Never keeps "3" elements.
+void create_half_subdivided_mesh(QuadtreeAdapter &quadtree, Real xmin, Real xmax,
+                                  Real ymin, Real ymax, int max_level) {
+  // Recursive helper: processes a horizontal strip [x0,x1] × [y0,y1]
+  // with nx elements in the x direction. Top half becomes leaves,
+  // bottom half gets subdivided further.
+  std::function<void(Real, Real, Real, Real, int, int)> process_strip =
+      [&](Real x0, Real x1, Real y0, Real y1, int level, int nx) {
+        Real dx = (x1 - x0) / nx;
+        Real ymid = 0.5 * (y0 + y1);
+
+        // Add top row as leaves at current level (nx elements)
+        for (int i = 0; i < nx; ++i) {
+          quadtree.add_element(QuadBounds{x0 + i * dx, x0 + (i + 1) * dx, ymid, y1},
+                               QuadLevel{level, level});
+        }
+
+        if (level >= max_level) {
+          // At max level: also add bottom row as leaves
+          for (int i = 0; i < nx; ++i) {
+            quadtree.add_element(QuadBounds{x0 + i * dx, x0 + (i + 1) * dx, y0, ymid},
+                                 QuadLevel{level, level});
+          }
+        } else {
+          // Subdivide bottom row: each element becomes 2×2, recurse
+          process_strip(x0, x1, y0, ymid, level + 1, nx * 2);
+        }
+      };
+
+  // Start: L0 is entire domain, subdivide into 2×2 (L1)
+  process_strip(xmin, xmax, ymin, ymax, 1, 2);
+}
+
+TEST_F(BezierBathymetrySmootherTest, MultiresolutionFiveLevels) {
+  // Create a 5-level mesh (L0-L4) with half-subdivision pattern
+  // L0: 1 element (entire domain) - subdivided, not a leaf
+  // L1: 2 leaves (top row) + bottom row subdivided
+  // L2: 4 leaves (top row) + bottom row subdivided
+  // L3: 8 leaves (top row) + bottom row subdivided
+  // L4: 32 leaves (16 top + 16 bottom)
+  // Total: 2 + 4 + 8 + 32 = 46 elements
+
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+  create_half_subdivided_mesh(*quadtree, 0.0, 100.0, 0.0, 100.0, 4);
+
+  ASSERT_EQ(quadtree->num_elements(), 46);
+
+  // Count elements at each level
+  std::map<int, int> level_counts;
+  for (Index e = 0; e < quadtree->num_elements(); ++e) {
+    QuadLevel lvl = quadtree->element_level(e);
+    level_counts[lvl.x]++;
+  }
+
+  std::cout << "Element counts by level:\n";
+  for (const auto &[lvl, count] : level_counts) {
+    std::cout << "  L" << lvl << ": " << count << " elements\n";
+  }
+
+  EXPECT_EQ(level_counts[1], 2) << "L1 should have 2 elements";
+  EXPECT_EQ(level_counts[2], 4) << "L2 should have 4 elements";
+  EXPECT_EQ(level_counts[3], 8) << "L3 should have 8 elements";
+  EXPECT_EQ(level_counts[4], 32) << "L4 should have 32 elements";
+
+  // Verify 2:1 balance: check that no adjacent elements differ by more than 1 level
+  bool balance_ok = true;
+  for (Index e = 0; e < quadtree->num_elements(); ++e) {
+    QuadLevel my_level = quadtree->element_level(e);
+    for (int edge = 0; edge < 4; ++edge) {
+      EdgeNeighborInfo info = quadtree->get_neighbor(e, edge);
+      if (!info.is_boundary()) {
+        for (Index n : info.neighbor_elements) {
+          QuadLevel neighbor_level = quadtree->element_level(n);
+          int diff_x = std::abs(my_level.x - neighbor_level.x);
+          int diff_y = std::abs(my_level.y - neighbor_level.y);
+          if (diff_x > 1 || diff_y > 1) {
+            std::cout << "Balance violation: elem " << e << " (L" << my_level.x
+                      << ") neighbors elem " << n << " (L" << neighbor_level.x << ")\n";
+            balance_ok = false;
+          }
+        }
+      }
+    }
+  }
+  EXPECT_TRUE(balance_ok) << "2:1 balance violated";
+
+  // Sinusoidal bathymetry
+  auto bathy = [](Real x, Real y) {
+    return 50.0 + 20.0 * std::sin(x * M_PI / 50.0) * std::cos(y * M_PI / 50.0);
+  };
+
+  BezierBathymetrySmoother smoother(*quadtree);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check hanging node constraint count
+  // Calling num_constraints() first populates the internal constraint lists
+  BezierC2ConstraintBuilder builder(*quadtree);
+  Index total_constraints = builder.num_constraints();
+  Index num_hanging = builder.hanging_node_constraints().size();
+  std::cout << "Total constraints: " << total_constraints << "\n";
+  std::cout << "Hanging node constraints: " << num_hanging << "\n";
+  EXPECT_GE(num_hanging, 14) << "Expected at least 14 T-junctions";
+
+  // Check constraint violation
+  Real violation = smoother.constraint_violation();
+  Real sol_norm = smoother.solution().norm();
+  Real relative_violation = (sol_norm > 1e-10) ? violation / sol_norm : violation;
+
+  std::cout << "C² constraint violation: " << violation
+            << " (relative: " << relative_violation << ")\n";
+
+  EXPECT_LT(relative_violation, 1e-6) << "C² constraints not satisfied";
+
+  // Sample depth at several points across different levels
+  std::vector<std::pair<Real, Real>> test_points = {
+      {75.0, 75.0}, // L1 region (top-right)
+      {25.0, 75.0}, // L1 region (top-left)
+      {12.5, 37.5}, // L2 region
+      {6.25, 18.75}, // L3 region
+      {3.125, 9.375}, // L4 region
+  };
+
+  std::cout << "\nDepth comparisons:\n";
+  for (const auto &[x, y] : test_points) {
+    Real expected = bathy(x, y);
+    Real computed = smoother.evaluate(x, y);
+    Real error = std::abs(computed - expected);
+
+    std::cout << "  (" << x << ", " << y << "): expected=" << expected
+              << ", computed=" << computed << ", error=" << error << "\n";
+
+    EXPECT_LT(error, 25.0) << "Large error at (" << x << ", " << y << ")";
+  }
+
+  // Write VTK for visualization
+  std::string vtk_path = "/tmp/bezier_multiresolution_5level";
+  smoother.write_vtk(vtk_path, 5);
+  std::cout << "\nWrote VTK output to " << vtk_path << ".vtu\n";
+
+  std::string cp_path = "/tmp/bezier_multiresolution_5level_control_points";
+  smoother.write_control_points_vtk(cp_path);
+  std::cout << "Wrote control points to " << cp_path << ".vtu\n";
+
+  // Write raw bathymetry data per element
+  std::string raw_path = "/tmp/bezier_multiresolution_5level_raw";
+  write_raw_bathy_vtk(*quadtree, bathy, 10, raw_path);
+}
+
+TEST_F(BezierBathymetrySmootherTest, MultiresolutionGeoTiffFiveLevels) {
+  // Skip if GDAL not available
+  if (!GeoTiffReader::is_available()) {
+    GTEST_SKIP() << "GDAL support not available. Rebuild with -DDRIFTER_USE_GDAL=ON";
+  }
+
+  // Load GeoTIFF bathymetry
+  GeoTiffReader reader;
+  BathymetryData bathy_data = reader.load(BATHYMETRY_GEOTIFF_PATH);
+
+  if (!bathy_data.is_valid()) {
+    GTEST_SKIP() << "Could not load GeoTIFF: " << reader.last_error();
+  }
+
+  std::cout << "Loaded bathymetry: " << bathy_data.sizex << " x " << bathy_data.sizey
+            << " pixels\n";
+  std::cout << "Bounds: x=[" << bathy_data.xmin << ", " << bathy_data.xmax << "], "
+            << "y=[" << bathy_data.ymin << ", " << bathy_data.ymax << "]\n";
+
+  // Find a water region with reasonable depth
+  Real region_size = 50000.0; // 50 km region
+  Real best_x = 0, best_y = 0;
+  Real max_depth_found = 0;
+
+  for (Real x = bathy_data.xmin + region_size; x < bathy_data.xmax - region_size;
+       x += region_size * 0.5) {
+    for (Real y = bathy_data.ymin + region_size; y < bathy_data.ymax - region_size;
+         y += region_size * 0.5) {
+      Real depth = bathy_data.get_depth(x, y);
+      if (depth > max_depth_found) {
+        max_depth_found = depth;
+        best_x = x;
+        best_y = y;
+      }
+    }
+  }
+
+  if (max_depth_found < 10.0) {
+    GTEST_SKIP() << "No water region with depth > 10m found in GeoTIFF";
+  }
+
+  std::cout << "Found water region at (" << best_x << ", " << best_y
+            << ") with depth " << max_depth_found << "m\n";
+
+  // Create mesh bounds centered on water region
+  Real xmin = best_x - region_size / 2;
+  Real xmax = best_x + region_size / 2;
+  Real ymin = best_y - region_size / 2;
+  Real ymax = best_y + region_size / 2;
+
+  std::cout << "Mesh bounds: [" << xmin << ", " << xmax << "] x ["
+            << ymin << ", " << ymax << "]\n";
+
+  // Create 5-level mesh with half-subdivision pattern
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+  create_half_subdivided_mesh(*quadtree, xmin, xmax, ymin, ymax, 4);
+
+  ASSERT_EQ(quadtree->num_elements(), 46);
+
+  std::cout << "Created mesh with " << quadtree->num_elements() << " elements\n";
+
+  // Wrap bathymetry data in lambda
+  auto bathy_func = [&bathy_data](Real x, Real y) -> Real {
+    return static_cast<Real>(bathy_data.get_depth(x, y));
+  };
+
+  BezierBathymetrySmoother smoother(*quadtree);
+  smoother.set_bathymetry_data(bathy_func);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check hanging node constraint count
+  // Calling num_constraints() first populates the internal constraint lists
+  BezierC2ConstraintBuilder builder(*quadtree);
+  Index total_constraints = builder.num_constraints();
+  Index num_hanging = builder.hanging_node_constraints().size();
+  std::cout << "Total constraints: " << total_constraints << "\n";
+  std::cout << "Hanging node constraints: " << num_hanging << "\n";
+  EXPECT_GE(num_hanging, 14) << "Expected at least 14 T-junctions";
+
+  // Check constraint violation (relaxed for real data)
+  Real violation = smoother.constraint_violation();
+  Real sol_norm = smoother.solution().norm();
+  Real relative_violation = (sol_norm > 1e-10) ? violation / sol_norm : violation;
+
+  std::cout << "C² constraint violation: " << violation
+            << " (relative: " << relative_violation << ")\n";
+
+  EXPECT_LT(relative_violation, 1e-3) << "C² constraints not satisfied";
+
+  // Check that depths are reasonable (positive where we expect water)
+  Real center_depth = smoother.evaluate(best_x, best_y);
+  std::cout << "Smoothed depth at center: " << center_depth << "m\n";
+  EXPECT_GT(center_depth, 0.0) << "Expected positive depth at water center";
+
+  // Write VTK for visualization
+  std::string vtk_path = "/tmp/bezier_multiresolution_geotiff_5level";
+  smoother.write_vtk(vtk_path, 5);
+  std::cout << "\nWrote VTK output to " << vtk_path << ".vtu\n";
+
+  std::string cp_path = "/tmp/bezier_multiresolution_geotiff_5level_control_points";
+  smoother.write_control_points_vtk(cp_path);
+  std::cout << "Wrote control points to " << cp_path << ".vtu\n";
+
+  // Write raw GeoTIFF data for comparison
+  write_geotiff_region_vtk(bathy_data, xmin, xmax, ymin, ymax,
+                           "/tmp/bezier_multiresolution_geotiff_5level_raw");
+}
+
+TEST_F(BezierBathymetrySmootherTest, MultiresolutionContinuityVerification) {
+  // Create 5-level mesh for detailed C² continuity verification
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+  create_half_subdivided_mesh(*quadtree, 0.0, 100.0, 0.0, 100.0, 4);
+
+  ASSERT_EQ(quadtree->num_elements(), 46);
+
+  // Analytical bathymetry with known derivatives
+  auto bathy = [](Real x, Real y) {
+    return 50.0 + 20.0 * std::sin(x * M_PI / 50.0) * std::cos(y * M_PI / 50.0);
+  };
+
+  BezierBathymetrySmoother smoother(*quadtree);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  BezierBasis2D basis;
+
+  // Find all non-conforming interfaces and verify C² continuity
+  std::cout << "Verifying C² continuity at non-conforming interfaces:\n";
+
+  int num_nc_interfaces = 0;
+  Real max_c0_error = 0, max_c1x_error = 0, max_c1y_error = 0;
+  Real max_c2xx_error = 0, max_c2xy_error = 0, max_c2yy_error = 0;
+
+  for (Index e = 0; e < quadtree->num_elements(); ++e) {
+    for (int edge = 0; edge < 4; ++edge) {
+      EdgeNeighborInfo info = quadtree->get_neighbor(e, edge);
+
+      if (info.type == EdgeNeighborInfo::Type::CoarseToFine) {
+        num_nc_interfaces++;
+
+        const QuadBounds &coarse_bounds = quadtree->element_bounds(e);
+        Real dx_c = coarse_bounds.xmax - coarse_bounds.xmin;
+        Real dy_c = coarse_bounds.ymax - coarse_bounds.ymin;
+        VecX coeff_c = smoother.element_coefficients(e);
+
+        // For each fine neighbor, check continuity along shared edge
+        for (size_t n = 0; n < info.neighbor_elements.size(); ++n) {
+          Index fine_elem = info.neighbor_elements[n];
+          int fine_edge = info.neighbor_edges[n];
+
+          const QuadBounds &fine_bounds = quadtree->element_bounds(fine_elem);
+          Real dx_f = fine_bounds.xmax - fine_bounds.xmin;
+          Real dy_f = fine_bounds.ymax - fine_bounds.ymin;
+          VecX coeff_f = smoother.element_coefficients(fine_elem);
+
+          // Sample along the shared edge
+          for (Real t = 0.0; t <= 1.0; t += 0.25) {
+            // Compute parameter on coarse element
+            Real u_c, v_c;
+            if (edge == 0) { u_c = 0.0; v_c = (n == 0 ? t * 0.5 : 0.5 + t * 0.5); }
+            else if (edge == 1) { u_c = 1.0; v_c = (n == 0 ? t * 0.5 : 0.5 + t * 0.5); }
+            else if (edge == 2) { u_c = (n == 0 ? t * 0.5 : 0.5 + t * 0.5); v_c = 0.0; }
+            else { u_c = (n == 0 ? t * 0.5 : 0.5 + t * 0.5); v_c = 1.0; }
+
+            // Compute parameter on fine element
+            Real u_f, v_f;
+            if (fine_edge == 0) { u_f = 0.0; v_f = t; }
+            else if (fine_edge == 1) { u_f = 1.0; v_f = t; }
+            else if (fine_edge == 2) { u_f = t; v_f = 0.0; }
+            else { u_f = t; v_f = 1.0; }
+
+            // Evaluate values and derivatives on coarse element
+            Real z_c = coeff_c.dot(basis.evaluate(u_c, v_c));
+            Real z_c_x = coeff_c.dot(basis.evaluate_du(u_c, v_c)) / dx_c;
+            Real z_c_y = coeff_c.dot(basis.evaluate_dv(u_c, v_c)) / dy_c;
+            Real z_c_xx = coeff_c.dot(basis.evaluate_d2u(u_c, v_c)) / (dx_c * dx_c);
+            Real z_c_xy = coeff_c.dot(basis.evaluate_d2uv(u_c, v_c)) / (dx_c * dy_c);
+            Real z_c_yy = coeff_c.dot(basis.evaluate_d2v(u_c, v_c)) / (dy_c * dy_c);
+
+            // Evaluate values and derivatives on fine element
+            Real z_f = coeff_f.dot(basis.evaluate(u_f, v_f));
+            Real z_f_x = coeff_f.dot(basis.evaluate_du(u_f, v_f)) / dx_f;
+            Real z_f_y = coeff_f.dot(basis.evaluate_dv(u_f, v_f)) / dy_f;
+            Real z_f_xx = coeff_f.dot(basis.evaluate_d2u(u_f, v_f)) / (dx_f * dx_f);
+            Real z_f_xy = coeff_f.dot(basis.evaluate_d2uv(u_f, v_f)) / (dx_f * dy_f);
+            Real z_f_yy = coeff_f.dot(basis.evaluate_d2v(u_f, v_f)) / (dy_f * dy_f);
+
+            // Update max errors
+            max_c0_error = std::max(max_c0_error, std::abs(z_c - z_f));
+            max_c1x_error = std::max(max_c1x_error, std::abs(z_c_x - z_f_x));
+            max_c1y_error = std::max(max_c1y_error, std::abs(z_c_y - z_f_y));
+            max_c2xx_error = std::max(max_c2xx_error, std::abs(z_c_xx - z_f_xx));
+            max_c2xy_error = std::max(max_c2xy_error, std::abs(z_c_xy - z_f_xy));
+            max_c2yy_error = std::max(max_c2yy_error, std::abs(z_c_yy - z_f_yy));
+          }
+        }
+      }
+    }
+  }
+
+  std::cout << "Checked " << num_nc_interfaces << " non-conforming interfaces\n";
+  std::cout << "Max C0 error: " << max_c0_error << "\n";
+  std::cout << "Max C1_x error: " << max_c1x_error << "\n";
+  std::cout << "Max C1_y error: " << max_c1y_error << "\n";
+  std::cout << "Max C2_xx error: " << max_c2xx_error << "\n";
+  std::cout << "Max C2_xy error: " << max_c2xy_error << "\n";
+  std::cout << "Max C2_yy error: " << max_c2yy_error << "\n";
+
+  EXPECT_GE(num_nc_interfaces, 14) << "Expected at least 14 non-conforming interfaces";
+  EXPECT_LT(max_c0_error, 1e-8) << "C0 continuity violated";
+  EXPECT_LT(max_c1x_error, 1e-6) << "C1 (dz/dx) continuity violated";
+  EXPECT_LT(max_c1y_error, 1e-6) << "C1 (dz/dy) continuity violated";
+  EXPECT_LT(max_c2xx_error, 1e-4) << "C2 (d²z/dx²) continuity violated";
+  EXPECT_LT(max_c2xy_error, 1e-4) << "C2 (d²z/dxdy) continuity violated";
+  EXPECT_LT(max_c2yy_error, 1e-4) << "C2 (d²z/dy²) continuity violated";
+}
+
+TEST_F(BezierBathymetrySmootherTest, MultiresolutionLargeMeshStress) {
+  // Create a larger mesh by applying half-subdivision to multiple regions
+  // We create two 5-level meshes side by side for more elements
+
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+
+  // Left half: 5-level half-subdivision pattern
+  create_half_subdivided_mesh(*quadtree, 0.0, 100.0, 0.0, 100.0, 4);
+
+  // Note: For a true stress test with more elements, we could add more regions
+  // For now, 46 elements is already a good test of the constraint system
+
+  Index num_elements = quadtree->num_elements();
+  std::cout << "Created stress test mesh with " << num_elements << " elements\n";
+
+  EXPECT_GE(num_elements, 46);
+
+  // Count elements at each level
+  std::map<int, int> level_counts;
+  for (Index e = 0; e < quadtree->num_elements(); ++e) {
+    QuadLevel lvl = quadtree->element_level(e);
+    level_counts[lvl.x]++;
+  }
+
+  std::cout << "Element counts by level:\n";
+  for (const auto &[lvl, count] : level_counts) {
+    std::cout << "  L" << lvl << ": " << count << " elements\n";
+  }
+
+  // Analytical bathymetry
+  auto bathy = [](Real x, Real y) {
+    return 100.0 + 30.0 * std::sin(x * M_PI / 100.0) * std::sin(y * M_PI / 100.0);
+  };
+
+  BezierBathymetrySmoother smoother(*quadtree);
+  smoother.set_bathymetry_data(bathy);
+
+  // Time the solve
+  auto start = std::chrono::high_resolution_clock::now();
+  smoother.solve();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  std::cout << "KKT solve time: " << duration.count() << " ms\n";
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check for NaN/Inf in solution
+  VecX sol = smoother.solution();
+  bool has_nan = false;
+  bool has_inf = false;
+  for (Index i = 0; i < sol.size(); ++i) {
+    if (std::isnan(sol(i))) has_nan = true;
+    if (std::isinf(sol(i))) has_inf = true;
+  }
+  EXPECT_FALSE(has_nan) << "Solution contains NaN values";
+  EXPECT_FALSE(has_inf) << "Solution contains Inf values";
+
+  // Check constraint violation
+  Real violation = smoother.constraint_violation();
+  Real sol_norm = sol.norm();
+  Real relative_violation = (sol_norm > 1e-10) ? violation / sol_norm : violation;
+
+  std::cout << "C² constraint violation: " << violation
+            << " (relative: " << relative_violation << ")\n";
+
+  EXPECT_LT(relative_violation, 1e-3) << "C² constraints not satisfied";
+
+  // Count hanging node constraints
+  // Calling num_constraints() first populates the internal constraint lists
+  BezierC2ConstraintBuilder builder(*quadtree);
+  Index total_constraints = builder.num_constraints();
+  Index num_hanging = builder.hanging_node_constraints().size();
+  std::cout << "Total constraints: " << total_constraints << "\n";
+  std::cout << "Hanging node constraints: " << num_hanging << "\n";
+  EXPECT_GE(num_hanging, 14) << "Expected many T-junctions";
+
+  // Write VTK for visualization
+  std::string vtk_path = "/tmp/bezier_multiresolution_stress";
+  smoother.write_vtk(vtk_path, 3); // Lower resolution for larger mesh
+  std::cout << "\nWrote VTK output to " << vtk_path << ".vtu\n";
 }
