@@ -49,8 +49,14 @@ struct BezierSmootherConfig {
 
   /// Enable Dirichlet boundary conditions on domain boundary
   /// When enabled, boundary DOFs are constrained to match the input bathymetry
-  /// data
-  bool enable_boundary_dirichlet = true;
+  /// data. Mutually exclusive with enable_natural_bc.
+  bool enable_boundary_dirichlet = false;
+
+  /// Enable natural boundary conditions (z_nn = 0 at all boundary DOFs)
+  /// Implements free-edge conditions: zero normal curvature at the domain boundary.
+  /// At domain corners where two edges meet, both z_xx=0 and z_yy=0 are enforced.
+  /// This is the standard "natural spline" boundary condition.
+  bool enable_natural_bc = true;
 };
 
 /// @brief Bezier bathymetry smoother with C² continuity

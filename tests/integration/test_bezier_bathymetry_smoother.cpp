@@ -901,7 +901,11 @@ TEST_F(BezierBathymetrySmootherTest, DirichletSingleElement) {
   const Real depth = 50.0;
   auto bathy = [depth](Real /*x*/, Real /*y*/) { return depth; };
 
-  BezierBathymetrySmoother smoother(*quadtree);
+  BezierSmootherConfig config;
+  config.enable_boundary_dirichlet = true;
+  config.enable_natural_bc = false;  // Disable natural BC for Dirichlet test
+
+  BezierBathymetrySmoother smoother(*quadtree, config);
   smoother.set_bathymetry_data(bathy);
   smoother.solve();
 
@@ -953,7 +957,11 @@ TEST_F(BezierBathymetrySmootherTest, DirichletMultiElement) {
   // Linear bathymetry: z = 10 + 0.5*x + 0.3*y
   auto bathy = [](Real x, Real y) { return 10.0 + 0.5 * x + 0.3 * y; };
 
-  BezierBathymetrySmoother smoother(*quadtree);
+  BezierSmootherConfig config;
+  config.enable_boundary_dirichlet = true;
+  config.enable_natural_bc = false;  // Disable natural BC for Dirichlet test
+
+  BezierBathymetrySmoother smoother(*quadtree, config);
   smoother.set_bathymetry_data(bathy);
   smoother.solve();
 
@@ -1000,10 +1008,12 @@ TEST_F(BezierBathymetrySmootherTest, DirichletVsNonDirichlet) {
   BezierSmootherConfig config_no_dirichlet;
   config_no_dirichlet.lambda = 0.01;
   config_no_dirichlet.enable_boundary_dirichlet = false;
+  config_no_dirichlet.enable_natural_bc = false;  // Pure C² only
 
   BezierSmootherConfig config_with_dirichlet;
   config_with_dirichlet.lambda = 0.01;
   config_with_dirichlet.enable_boundary_dirichlet = true;
+  config_with_dirichlet.enable_natural_bc = false;  // Dirichlet instead of natural BC
 
   BezierBathymetrySmoother smoother_no_dir(*quadtree1, config_no_dirichlet);
   smoother_no_dir.set_bathymetry_data(bathy);
@@ -1102,10 +1112,11 @@ TEST_F(BezierBathymetrySmootherTest, GeoTiffWithDirichlet) {
     return static_cast<Real>(bathy.get_depth(x, y));
   };
 
-  // Solve WITHOUT Dirichlet
+  // Solve WITHOUT Dirichlet (pure C² only)
   BezierSmootherConfig config_no_dir;
   config_no_dir.lambda = 1.0; // Equal weight to data fitting and smoothness
   config_no_dir.enable_boundary_dirichlet = false;
+  config_no_dir.enable_natural_bc = false;  // Pure C² only
 
   BezierBathymetrySmoother smoother_no_dir(*quadtree, config_no_dir);
   smoother_no_dir.set_bathymetry_data(bathy_func);
@@ -1115,6 +1126,7 @@ TEST_F(BezierBathymetrySmootherTest, GeoTiffWithDirichlet) {
   BezierSmootherConfig config_with_dir;
   config_with_dir.lambda = 1.0; // Equal weight to data fitting and smoothness
   config_with_dir.enable_boundary_dirichlet = true;
+  config_with_dir.enable_natural_bc = false;  // Dirichlet instead of natural BC
 
   BezierBathymetrySmoother smoother_with_dir(*quadtree, config_with_dir);
   smoother_with_dir.set_bathymetry_data(bathy_func);
@@ -1164,6 +1176,241 @@ TEST_F(BezierBathymetrySmootherTest, GeoTiffWithDirichlet) {
       << "C² violated (no Dirichlet)";
   EXPECT_LT(violation_with_dir / norm_with_dir, 1e-3)
       << "C² violated (with Dirichlet)";
+}
+
+// =============================================================================
+// Natural boundary condition tests
+// =============================================================================
+
+TEST_F(BezierBathymetrySmootherTest, NaturalBCConstraintCounts) {
+  // Verify natural BC constraint counts for various meshes
+
+  // Single element: 4 corners × 2 constraints each + 4 edges × 4 interior DOFs = 8 + 16 = 24
+  // But wait - domain corners have 2 edges each, not counted separately for interior DOFs
+  // Let's calculate properly:
+  //   - Edge 0 (left): 6 DOFs total
+  //   - Edge 1 (right): 6 DOFs total
+  //   - Edge 2 (bottom): 6 DOFs total
+  //   - Edge 3 (top): 6 DOFs total
+  //   - Corner DOFs appear on 2 edges, getting 2 constraints each
+  //
+  // For single element: 4 corners get 2 constraints each = 8
+  //                     4 edges × 4 interior DOFs × 1 constraint = 16
+  // Total = 24
+
+  auto quadtree1 = create_quadtree(1, 1);
+  BezierC2ConstraintBuilder builder1(*quadtree1);
+  Index natural_bc_1x1 = builder1.num_natural_bc_constraints();
+
+  // 24 = 4 corners × 2 + 4 edges × 4 interior
+  EXPECT_EQ(natural_bc_1x1, 24) << "1x1 mesh should have 24 natural BC constraints";
+
+  // 2x2 mesh:
+  //   - 4 domain corners × 2 = 8
+  //   - 4 domain edge midpoints (vertices) × 1 = 4
+  //   - 4 domain edges × 8 interior DOFs × 1 = 32
+  // But some DOFs are shared between elements on domain boundary
+  // Let's see what the actual count is
+  auto quadtree2 = create_quadtree(2, 2);
+  BezierC2ConstraintBuilder builder2(*quadtree2);
+  Index natural_bc_2x2 = builder2.num_natural_bc_constraints();
+
+  std::cout << "Natural BC constraints - 1x1: " << natural_bc_1x1
+            << ", 2x2: " << natural_bc_2x2 << "\n";
+
+  // Verify it's a reasonable number (not zero, not too large)
+  EXPECT_GT(natural_bc_2x2, natural_bc_1x1) << "2x2 should have more constraints than 1x1";
+  EXPECT_LT(natural_bc_2x2, 100) << "Constraint count seems too high";
+}
+
+TEST_F(BezierBathymetrySmootherTest, NaturalBCConstantBathymetry) {
+  // For constant bathymetry, natural BC (z_nn = 0) should be trivially satisfied
+  // since z_xx = z_yy = 0 everywhere for a constant function
+  auto quadtree = create_quadtree(2, 2);
+
+  const Real depth = 50.0;
+  auto bathy = [depth](Real /*x*/, Real /*y*/) { return depth; };
+
+  BezierSmootherConfig config;
+  config.enable_natural_bc = true;
+  config.enable_boundary_dirichlet = false;
+
+  BezierBathymetrySmoother smoother(*quadtree, config);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Solution should be constant everywhere
+  std::vector<std::pair<Real, Real>> test_points = {
+      {25.0, 25.0}, {75.0, 25.0}, {25.0, 75.0}, {75.0, 75.0},
+      {50.0, 50.0},  // center
+      {0.0, 0.0}, {100.0, 100.0},  // corners
+      {50.0, 0.0}, {0.0, 50.0},    // edge midpoints
+  };
+
+  for (const auto& [x, y] : test_points) {
+    Real eval = smoother.evaluate(x, y);
+    EXPECT_NEAR(eval, depth, 0.1) << "At point (" << x << ", " << y << ")";
+  }
+
+  // Constraint violation should be small
+  Real violation = smoother.constraint_violation();
+  Real norm = smoother.solution().norm();
+  EXPECT_LT(violation / norm, 1e-6) << "Constraint violation too large";
+}
+
+TEST_F(BezierBathymetrySmootherTest, NaturalBCLinearBathymetry) {
+  // For linear bathymetry z = ax + by + c, all second derivatives are zero
+  // so natural BC z_nn = 0 should be exactly satisfied
+  auto quadtree = create_quadtree(2, 2);
+
+  auto bathy = [](Real x, Real y) { return 10.0 + 0.3 * x + 0.2 * y; };
+
+  BezierSmootherConfig config;
+  config.enable_natural_bc = true;
+  config.enable_boundary_dirichlet = false;
+  config.lambda = 1.0;  // Equal weight to data and smoothness
+
+  BezierBathymetrySmoother smoother(*quadtree, config);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Solution should match linear function well
+  std::vector<std::pair<Real, Real>> test_points = {
+      {25.0, 25.0}, {75.0, 25.0}, {25.0, 75.0}, {75.0, 75.0},
+      {50.0, 50.0}, {0.0, 50.0}, {100.0, 50.0},
+  };
+
+  for (const auto& [x, y] : test_points) {
+    Real expected = bathy(x, y);
+    Real eval = smoother.evaluate(x, y);
+    EXPECT_NEAR(eval, expected, 1.0) << "At point (" << x << ", " << y << ")";
+  }
+
+  // Constraint violation should be small
+  Real violation = smoother.constraint_violation();
+  Real norm = smoother.solution().norm();
+  EXPECT_LT(violation / norm, 1e-6) << "Constraint violation too large";
+}
+
+TEST_F(BezierBathymetrySmootherTest, NaturalBCVsDirichlet) {
+  // Compare solutions with natural BC vs Dirichlet BC
+  auto quadtree1 = create_quadtree(3, 3);
+  auto quadtree2 = create_quadtree(3, 3);
+
+  // Smooth quadratic bathymetry
+  auto bathy = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0;
+    return 100.0 - 0.005 * ((x - cx) * (x - cx) + (y - cy) * (y - cy));
+  };
+
+  // Natural BC configuration
+  BezierSmootherConfig config_natural;
+  config_natural.lambda = 1.0;
+  config_natural.enable_natural_bc = true;
+  config_natural.enable_boundary_dirichlet = false;
+
+  // Dirichlet BC configuration
+  BezierSmootherConfig config_dirichlet;
+  config_dirichlet.lambda = 1.0;
+  config_dirichlet.enable_natural_bc = false;
+  config_dirichlet.enable_boundary_dirichlet = true;
+
+  BezierBathymetrySmoother smoother_natural(*quadtree1, config_natural);
+  smoother_natural.set_bathymetry_data(bathy);
+  smoother_natural.solve();
+
+  BezierBathymetrySmoother smoother_dirichlet(*quadtree2, config_dirichlet);
+  smoother_dirichlet.set_bathymetry_data(bathy);
+  smoother_dirichlet.solve();
+
+  EXPECT_TRUE(smoother_natural.is_solved());
+  EXPECT_TRUE(smoother_dirichlet.is_solved());
+
+  // Both should approximate the center well
+  Real center_natural = smoother_natural.evaluate(50.0, 50.0);
+  Real center_dirichlet = smoother_dirichlet.evaluate(50.0, 50.0);
+  Real expected_center = bathy(50.0, 50.0);
+
+  std::cout << "Center comparison: expected=" << expected_center
+            << ", natural=" << center_natural
+            << ", dirichlet=" << center_dirichlet << "\n";
+
+  EXPECT_NEAR(center_natural, expected_center, 5.0);
+  EXPECT_NEAR(center_dirichlet, expected_center, 5.0);
+
+  // Natural BC should have smaller curvature at boundaries
+  // Check that both produce valid solutions
+  std::vector<std::pair<Real, Real>> boundary_points = {
+      {0.0, 50.0}, {100.0, 50.0}, {50.0, 0.0}, {50.0, 100.0},
+  };
+
+  for (const auto& [x, y] : boundary_points) {
+    Real expected = bathy(x, y);
+    Real eval_natural = smoother_natural.evaluate(x, y);
+    Real eval_dirichlet = smoother_dirichlet.evaluate(x, y);
+
+    std::cout << "Boundary (" << x << ", " << y << "): expected=" << expected
+              << ", natural=" << eval_natural << ", dirichlet=" << eval_dirichlet << "\n";
+
+    // Both should be reasonable (within 20% of expected)
+    EXPECT_NEAR(eval_natural, expected, 0.2 * std::abs(expected) + 5.0);
+    EXPECT_NEAR(eval_dirichlet, expected, 0.2 * std::abs(expected) + 5.0);
+  }
+
+  // Both should satisfy their constraints
+  Real viol_natural = smoother_natural.constraint_violation();
+  Real viol_dirichlet = smoother_dirichlet.constraint_violation();
+  Real norm_natural = smoother_natural.solution().norm();
+  Real norm_dirichlet = smoother_dirichlet.solution().norm();
+
+  EXPECT_LT(viol_natural / norm_natural, 1e-3) << "Natural BC constraints violated";
+  EXPECT_LT(viol_dirichlet / norm_dirichlet, 1e-3) << "Dirichlet constraints violated";
+}
+
+TEST_F(BezierBathymetrySmootherTest, NaturalBCSmoothBoundaries) {
+  // Natural BC should produce smooth (low curvature) boundaries
+  auto quadtree = create_quadtree(2, 2);
+
+  // Sinusoidal bathymetry that has non-zero curvature
+  auto bathy = [](Real x, Real y) {
+    return 50.0 + 10.0 * std::sin(x * M_PI / 100.0) * std::cos(y * M_PI / 100.0);
+  };
+
+  BezierSmootherConfig config;
+  config.enable_natural_bc = true;
+  config.enable_boundary_dirichlet = false;
+  config.lambda = 10.0;  // Stronger data fitting
+
+  BezierBathymetrySmoother smoother(*quadtree, config);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check that solution exists and is reasonable
+  Real center = smoother.evaluate(50.0, 50.0);
+  EXPECT_NEAR(center, bathy(50.0, 50.0), 2.0);
+
+  // Verify gradient is reasonable at boundaries (not too steep)
+  std::vector<std::pair<Real, Real>> boundary_points = {
+      {0.0, 50.0}, {100.0, 50.0}, {50.0, 0.0}, {50.0, 100.0},
+  };
+
+  for (const auto& [x, y] : boundary_points) {
+    Vec2 grad = smoother.evaluate_gradient(x, y);
+    Real grad_mag = grad.norm();
+    // Gradient should not be extreme
+    EXPECT_LT(grad_mag, 5.0) << "Gradient too steep at boundary (" << x << ", " << y << ")";
+  }
+
+  // Constraint violation should be small
+  Real violation = smoother.constraint_violation();
+  Real norm = smoother.solution().norm();
+  EXPECT_LT(violation / norm, 1e-6) << "Constraint violation too large";
 }
 
 // =============================================================================
@@ -1273,6 +1520,177 @@ TEST_F(BezierBathymetrySmootherTest, NonConformingOnePlusFour) {
     // Allow smoothing error (coarse element smooths significantly with low lambda)
     EXPECT_LT(error, 20.0) << "At (" << x << ", " << y << ")";
   }
+
+  // Check C0/C1/C2 continuity along shared edge between elements 3 and 4
+  // Elements 3 and 4 share the edge at y=50, x in [75, 100]
+  // Element 3: [75,100] x [50,100], so y=50 is at v=0
+  // Element 4: [75,100] x [0,50], so y=50 is at v=1
+  // Both have dx=25, dy=50
+
+  BezierBasis2D basis;
+  VecX coeff3 = smoother.element_coefficients(3);
+  VecX coeff4 = smoother.element_coefficients(4);
+
+  Real dx3 = 25.0, dy3 = 50.0;
+  Real dx4 = 25.0, dy4 = 50.0;
+
+  std::cout << "\nC0/C1/C2 continuity check along elem3-elem4 shared edge (y=50):\n";
+  std::cout << "  x\tdz\t\tdz_x\t\tdz_y\t\tdz_xx\t\tdz_xy\t\tdz_yy\n";
+
+  Real max_c0 = 0.0, max_c1x = 0.0, max_c1y = 0.0;
+  Real max_c2xx = 0.0, max_c2xy = 0.0, max_c2yy = 0.0;
+
+  for (double x = 75.0; x <= 100.0; x += 5.0) {
+    double u = (x - 75.0) / 25.0;
+
+    // Element 3 at (u, v=0), Element 4 at (u, v=1)
+    // Value
+    VecX phi3 = basis.evaluate(u, 0.0);
+    VecX phi4 = basis.evaluate(u, 1.0);
+    Real z3 = coeff3.dot(phi3);
+    Real z4 = coeff4.dot(phi4);
+
+    // First derivatives (in parameter space, then convert to physical)
+    VecX phi3_u = basis.evaluate_du(u, 0.0);
+    VecX phi3_v = basis.evaluate_dv(u, 0.0);
+    VecX phi4_u = basis.evaluate_du(u, 1.0);
+    VecX phi4_v = basis.evaluate_dv(u, 1.0);
+
+    Real z3_x = coeff3.dot(phi3_u) / dx3;  // dz/dx = dz/du / dx
+    Real z3_y = coeff3.dot(phi3_v) / dy3;
+    Real z4_x = coeff4.dot(phi4_u) / dx4;
+    Real z4_y = coeff4.dot(phi4_v) / dy4;
+
+    // Second derivatives
+    VecX phi3_uu = basis.evaluate_d2u(u, 0.0);
+    VecX phi3_uv = basis.evaluate_d2uv(u, 0.0);
+    VecX phi3_vv = basis.evaluate_d2v(u, 0.0);
+    VecX phi4_uu = basis.evaluate_d2u(u, 1.0);
+    VecX phi4_uv = basis.evaluate_d2uv(u, 1.0);
+    VecX phi4_vv = basis.evaluate_d2v(u, 1.0);
+
+    Real z3_xx = coeff3.dot(phi3_uu) / (dx3 * dx3);
+    Real z3_xy = coeff3.dot(phi3_uv) / (dx3 * dy3);
+    Real z3_yy = coeff3.dot(phi3_vv) / (dy3 * dy3);
+    Real z4_xx = coeff4.dot(phi4_uu) / (dx4 * dx4);
+    Real z4_xy = coeff4.dot(phi4_uv) / (dx4 * dy4);
+    Real z4_yy = coeff4.dot(phi4_vv) / (dy4 * dy4);
+
+    Real dz = std::abs(z3 - z4);
+    Real dz_x = std::abs(z3_x - z4_x);
+    Real dz_y = std::abs(z3_y - z4_y);
+    Real dz_xx = std::abs(z3_xx - z4_xx);
+    Real dz_xy = std::abs(z3_xy - z4_xy);
+    Real dz_yy = std::abs(z3_yy - z4_yy);
+
+    max_c0 = std::max(max_c0, dz);
+    max_c1x = std::max(max_c1x, dz_x);
+    max_c1y = std::max(max_c1y, dz_y);
+    max_c2xx = std::max(max_c2xx, dz_xx);
+    max_c2xy = std::max(max_c2xy, dz_xy);
+    max_c2yy = std::max(max_c2yy, dz_yy);
+
+    std::cout << "  " << x << "\t" << dz << "\t" << dz_x << "\t" << dz_y
+              << "\t" << dz_xx << "\t" << dz_xy << "\t" << dz_yy << "\n";
+  }
+
+  std::cout << "Max errors: C0=" << max_c0 << ", C1_x=" << max_c1x << ", C1_y=" << max_c1y
+            << ", C2_xx=" << max_c2xx << ", C2_xy=" << max_c2xy << ", C2_yy=" << max_c2yy << "\n";
+
+  EXPECT_LT(max_c0, 1e-10) << "C0 continuity violated";
+  EXPECT_LT(max_c1x, 1e-10) << "C1 (dz/dx) continuity violated";
+  EXPECT_LT(max_c1y, 1e-10) << "C1 (dz/dy) continuity violated";
+  EXPECT_LT(max_c2xx, 1e-10) << "C2 (d²z/dx²) continuity violated";
+  EXPECT_LT(max_c2xy, 1e-10) << "C2 (d²z/dxdy) continuity violated";
+  EXPECT_LT(max_c2yy, 1e-10) << "C2 (d²z/dy²) continuity violated";
+
+  // Check C0/C1/C2 continuity at the NON-CONFORMING interface at x=50
+  // Elements 0 (coarse) and 1 (fine) share edge at x=50, y in [0,50]
+  // Element 0: [0,50] x [0,100], so x=50 is at u=1
+  // Element 1: [50,75] x [0,50], so x=50 is at u=0
+  // Element 0 has dx=50, dy=100
+  // Element 1 has dx=25, dy=50
+
+  std::cout << "\nC0/C1/C2 continuity at NON-CONFORMING interface (x=50, y in [0,50]):\n";
+  std::cout << "Testing coarse element 0 vs fine element 1\n";
+  std::cout << "  y\tdz\t\tdz_x\t\tdz_y\t\tdz_xx\t\tdz_xy\t\tdz_yy\n";
+
+  VecX coeff0 = smoother.element_coefficients(0);
+  VecX coeff1 = smoother.element_coefficients(1);
+
+  Real dx0 = 50.0, dy0 = 100.0;
+  Real dx1 = 25.0, dy1 = 50.0;
+
+  Real max_nc_c0 = 0.0, max_nc_c1x = 0.0, max_nc_c1y = 0.0;
+  Real max_nc_c2xx = 0.0, max_nc_c2xy = 0.0, max_nc_c2yy = 0.0;
+
+  for (double y = 0.0; y <= 50.0; y += 10.0) {
+    // Element 0: u=1.0, v = y/100
+    // Element 1: u=0.0, v = y/50
+    double v0 = y / 100.0;
+    double v1 = y / 50.0;
+
+    // Value
+    VecX phi0 = basis.evaluate(1.0, v0);
+    VecX phi1 = basis.evaluate(0.0, v1);
+    Real z0 = coeff0.dot(phi0);
+    Real z1 = coeff1.dot(phi1);
+
+    // First derivatives
+    VecX phi0_u = basis.evaluate_du(1.0, v0);
+    VecX phi0_v = basis.evaluate_dv(1.0, v0);
+    VecX phi1_u = basis.evaluate_du(0.0, v1);
+    VecX phi1_v = basis.evaluate_dv(0.0, v1);
+
+    Real z0_x = coeff0.dot(phi0_u) / dx0;
+    Real z0_y = coeff0.dot(phi0_v) / dy0;
+    Real z1_x = coeff1.dot(phi1_u) / dx1;
+    Real z1_y = coeff1.dot(phi1_v) / dy1;
+
+    // Second derivatives
+    VecX phi0_uu = basis.evaluate_d2u(1.0, v0);
+    VecX phi0_uv = basis.evaluate_d2uv(1.0, v0);
+    VecX phi0_vv = basis.evaluate_d2v(1.0, v0);
+    VecX phi1_uu = basis.evaluate_d2u(0.0, v1);
+    VecX phi1_uv = basis.evaluate_d2uv(0.0, v1);
+    VecX phi1_vv = basis.evaluate_d2v(0.0, v1);
+
+    Real z0_xx = coeff0.dot(phi0_uu) / (dx0 * dx0);
+    Real z0_xy = coeff0.dot(phi0_uv) / (dx0 * dy0);
+    Real z0_yy = coeff0.dot(phi0_vv) / (dy0 * dy0);
+    Real z1_xx = coeff1.dot(phi1_uu) / (dx1 * dx1);
+    Real z1_xy = coeff1.dot(phi1_uv) / (dx1 * dy1);
+    Real z1_yy = coeff1.dot(phi1_vv) / (dy1 * dy1);
+
+    Real dz = std::abs(z0 - z1);
+    Real dz_x = std::abs(z0_x - z1_x);
+    Real dz_y = std::abs(z0_y - z1_y);
+    Real dz_xx = std::abs(z0_xx - z1_xx);
+    Real dz_xy = std::abs(z0_xy - z1_xy);
+    Real dz_yy = std::abs(z0_yy - z1_yy);
+
+    max_nc_c0 = std::max(max_nc_c0, dz);
+    max_nc_c1x = std::max(max_nc_c1x, dz_x);
+    max_nc_c1y = std::max(max_nc_c1y, dz_y);
+    max_nc_c2xx = std::max(max_nc_c2xx, dz_xx);
+    max_nc_c2xy = std::max(max_nc_c2xy, dz_xy);
+    max_nc_c2yy = std::max(max_nc_c2yy, dz_yy);
+
+    std::cout << "  " << y << "\t" << dz << "\t" << dz_x << "\t" << dz_y
+              << "\t" << dz_xx << "\t" << dz_xy << "\t" << dz_yy << "\n";
+  }
+
+  std::cout << "Non-conforming max errors: C0=" << max_nc_c0 << ", C1_x=" << max_nc_c1x
+            << ", C1_y=" << max_nc_c1y << ", C2_xx=" << max_nc_c2xx
+            << ", C2_xy=" << max_nc_c2xy << ", C2_yy=" << max_nc_c2yy << "\n";
+
+  // C² continuity at non-conforming interface should be satisfied at machine precision
+  EXPECT_LT(max_nc_c0, 1e-6) << "C0 continuity violated at non-conforming interface";
+  EXPECT_LT(max_nc_c1x, 1e-6) << "C1 (dz/dx) violated at non-conforming interface";
+  EXPECT_LT(max_nc_c1y, 1e-6) << "C1 (dz/dy) violated at non-conforming interface";
+  EXPECT_LT(max_nc_c2xx, 1e-6) << "C2 (d²z/dx²) violated at non-conforming interface";
+  EXPECT_LT(max_nc_c2xy, 1e-6) << "C2 (d²z/dxdy) violated at non-conforming interface";
+  EXPECT_LT(max_nc_c2yy, 1e-6) << "C2 (d²z/dy²) violated at non-conforming interface";
 
   // Write VTK for visualization
   std::string vtk_path = "/tmp/bezier_nonconforming_1plus4";

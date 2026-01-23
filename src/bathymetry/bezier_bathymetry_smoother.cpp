@@ -1,4 +1,5 @@
 #include "bathymetry/bezier_bathymetry_smoother.hpp"
+#include "dg/basis_hexahedron.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
 #include <fstream>
@@ -94,6 +95,7 @@ void BezierBathymetrySmoother::solve_kkt() {
     //   minimize: x^T * H * x  (thin plate energy / smoothness)
     //   subject to:
     //     A_c2 * x = 0                        (C² continuity at interior vertices)
+    //     A_nat * x = 0                       (natural BCs: z_nn = 0 at boundary)
     //     (A^T W A + λI) * x = A^T W b        (least squares optimality)
     //
     // This prioritizes smoothness while ensuring the data is fit well.
@@ -149,9 +151,10 @@ void BezierBathymetrySmoother::solve_kkt() {
     VecX c = -ls_penalty * AtWb;
 
     // Apply Dirichlet BCs via row/column elimination in Q and c
+    // (Only when natural BCs are disabled)
     // For each Dirichlet DOF i: modify RHS for coupling, then set row to identity
     std::set<Index> dirichlet_dofs;
-    if (config_.enable_boundary_dirichlet) {
+    if (config_.enable_boundary_dirichlet && !config_.enable_natural_bc) {
         if (!data_assembler_->has_bathymetry_function()) {
             throw std::runtime_error(
                 "BezierBathymetrySmoother: Dirichlet BCs require bathymetry function");
@@ -190,12 +193,19 @@ void BezierBathymetrySmoother::solve_kkt() {
         }
     }
 
-    // Build C² constraint matrix
-    SpMat A_c2 = constraint_builder_->build_constraint_matrix();
-    Index m = A_c2.rows();
+    // Build constraint matrix
+    // If natural BCs are enabled, use C² + natural BC constraints
+    // Otherwise, just C² constraints
+    SpMat A_constraints;
+    if (config_.enable_natural_bc) {
+        A_constraints = constraint_builder_->build_c2_and_natural_bc_matrix();
+    } else {
+        A_constraints = constraint_builder_->build_constraint_matrix();
+    }
+    Index m = A_constraints.rows();
 
     if (m == 0) {
-        // No C² constraints - solve directly
+        // No constraints - solve directly
         Eigen::LDLT<MatX> solver(Q);
         if (solver.info() != Eigen::Success) {
             throw std::runtime_error("BezierBathymetrySmoother: Q factorization failed");
@@ -204,11 +214,11 @@ void BezierBathymetrySmoother::solve_kkt() {
         return;
     }
 
-    // Handle Dirichlet DOFs in C² constraints
-    // Original: A_c2 * x = 0
-    // With Dirichlet: A_c2_free * x_free + A_c2_dir * x_dir = 0
-    // Rearranged: A_c2_free * x_free = -A_c2_dir * x_dir = b_c2
-    VecX b_c2 = VecX::Zero(m);
+    // Handle Dirichlet DOFs in constraints (only when Dirichlet is enabled)
+    // Original: A * x = 0
+    // With Dirichlet: A_free * x_free + A_dir * x_dir = 0
+    // Rearranged: A_free * x_free = -A_dir * x_dir = b_constraints
+    VecX b_constraints = VecX::Zero(m);
     if (!dirichlet_dofs.empty()) {
         // Build vector of Dirichlet values
         VecX x_dir = VecX::Zero(n);
@@ -217,26 +227,26 @@ void BezierBathymetrySmoother::solve_kkt() {
                 info.position(0), info.position(1));
         }
 
-        // Compute RHS contribution: b_c2 = -A_c2 * x_dir
-        b_c2 = -(A_c2 * x_dir);
+        // Compute RHS contribution: b = -A * x_dir
+        b_constraints = -(A_constraints * x_dir);
 
-        // Zero out Dirichlet columns in A_c2
-        MatX A_c2_dense = MatX(A_c2);
+        // Zero out Dirichlet columns in A_constraints
+        MatX A_dense = MatX(A_constraints);
         for (Index dof : dirichlet_dofs) {
-            A_c2_dense.col(dof).setZero();
+            A_dense.col(dof).setZero();
         }
-        A_c2 = A_c2_dense.sparseView();
+        A_constraints = A_dense.sparseView();
     }
 
     // Build KKT system:
-    // [Q    A_c2^T] [x]   [-c ]
-    // [A_c2    0  ] [y] = [b_c2]
+    // [Q    A^T] [x]   [-c ]
+    // [A     0 ] [y] = [b  ]
 
     SpMat Q_sp = Q.sparseView();
 
     SpMat KKT(n + m, n + m);
     std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(Q_sp.nonZeros() + 2 * A_c2.nonZeros());
+    triplets.reserve(Q_sp.nonZeros() + 2 * A_constraints.nonZeros());
 
     // Q block (upper left)
     for (int k = 0; k < Q_sp.outerSize(); ++k) {
@@ -245,16 +255,16 @@ void BezierBathymetrySmoother::solve_kkt() {
         }
     }
 
-    // A_c2 block (lower left)
-    for (int k = 0; k < A_c2.outerSize(); ++k) {
-        for (SpMat::InnerIterator it(A_c2, k); it; ++it) {
+    // A block (lower left)
+    for (int k = 0; k < A_constraints.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A_constraints, k); it; ++it) {
             triplets.emplace_back(n + it.row(), it.col(), it.value());
         }
     }
 
-    // A_c2^T block (upper right)
-    for (int k = 0; k < A_c2.outerSize(); ++k) {
-        for (SpMat::InnerIterator it(A_c2, k); it; ++it) {
+    // A^T block (upper right)
+    for (int k = 0; k < A_constraints.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A_constraints, k); it; ++it) {
             triplets.emplace_back(it.col(), n + it.row(), it.value());
         }
     }
@@ -267,10 +277,10 @@ void BezierBathymetrySmoother::solve_kkt() {
 
     KKT.setFromTriplets(triplets.begin(), triplets.end());
 
-    // Build RHS: C² constraints have RHS = b_c2 (modified for Dirichlet)
+    // Build RHS
     VecX rhs(n + m);
     rhs.head(n) = -c;
-    rhs.tail(m) = b_c2;
+    rhs.tail(m) = b_constraints;
 
     // Solve
     Eigen::SparseLU<SpMat> solver;
@@ -290,14 +300,14 @@ void BezierBathymetrySmoother::solve_kkt() {
 
     // Project solution onto constraint manifold for exact satisfaction
     // This corrects any numerical drift from ill-conditioning when lambda is large
-    VecX constraint_residual = A_c2 * solution_ - b_c2;
+    VecX constraint_residual = A_constraints * solution_ - b_constraints;
     if (constraint_residual.norm() > 1e-14) {
         // Solve (A A^T) lambda = residual, then x = x - A^T * lambda
-        MatX AAt = MatX(A_c2) * MatX(A_c2).transpose();
+        MatX AAt = MatX(A_constraints) * MatX(A_constraints).transpose();
         Eigen::LDLT<MatX> ldlt_AAt(AAt);
         if (ldlt_AAt.info() == Eigen::Success) {
             VecX lambda_corr = ldlt_AAt.solve(constraint_residual);
-            solution_ -= MatX(A_c2).transpose() * lambda_corr;
+            solution_ -= MatX(A_constraints).transpose() * lambda_corr;
         }
     }
 }
@@ -552,7 +562,7 @@ void BezierBathymetrySmoother::write_control_points_vtk(const std::string& filen
     file << "</VTKFile>\n";
 }
 
-void BezierBathymetrySmoother::write_vtk(const std::string& filename, int resolution) const {
+void BezierBathymetrySmoother::write_vtk(const std::string& filename, [[maybe_unused]] int resolution) const {
     if (!solved_) {
         throw std::runtime_error("BezierBathymetrySmoother: solve() not called");
     }
@@ -562,10 +572,18 @@ void BezierBathymetrySmoother::write_vtk(const std::string& filename, int resolu
         throw std::runtime_error("BezierBathymetrySmoother: cannot open " + filename + ".vtu");
     }
 
+    // Use 11x11 LGL points per element (degree 10 polynomial grid)
+    constexpr int n_lgl = 11;
+    VecX lgl_nodes, lgl_weights;
+    compute_gauss_lobatto_nodes(n_lgl, lgl_nodes, lgl_weights);
+
+    // Map LGL nodes from [-1, 1] to [0, 1] for Bezier parameter space
+    VecX param_nodes = (lgl_nodes.array() + 1.0) * 0.5;
+
     // Count points and cells
     Index num_elems = quadtree_->num_elements();
-    int pts_per_elem = (resolution + 1) * (resolution + 1);
-    int cells_per_elem = resolution * resolution;
+    int pts_per_elem = n_lgl * n_lgl;
+    int cells_per_elem = (n_lgl - 1) * (n_lgl - 1);
 
     Index total_pts = num_elems * pts_per_elem;
     Index total_cells = num_elems * cells_per_elem;
@@ -584,10 +602,10 @@ void BezierBathymetrySmoother::write_vtk(const std::string& filename, int resolu
         const QuadBounds& bounds = quadtree_->element_bounds(e);
         VecX coeffs = element_coefficients(e);
 
-        for (int j = 0; j <= resolution; ++j) {
-            for (int i = 0; i <= resolution; ++i) {
-                Real u = static_cast<Real>(i) / resolution;
-                Real v = static_cast<Real>(j) / resolution;
+        for (int j = 0; j < n_lgl; ++j) {
+            for (int i = 0; i < n_lgl; ++i) {
+                Real u = param_nodes(i);
+                Real v = param_nodes(j);
 
                 Real x = bounds.xmin + u * (bounds.xmax - bounds.xmin);
                 Real y = bounds.ymin + v * (bounds.ymax - bounds.ymin);
@@ -607,12 +625,12 @@ void BezierBathymetrySmoother::write_vtk(const std::string& filename, int resolu
 
     Index pt_offset = 0;
     for (Index e = 0; e < num_elems; ++e) {
-        for (int j = 0; j < resolution; ++j) {
-            for (int i = 0; i < resolution; ++i) {
-                Index p0 = pt_offset + i + (resolution + 1) * j;
+        for (int j = 0; j < n_lgl - 1; ++j) {
+            for (int i = 0; i < n_lgl - 1; ++i) {
+                Index p0 = pt_offset + i + n_lgl * j;
                 Index p1 = p0 + 1;
-                Index p2 = p0 + (resolution + 1) + 1;
-                Index p3 = p0 + (resolution + 1);
+                Index p2 = p0 + n_lgl + 1;
+                Index p3 = p0 + n_lgl;
 
                 file << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
             }
@@ -644,10 +662,10 @@ void BezierBathymetrySmoother::write_vtk(const std::string& filename, int resolu
     for (Index e = 0; e < num_elems; ++e) {
         VecX coeffs = element_coefficients(e);
 
-        for (int j = 0; j <= resolution; ++j) {
-            for (int i = 0; i <= resolution; ++i) {
-                Real u = static_cast<Real>(i) / resolution;
-                Real v = static_cast<Real>(j) / resolution;
+        for (int j = 0; j < n_lgl; ++j) {
+            for (int i = 0; i < n_lgl; ++i) {
+                Real u = param_nodes(i);
+                Real v = param_nodes(j);
                 Real z = basis_->evaluate_scalar(coeffs, u, v);
                 file << std::setprecision(12) << z << "\n";
             }
