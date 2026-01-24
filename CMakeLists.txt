@@ -134,6 +134,7 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/bezier_c2_constraints.cpp
     src/bathymetry/bezier_data_fitting.cpp
     src/bathymetry/bezier_bathymetry_smoother.cpp
+    src/bathymetry/bezier_multigrid_solver.cpp
 )
 
 set(DG_SOURCES
