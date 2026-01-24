@@ -294,9 +294,7 @@ void BezierMultigridSolver::v_cycle(int level, VecX& x, const VecX& rhs) {
         direct_solve(A_coarse, e_coarse, rhs_coarse);
       } else {
         // Recursive V-cycle (Step 2.7)
-        // v_cycle(level - 1, e_coarse, rhs_coarse);
-        // For now, use direct solve
-        direct_solve(A_coarse, e_coarse, rhs_coarse);
+        v_cycle(level - 1, e_coarse, rhs_coarse);
       }
 
       // Step 5: Prolongate correction to fine grid
