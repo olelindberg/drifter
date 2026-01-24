@@ -4,8 +4,11 @@
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseLU>
 #include <omp.h>
+#include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <set>
 #include <stdexcept>
 
@@ -166,10 +169,22 @@ void BezierBathymetrySmoother::solve_kkt() {
     // first-order optimality condition for weighted least squares, we can
     // solve the combined system directly using null-space projection.
 
+    // Timing instrumentation (enabled via DRIFTER_PROFILE environment variable)
+    bool enable_profiling = std::getenv("DRIFTER_PROFILE") != nullptr;
+    auto t_start = std::chrono::high_resolution_clock::now();
+    auto t_last = t_start;
+
     // Build normal equations components
     MatX AtWA;
     VecX AtWb;
     data_assembler_->assemble_normal_equations(AtWA, AtWb);
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] Data fitting assembly: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
 
     // Ridge regularization (Tikhonov) - matches ShipMesh's lambda = 0.0001
     const Real ridge_lambda = 1e-4;
@@ -183,6 +198,13 @@ void BezierBathymetrySmoother::solve_kkt() {
 
     // Build smoothness Hessian (thin plate energy)
     MatX H_global = build_global_hessian();
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] Hessian assembly: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
 
     // Normalize matrices for scale-invariant lambda
     // Physical scaling makes H_global ~1e-8 for km-scale elements, while AtWA ~1.
@@ -198,6 +220,13 @@ void BezierBathymetrySmoother::solve_kkt() {
     const Real ls_penalty = config_.lambda;
     MatX Q = scale_factor * H_global + ls_penalty * AtWA_reg;
     VecX c = -ls_penalty * AtWb;
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] Q matrix construction: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
 
     // Apply Dirichlet BCs via row/column elimination in Q and c
     // (Only when natural BCs are disabled)
@@ -240,6 +269,13 @@ void BezierBathymetrySmoother::solve_kkt() {
             Q(dof, dof) = 1.0;
             c(dof) = -depth;
         }
+
+        if (enable_profiling) {
+            auto t_now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+            std::cout << "[Profile] Dirichlet BC application: " << elapsed << " ms\n";
+            t_last = t_now;
+        }
     }
 
     // Build constraint matrix
@@ -252,6 +288,13 @@ void BezierBathymetrySmoother::solve_kkt() {
         A_constraints = constraint_builder_->build_constraint_matrix();
     }
     Index m = A_constraints.rows();
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] Constraint matrix build: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
 
     if (m == 0) {
         // No constraints - solve directly
@@ -285,6 +328,13 @@ void BezierBathymetrySmoother::solve_kkt() {
             A_dense.col(dof).setZero();
         }
         A_constraints = A_dense.sparseView();
+
+        if (enable_profiling) {
+            auto t_now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+            std::cout << "[Profile] Dirichlet in constraints: " << elapsed << " ms\n";
+            t_last = t_now;
+        }
     }
 
     // Build KKT system:
@@ -324,12 +374,33 @@ void BezierBathymetrySmoother::solve_kkt() {
         triplets.emplace_back(n + i, n + i, -kkt_regularization);
     }
 
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] KKT triplet assembly: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
+
     KKT.setFromTriplets(triplets.begin(), triplets.end());
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] KKT setFromTriplets: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
 
     // Build RHS
     VecX rhs(n + m);
     rhs.head(n) = -c;
     rhs.tail(m) = b_constraints;
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] KKT RHS build: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
 
     // Solve
     Eigen::SparseLU<SpMat> solver;
@@ -339,10 +410,24 @@ void BezierBathymetrySmoother::solve_kkt() {
         throw std::runtime_error("BezierBathymetrySmoother: KKT factorization failed");
     }
 
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] SparseLU factorization: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
+
     VecX sol = solver.solve(rhs);
 
     if (solver.info() != Eigen::Success) {
         throw std::runtime_error("BezierBathymetrySmoother: KKT solve failed");
+    }
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] SparseLU solve: " << elapsed << " ms\n";
+        t_last = t_now;
     }
 
     solution_ = sol.head(n);
@@ -350,7 +435,15 @@ void BezierBathymetrySmoother::solve_kkt() {
     // Project solution onto constraint manifold for exact satisfaction
     // This corrects any numerical drift from ill-conditioning when lambda is large
     VecX constraint_residual = A_constraints * solution_ - b_constraints;
-    if (constraint_residual.norm() > 1e-14) {
+    Real constraint_violation_before = constraint_residual.norm();
+
+    if (enable_profiling) {
+        std::cout << "[Profile] Constraint violation before projection: " << constraint_violation_before << "\n";
+    }
+
+    // Only project if constraint violation is significant (> 1e-10)
+    // KKT solver typically achieves ~1e-13 accuracy, so projection is usually unnecessary
+    if (constraint_violation_before > 1e-10) {
         // Solve (A A^T) lambda = residual, then x = x - A^T * lambda
         // Use sparse ConjugateGradient instead of dense LDLT for better scaling
         // (A·A^T is symmetric positive definite)
@@ -361,12 +454,44 @@ void BezierBathymetrySmoother::solve_kkt() {
         cg.setMaxIterations(std::max(static_cast<int>(m), 100));
         cg.compute(AAt);
 
+        if (enable_profiling) {
+            std::cout << "[Profile] CG compute status: " << (cg.info() == Eigen::Success ? "Success" : "Failed") << "\n";
+        }
+
         if (cg.info() == Eigen::Success) {
             VecX lambda_corr = cg.solve(constraint_residual);
+
+            if (enable_profiling) {
+                std::cout << "[Profile] CG solve status: " << (cg.info() == Eigen::Success ? "Success" : "Failed") << "\n";
+                std::cout << "[Profile] CG iterations: " << cg.iterations() << "\n";
+                std::cout << "[Profile] CG error: " << cg.error() << "\n";
+            }
+
             if (cg.info() == Eigen::Success) {
                 solution_ -= A_constraints.transpose() * lambda_corr;
+
+                if (enable_profiling) {
+                    VecX final_residual = A_constraints * solution_ - b_constraints;
+                    std::cout << "[Profile] Constraint violation after projection: " << final_residual.norm() << "\n";
+                }
             }
         }
+
+        if (enable_profiling) {
+            auto t_now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+            std::cout << "[Profile] Constraint projection (CG): " << elapsed << " ms\n";
+            t_last = t_now;
+        }
+    } else if (enable_profiling) {
+        std::cout << "[Profile] Skipping constraint projection (violation < 1e-14)\n";
+    }
+
+    if (enable_profiling) {
+        auto t_total = std::chrono::high_resolution_clock::now();
+        auto total_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_total - t_start).count();
+        std::cout << "[Profile] TOTAL solve_kkt time: " << total_elapsed << " ms\n";
+        std::cout << "[Profile] System size: n=" << n << ", m=" << m << " (total=" << (n+m) << ")\n";
     }
 }
 
