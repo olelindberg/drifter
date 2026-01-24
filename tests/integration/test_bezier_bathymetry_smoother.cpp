@@ -4,6 +4,7 @@
 #include "mesh/geotiff_reader.hpp"
 #include "mesh/octree_adapter.hpp"
 #include "test_integration_fixtures.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include <functional>
 #include <gtest/gtest.h>
 #include <map>
+#include <omp.h>
 
 using namespace drifter;
 
@@ -2173,4 +2175,140 @@ TEST_F(BezierBathymetrySmootherTest, MultiresolutionLargeMeshStress) {
   std::string vtk_path = "/tmp/bezier_multiresolution_stress";
   smoother.write_vtk(vtk_path, 3); // Lower resolution for larger mesh
   std::cout << "\nWrote VTK output to " << vtk_path << ".vtu\n";
+}
+
+// =============================================================================
+// OpenMP Performance Benchmarks
+// =============================================================================
+
+TEST_F(BezierBathymetrySmootherTest, BenchmarkOpenMP8x8Mesh) {
+  // 8x8 mesh (64 elements) - baseline benchmark
+  auto quadtree = create_quadtree(8, 8);
+
+  BezierBathymetrySmoother smoother(*quadtree);
+
+  // Set simple quadratic bathymetry for consistent timing
+  auto bathy = [](Real x, Real y) { return -50.0 - 0.001 * (x * x + y * y); };
+  smoother.set_bathymetry_data(bathy);
+
+  // Time the solve
+  auto start = std::chrono::high_resolution_clock::now();
+  smoother.solve();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "\n=== 8×8 Mesh Benchmark ===\n";
+  std::cout << "Elements: " << quadtree->num_elements() << "\n";
+  std::cout << "DOFs: " << smoother.num_dofs() << "\n";
+  std::cout << "Constraints: " << smoother.num_constraints() << "\n";
+  std::cout << "Solve time: " << duration.count() << " ms\n";
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_LT(smoother.constraint_violation(), 1e-8);
+}
+
+TEST_F(BezierBathymetrySmootherTest, BenchmarkOpenMP20x20Mesh) {
+  // 20x20 mesh (400 elements) - Phase 1 target
+  auto quadtree = create_quadtree(20, 20);
+
+  BezierBathymetrySmoother smoother(*quadtree);
+
+  // Set simple quadratic bathymetry for consistent timing
+  auto bathy = [](Real x, Real y) { return -50.0 - 0.001 * (x * x + y * y); };
+  smoother.set_bathymetry_data(bathy);
+
+  // Time the solve
+  auto start = std::chrono::high_resolution_clock::now();
+  smoother.solve();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "\n=== 20×20 Mesh Benchmark ===\n";
+  std::cout << "Elements: " << quadtree->num_elements() << "\n";
+  std::cout << "DOFs: " << smoother.num_dofs() << "\n";
+  std::cout << "Constraints: " << smoother.num_constraints() << "\n";
+  std::cout << "Solve time: " << duration.count() << " ms\n";
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_LT(smoother.constraint_violation(), 1e-8);
+
+  // Phase 1 target: should be <10 seconds with OpenMP
+  // This is a relaxed check - actual speedup depends on hardware
+  EXPECT_LT(duration.count(), 30000) << "Solve took too long - check OpenMP parallelization";
+}
+
+TEST_F(BezierBathymetrySmootherTest, BenchmarkThreadScaling) {
+  // Test thread scaling with 10x10 mesh (100 elements)
+  auto quadtree = create_quadtree(10, 10);
+
+  auto bathy = [](Real x, Real y) { return -50.0 - 0.001 * (x * x + y * y); };
+
+  std::cout << "\n=== Thread Scaling Benchmark (10×10 mesh) ===\n";
+  std::cout << "Elements: " << quadtree->num_elements() << "\n";
+  std::cout << "DOFs: " << quadtree->num_elements() * 36 << "\n\n";
+
+  // Get current OMP_NUM_THREADS setting
+  int num_threads = 1;
+  #pragma omp parallel
+  {
+    #pragma omp single
+    num_threads = omp_get_num_threads();
+  }
+
+  std::cout << "Current OMP_NUM_THREADS: " << num_threads << "\n";
+
+  // Run benchmark 3 times and take median
+  std::vector<long long> times;
+  for (int run = 0; run < 3; ++run) {
+    BezierBathymetrySmoother smoother(*quadtree);
+    smoother.set_bathymetry_data(bathy);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    smoother.solve();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    times.push_back(duration.count());
+
+    EXPECT_TRUE(smoother.is_solved());
+    EXPECT_LT(smoother.constraint_violation(), 1e-8);
+  }
+
+  std::sort(times.begin(), times.end());
+  long long median_time = times[1];
+
+  std::cout << "Run times: " << times[0] << ", " << times[1] << ", " << times[2] << " ms\n";
+  std::cout << "Median solve time: " << median_time << " ms\n";
+  std::cout << "\nNote: Run with different OMP_NUM_THREADS to measure scaling:\n";
+  std::cout << "  OMP_NUM_THREADS=1 ./build/tests/drifter_integration_tests --gtest_filter=\"*ThreadScaling*\"\n";
+  std::cout << "  OMP_NUM_THREADS=8 ./build/tests/drifter_integration_tests --gtest_filter=\"*ThreadScaling*\"\n";
+}
+
+TEST_F(BezierBathymetrySmootherTest, BenchmarkAMR5Level) {
+  // Benchmark 5-level AMR mesh (moderate complexity) - reuse existing mesh pattern
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+  create_half_subdivided_mesh(*quadtree, 0.0, 100.0, 0.0, 100.0, 4);
+
+  ASSERT_EQ(quadtree->num_elements(), 46);  // Known size from MultiresolutionFiveLevels
+
+  BezierBathymetrySmoother smoother(*quadtree);
+  auto bathy = [](Real x, Real y) { return -50.0 - 0.001 * (x * x + y * y); };
+  smoother.set_bathymetry_data(bathy);
+
+  auto start = std::chrono::high_resolution_clock::now();
+  smoother.solve();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "\n=== 5-Level AMR Benchmark ===\n";
+  std::cout << "Elements: " << quadtree->num_elements() << "\n";
+  std::cout << "DOFs: " << smoother.num_dofs() << "\n";
+  std::cout << "Constraints: " << smoother.num_constraints() << "\n";
+  std::cout << "Solve time: " << duration.count() << " ms\n";
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_LT(smoother.constraint_violation(), 1e-8);
 }
