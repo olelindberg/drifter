@@ -76,7 +76,7 @@ void BezierBathymetrySmoother::solve() {
     solved_ = true;
 }
 
-MatX BezierBathymetrySmoother::build_global_hessian() const {
+SpMat BezierBathymetrySmoother::build_global_hessian_sparse() const {
     Index ndofs = data_assembler_->total_dofs();
     Index num_elements = quadtree_->num_elements();
 
@@ -133,13 +133,15 @@ MatX BezierBathymetrySmoother::build_global_hessian() const {
         triplets.insert(triplets.end(), thread_trips.begin(), thread_trips.end());
     }
 
-    // Assemble sparse matrix from triplets
+    // Assemble and return sparse matrix
     SpMat H_sparse(ndofs, ndofs);
     H_sparse.setFromTriplets(triplets.begin(), triplets.end());
+    return H_sparse;
+}
 
-    // Convert back to dense (required for current QP solver interface)
-    // TODO: Future optimization - keep sparse throughout solve
-    return MatX(H_sparse);
+MatX BezierBathymetrySmoother::build_global_hessian() const {
+    // Legacy function - converts to dense for backward compatibility
+    return MatX(build_global_hessian_sparse());
 }
 
 void BezierBathymetrySmoother::solve_kkt() {
@@ -197,7 +199,7 @@ void BezierBathymetrySmoother::solve_kkt() {
     }
 
     // Build smoothness Hessian (thin plate energy)
-    MatX H_global = build_global_hessian();
+    SpMat H_sparse = build_global_hessian_sparse();
 
     if (enable_profiling) {
         auto t_now = std::chrono::high_resolution_clock::now();
@@ -206,19 +208,28 @@ void BezierBathymetrySmoother::solve_kkt() {
         t_last = t_now;
     }
 
+    // Convert AtWA to sparse (it's actually sparse - most elements are zero)
+    SpMat AtWA_sparse = AtWA_reg.sparseView();
+
+    if (enable_profiling) {
+        auto t_now = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+        std::cout << "[Profile] Convert AtWA to sparse: " << elapsed << " ms\n";
+        t_last = t_now;
+    }
+
     // Normalize matrices for scale-invariant lambda
     // Physical scaling makes H_global ~1e-8 for km-scale elements, while AtWA ~1.
     // This ensures lambda controls the actual balance regardless of physical scale.
-    Real H_norm = H_global.norm();
-    Real A_norm = AtWA_reg.norm();
+    Real H_norm = H_sparse.norm();
+    Real A_norm = AtWA_sparse.norm();
     Real scale_factor = (H_norm > 1e-14) ? (A_norm / H_norm) : 1.0;
 
     // Combined objective with normalized smoothness:
     // Q = scale * H + lambda * AtWA
-    // With lambda=1: equal weight to smoothness and data fitting
-    // Higher lambda: more data fitting, less smooth
+    // Compute directly as sparse (MUCH faster than dense operations)
     const Real ls_penalty = config_.lambda;
-    MatX Q = scale_factor * H_global + ls_penalty * AtWA_reg;
+    SpMat Q_sp = scale_factor * H_sparse + ls_penalty * AtWA_sparse;
     VecX c = -ls_penalty * AtWb;
 
     if (enable_profiling) {
@@ -251,24 +262,40 @@ void BezierBathymetrySmoother::solve_kkt() {
         }
 
         // Second pass: modify RHS to account for known Dirichlet values
-        // For each interior DOF j, add: c(j) += Q(j, dof) * depth
-        // (since we're solving Q*x = -c, this becomes: -c(j) -= Q(j,dof)*depth)
+        // Need to iterate through sparse matrix Q to find coupling terms
         for (const auto& [dof, depth] : dir_values) {
-            for (Index j = 0; j < n; ++j) {
-                if (dirichlet_dofs.count(j) == 0) {
-                    // Interior DOF: move contribution to RHS
-                    c(j) += Q(j, dof) * depth;
+            // For each row j, find Q(j, dof) and update RHS
+            for (int k = 0; k < Q_sp.outerSize(); ++k) {
+                for (SpMat::InnerIterator it(Q_sp, k); it; ++it) {
+                    if (it.col() == dof && dirichlet_dofs.count(it.row()) == 0) {
+                        c(it.row()) += it.value() * depth;
+                    }
                 }
             }
         }
 
-        // Third pass: apply row elimination
+        // Third pass: apply row/column elimination on sparse matrix
+        // Build new triplets with Dirichlet rows/cols zeroed and diagonal set to 1
+        std::vector<Eigen::Triplet<Real>> new_triplets;
+        new_triplets.reserve(Q_sp.nonZeros());
+
+        for (int k = 0; k < Q_sp.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(Q_sp, k); it; ++it) {
+                if (dirichlet_dofs.count(it.row()) == 0 && dirichlet_dofs.count(it.col()) == 0) {
+                    // Keep non-Dirichlet entries
+                    new_triplets.emplace_back(it.row(), it.col(), it.value());
+                }
+            }
+        }
+
+        // Add identity for Dirichlet DOFs
         for (const auto& [dof, depth] : dir_values) {
-            Q.row(dof).setZero();
-            Q.col(dof).setZero();
-            Q(dof, dof) = 1.0;
+            new_triplets.emplace_back(dof, dof, 1.0);
             c(dof) = -depth;
         }
+
+        // Rebuild Q_sp
+        Q_sp.setFromTriplets(new_triplets.begin(), new_triplets.end());
 
         if (enable_profiling) {
             auto t_now = std::chrono::high_resolution_clock::now();
@@ -298,7 +325,8 @@ void BezierBathymetrySmoother::solve_kkt() {
 
     if (m == 0) {
         // No constraints - solve directly
-        Eigen::LDLT<MatX> solver(Q);
+        MatX Q_dense(Q_sp);  // Convert sparse to dense for LDLT
+        Eigen::LDLT<MatX> solver(Q_dense);
         if (solver.info() != Eigen::Success) {
             throw std::runtime_error("BezierBathymetrySmoother: Q factorization failed");
         }
@@ -341,7 +369,7 @@ void BezierBathymetrySmoother::solve_kkt() {
     // [Q    A^T] [x]   [-c ]
     // [A     0 ] [y] = [b  ]
 
-    SpMat Q_sp = Q.sparseView();
+    // Q_sp is already sparse from earlier construction
 
     SpMat KKT(n + m, n + m);
     std::vector<Eigen::Triplet<Real>> triplets;

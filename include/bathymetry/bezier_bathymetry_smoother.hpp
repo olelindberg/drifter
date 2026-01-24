@@ -247,7 +247,10 @@ private:
   /// Apply active-set iteration for bounds
   void apply_bound_constraints();
 
-  /// Build the global regularization Hessian
+  /// Build the global regularization Hessian (sparse)
+  SpMat build_global_hessian_sparse() const;
+
+  /// Build the global regularization Hessian (legacy dense version)
   MatX build_global_hessian() const;
 
   /// Find element containing point
