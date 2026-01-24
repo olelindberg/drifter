@@ -1,5 +1,6 @@
 #include "bathymetry/bezier_data_fitting.hpp"
 #include <cmath>
+#include <omp.h>
 #include <stdexcept>
 
 namespace drifter {
@@ -222,43 +223,78 @@ void BezierDataFittingAssembler::assemble_normal_equations(MatX& AtWA, VecX& AtW
     }
 
     Index ndofs = total_dofs();
+    Index num_elements = mesh_.num_elements();
 
     AtWA.setZero(ndofs, ndofs);
     AtWb.setZero(ndofs);
 
-    // Accumulate element-by-element for better cache behavior
-    for (Index e = 0; e < mesh_.num_elements(); ++e) {
-        // Find all points in this element
-        std::vector<Index> elem_points;
-        for (Index p = 0; p < num_points(); ++p) {
-            if (point_elements_[p] == e) {
-                elem_points.push_back(p);
+    // Use triplets for thread-safe parallel assembly
+    std::vector<Eigen::Triplet<Real>> triplets;
+    std::vector<Real> rhs_contributions(ndofs, 0.0);
+
+    #pragma omp parallel
+    {
+        // Per-thread local storage
+        std::vector<Eigen::Triplet<Real>> local_triplets;
+        std::vector<Real> local_rhs(ndofs, 0.0);
+
+        #pragma omp for nowait
+        for (Index e = 0; e < num_elements; ++e) {
+            // Find all points in this element
+            std::vector<Index> elem_points;
+            for (Index p = 0; p < num_points(); ++p) {
+                if (point_elements_[p] == e) {
+                    elem_points.push_back(p);
+                }
+            }
+
+            if (elem_points.empty()) continue;
+
+            // Build local matrices
+            MatX local_AtWA = MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
+            VecX local_AtWb = VecX::Zero(BezierBasis2D::NDOF);
+
+            for (Index p : elem_points) {
+                const auto& pt = points_[p];
+                Vec2 uv = physical_to_param(e, pt.x, pt.y);
+                VecX phi = basis_->evaluate(uv(0), uv(1));
+
+                // AtWA += w * phi * phi^T
+                local_AtWA.noalias() += pt.weight * phi * phi.transpose();
+
+                // AtWb += w * phi * z
+                local_AtWb.noalias() += pt.weight * pt.z * phi;
+            }
+
+            // Add to thread-local triplets
+            Index base = global_dof(e, 0);
+            for (Index i = 0; i < BezierBasis2D::NDOF; ++i) {
+                for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
+                    if (std::abs(local_AtWA(i, j)) > 1e-16) {
+                        local_triplets.emplace_back(base + i, base + j, local_AtWA(i, j));
+                    }
+                }
+                local_rhs[base + i] += local_AtWb(i);
             }
         }
 
-        if (elem_points.empty()) continue;
-
-        // Build local matrices
-        MatX local_AtWA = MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
-        VecX local_AtWb = VecX::Zero(BezierBasis2D::NDOF);
-
-        for (Index p : elem_points) {
-            const auto& pt = points_[p];
-            Vec2 uv = physical_to_param(e, pt.x, pt.y);
-            VecX phi = basis_->evaluate(uv(0), uv(1));
-
-            // AtWA += w * phi * phi^T
-            local_AtWA.noalias() += pt.weight * phi * phi.transpose();
-
-            // AtWb += w * phi * z
-            local_AtWb.noalias() += pt.weight * pt.z * phi;
+        // Combine thread-local data into global structures
+        #pragma omp critical
+        {
+            triplets.insert(triplets.end(), local_triplets.begin(), local_triplets.end());
+            for (Index i = 0; i < ndofs; ++i) {
+                rhs_contributions[i] += local_rhs[i];
+            }
         }
-
-        // Add to global matrices
-        Index base = global_dof(e, 0);
-        AtWA.block(base, base, BezierBasis2D::NDOF, BezierBasis2D::NDOF) += local_AtWA;
-        AtWb.segment(base, BezierBasis2D::NDOF) += local_AtWb;
     }
+
+    // Assemble sparse matrix from triplets
+    SpMat AtWA_sparse(ndofs, ndofs);
+    AtWA_sparse.setFromTriplets(triplets.begin(), triplets.end());
+    AtWA = MatX(AtWA_sparse);
+
+    // Set RHS vector
+    AtWb = Eigen::Map<VecX>(rhs_contributions.data(), ndofs);
 }
 
 }  // namespace drifter
