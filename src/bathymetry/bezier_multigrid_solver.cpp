@@ -250,7 +250,22 @@ void BezierMultigridSolver::v_cycle(int level, VecX& x, const VecX& rhs) {
 
 void BezierMultigridSolver::smooth(const SpMat& A, VecX& x, const VecX& b,
                                     int num_iterations) {
-  // Jacobi smoother: x ← x + ω * D^{-1} * (b - A*x)
+  // Jacobi smoother for KKT systems
+  //
+  // KKT saddle-point structure:
+  //   [Q   A^T] [x]   [f]
+  //   [A    0 ] [λ] = [g]
+  //
+  // Standard Jacobi: x_new = x + ω·D^{-1}·(b - A·x)
+  // where D = diag(A)
+  //
+  // For KKT, diagonal has zeros in Lagrange multiplier block.
+  // We skip updates for zero diagonal entries.
+  //
+  // Better approach (future): Uzawa iteration
+  //   x ← x + ω·D_Q^{-1}·(f - Q·x - A^T·λ)
+  //   λ ← λ + ω·S^{-1}·(g - A·x)  where S = A·D_Q^{-1}·A^T
+
   // Extract diagonal
   VecX diag = VecX::Zero(A.rows());
   for (int k = 0; k < A.outerSize(); ++k) {
@@ -261,13 +276,20 @@ void BezierMultigridSolver::smooth(const SpMat& A, VecX& x, const VecX& b,
     }
   }
 
-  // Jacobi iterations
+  // Damped Jacobi iterations
+  const Real omega = config_.smoother_omega;
+  const Real tol = 1e-14; // Threshold for treating diagonal as zero
+
   for (int iter = 0; iter < num_iterations; ++iter) {
     VecX residual = b - A * x;
+
+    // Update primal variables (nonzero diagonal)
     for (Index i = 0; i < x.size(); ++i) {
-      if (std::abs(diag(i)) > 1e-14) {
-        x(i) += config_.smoother_omega * residual(i) / diag(i);
+      if (std::abs(diag(i)) > tol) {
+        x(i) += omega * residual(i) / diag(i);
       }
+      // Skip Lagrange multipliers (zero diagonal) for now
+      // TODO: Implement proper Uzawa update for multipliers
     }
   }
 }
