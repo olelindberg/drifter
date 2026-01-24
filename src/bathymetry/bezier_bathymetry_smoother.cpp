@@ -1,6 +1,7 @@
 #include "bathymetry/bezier_bathymetry_smoother.hpp"
 #include "dg/basis_hexahedron.hpp"
 #include "mesh/octree_adapter.hpp"
+#include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseLU>
 #include <omp.h>
 #include <fstream>
@@ -335,11 +336,20 @@ void BezierBathymetrySmoother::solve_kkt() {
     VecX constraint_residual = A_constraints * solution_ - b_constraints;
     if (constraint_residual.norm() > 1e-14) {
         // Solve (A A^T) lambda = residual, then x = x - A^T * lambda
-        MatX AAt = MatX(A_constraints) * MatX(A_constraints).transpose();
-        Eigen::LDLT<MatX> ldlt_AAt(AAt);
-        if (ldlt_AAt.info() == Eigen::Success) {
-            VecX lambda_corr = ldlt_AAt.solve(constraint_residual);
-            solution_ -= MatX(A_constraints).transpose() * lambda_corr;
+        // Use sparse ConjugateGradient instead of dense LDLT for better scaling
+        // (A·A^T is symmetric positive definite)
+        SpMat AAt = A_constraints * A_constraints.transpose();
+
+        Eigen::ConjugateGradient<SpMat, Eigen::Lower|Eigen::Upper> cg;
+        cg.setTolerance(1e-12);  // Tight tolerance for constraint satisfaction
+        cg.setMaxIterations(std::max(static_cast<int>(m), 100));
+        cg.compute(AAt);
+
+        if (cg.info() == Eigen::Success) {
+            VecX lambda_corr = cg.solve(constraint_residual);
+            if (cg.info() == Eigen::Success) {
+                solution_ -= A_constraints.transpose() * lambda_corr;
+            }
         }
     }
 }
