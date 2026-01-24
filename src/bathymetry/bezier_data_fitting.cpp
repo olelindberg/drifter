@@ -228,17 +228,23 @@ void BezierDataFittingAssembler::assemble_normal_equations(MatX& AtWA, VecX& AtW
     AtWA.setZero(ndofs, ndofs);
     AtWb.setZero(ndofs);
 
-    // Use triplets for thread-safe parallel assembly
-    std::vector<Eigen::Triplet<Real>> triplets;
-    std::vector<Real> rhs_contributions(ndofs, 0.0);
+    // Determine number of threads
+    int num_threads = 1;
+    #pragma omp parallel
+    {
+        #pragma omp single
+        num_threads = omp_get_num_threads();
+    }
+
+    // Per-thread storage (eliminates critical section)
+    std::vector<std::vector<Eigen::Triplet<Real>>> thread_triplets(num_threads);
+    std::vector<std::vector<Real>> thread_rhs(num_threads, std::vector<Real>(ndofs, 0.0));
 
     #pragma omp parallel
     {
-        // Per-thread local storage
-        std::vector<Eigen::Triplet<Real>> local_triplets;
-        std::vector<Real> local_rhs(ndofs, 0.0);
+        int tid = omp_get_thread_num();
 
-        #pragma omp for nowait
+        #pragma omp for nowait schedule(dynamic)
         for (Index e = 0; e < num_elements; ++e) {
             // Find all points in this element
             std::vector<Index> elem_points;
@@ -266,25 +272,30 @@ void BezierDataFittingAssembler::assemble_normal_equations(MatX& AtWA, VecX& AtW
                 local_AtWb.noalias() += pt.weight * pt.z * phi;
             }
 
-            // Add to thread-local triplets
+            // Add to thread-local triplets (no locking)
             Index base = global_dof(e, 0);
             for (Index i = 0; i < BezierBasis2D::NDOF; ++i) {
                 for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
                     if (std::abs(local_AtWA(i, j)) > 1e-16) {
-                        local_triplets.emplace_back(base + i, base + j, local_AtWA(i, j));
+                        thread_triplets[tid].emplace_back(base + i, base + j, local_AtWA(i, j));
                     }
                 }
-                local_rhs[base + i] += local_AtWb(i);
+                thread_rhs[tid][base + i] += local_AtWb(i);
             }
         }
+    }
 
-        // Combine thread-local data into global structures
-        #pragma omp critical
-        {
-            triplets.insert(triplets.end(), local_triplets.begin(), local_triplets.end());
-            for (Index i = 0; i < ndofs; ++i) {
-                rhs_contributions[i] += local_rhs[i];
-            }
+    // Merge thread-local triplets sequentially
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (const auto& thread_trips : thread_triplets) {
+        triplets.insert(triplets.end(), thread_trips.begin(), thread_trips.end());
+    }
+
+    // Merge thread-local RHS vectors
+    std::vector<Real> rhs_contributions(ndofs, 0.0);
+    for (const auto& thread_rhs_vec : thread_rhs) {
+        for (Index i = 0; i < ndofs; ++i) {
+            rhs_contributions[i] += thread_rhs_vec[i];
         }
     }
 

@@ -77,17 +77,27 @@ MatX BezierBathymetrySmoother::build_global_hessian() const {
     Index ndofs = data_assembler_->total_dofs();
     Index num_elements = quadtree_->num_elements();
 
-    // Build Hessian using sparse triplets for thread-safe parallel assembly
-    std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(num_elements * BezierBasis2D::NDOF * BezierBasis2D::NDOF);
+    // Determine number of threads
+    int num_threads = 1;
+    #pragma omp parallel
+    {
+        #pragma omp single
+        num_threads = omp_get_num_threads();
+    }
+
+    // Per-thread triplet vectors (eliminates critical section)
+    std::vector<std::vector<Eigen::Triplet<Real>>> thread_triplets(num_threads);
+
+    // Pre-allocate per-thread storage
+    for (int t = 0; t < num_threads; ++t) {
+        thread_triplets[t].reserve(num_elements * BezierBasis2D::NDOF * BezierBasis2D::NDOF / num_threads);
+    }
 
     #pragma omp parallel
     {
-        // Per-thread local triplet storage
-        std::vector<Eigen::Triplet<Real>> local_triplets;
-        local_triplets.reserve(num_elements * BezierBasis2D::NDOF * BezierBasis2D::NDOF / omp_get_num_threads());
+        int tid = omp_get_thread_num();
 
-        #pragma omp for nowait
+        #pragma omp for nowait schedule(static)
         for (Index e = 0; e < num_elements; ++e) {
             Vec2 size = quadtree_->element_size(e);
             Real dx = size(0);
@@ -97,21 +107,27 @@ MatX BezierBathymetrySmoother::build_global_hessian() const {
 
             Index base = e * BezierBasis2D::NDOF;
 
-            // Add element Hessian to local triplets
+            // Add element Hessian to thread-local triplets (no locking needed)
             for (Index i = 0; i < BezierBasis2D::NDOF; ++i) {
                 for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
                     if (std::abs(H_elem(i, j)) > 1e-16) {  // Skip near-zero entries
-                        local_triplets.emplace_back(base + i, base + j, H_elem(i, j));
+                        thread_triplets[tid].emplace_back(base + i, base + j, H_elem(i, j));
                     }
                 }
             }
         }
+    }
 
-        // Combine all thread-local triplets into global triplet vector
-        #pragma omp critical
-        {
-            triplets.insert(triplets.end(), local_triplets.begin(), local_triplets.end());
-        }
+    // Merge thread-local triplets sequentially (no critical section needed)
+    std::vector<Eigen::Triplet<Real>> triplets;
+    size_t total_size = 0;
+    for (const auto& thread_trips : thread_triplets) {
+        total_size += thread_trips.size();
+    }
+    triplets.reserve(total_size);
+
+    for (const auto& thread_trips : thread_triplets) {
+        triplets.insert(triplets.end(), thread_trips.begin(), thread_trips.end());
     }
 
     // Assemble sparse matrix from triplets

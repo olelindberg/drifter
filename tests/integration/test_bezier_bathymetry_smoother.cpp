@@ -2312,3 +2312,53 @@ TEST_F(BezierBathymetrySmootherTest, BenchmarkAMR5Level) {
   EXPECT_TRUE(smoother.is_solved());
   EXPECT_LT(smoother.constraint_violation(), 1e-8);
 }
+
+TEST_F(BezierBathymetrySmootherTest, BenchmarkOpenMP30x30Mesh) {
+  // 30x30 mesh (900 elements) - larger test for OpenMP crossover
+  auto quadtree = create_quadtree(30, 30);
+
+  BezierBathymetrySmoother smoother(*quadtree);
+
+  auto bathy = [](Real x, Real y) { return -50.0 - 0.001 * (x * x + y * y); };
+  smoother.set_bathymetry_data(bathy);
+
+  auto start = std::chrono::high_resolution_clock::now();
+  smoother.solve();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "\n=== 30×30 Mesh Benchmark ===\n";
+  std::cout << "Elements: " << quadtree->num_elements() << "\n";
+  std::cout << "DOFs: " << smoother.num_dofs() << "\n";
+  std::cout << "Constraints: " << smoother.num_constraints() << "\n";
+  std::cout << "Solve time: " << duration.count() << " ms\n";
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_LT(smoother.constraint_violation(), 1e-8);
+}
+
+TEST_F(BezierBathymetrySmootherTest, BenchmarkOpenMP40x40Mesh) {
+  // 40x40 mesh (1600 elements) - test for larger scale
+  auto quadtree = create_quadtree(40, 40);
+
+  BezierBathymetrySmoother smoother(*quadtree);
+
+  auto bathy = [](Real x, Real y) { return -50.0 - 0.001 * (x * x + y * y); };
+  smoother.set_bathymetry_data(bathy);
+
+  auto start = std::chrono::high_resolution_clock::now();
+  smoother.solve();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "\n=== 40×40 Mesh Benchmark ===\n";
+  std::cout << "Elements: " << quadtree->num_elements() << "\n";
+  std::cout << "DOFs: " << smoother.num_dofs() << "\n";
+  std::cout << "Constraints: " << smoother.num_constraints() << "\n";
+  std::cout << "Solve time: " << duration.count() << " ms\n";
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_LT(smoother.constraint_violation(), 1e-8);
+}
