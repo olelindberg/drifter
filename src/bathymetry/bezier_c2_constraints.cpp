@@ -1,6 +1,7 @@
 #include "bathymetry/bezier_c2_constraints.hpp"
 #include <cmath>
 #include <map>
+#include <omp.h>
 #include <set>
 
 namespace drifter {
@@ -157,21 +158,66 @@ SpMat BezierC2ConstraintBuilder::build_constraint_matrix() const {
     std::vector<Eigen::Triplet<Real>> triplets;
     triplets.reserve(nrows * 2 * BezierBasis2D::NDOF);  // Estimate
 
+    // Build triplets in parallel for each constraint type
+    // Vertex constraints
+    Index num_vertex_constraints = static_cast<Index>(vertex_constraints_.size()) * 9;  // 9 derivatives per vertex pair
+    std::vector<std::vector<Eigen::Triplet<Real>>> vertex_triplets(vertex_constraints_.size());
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < vertex_constraints_.size(); ++i) {
+        Index local_idx = 0;
+        add_vertex_constraints(vertex_constraints_[i], vertex_triplets[i], local_idx);
+    }
+
+    // Hanging node constraints
+    std::vector<std::vector<Eigen::Triplet<Real>>> hanging_triplets(hanging_node_constraints_.size());
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < hanging_node_constraints_.size(); ++i) {
+        Index local_idx = 0;
+        add_hanging_node_constraints(hanging_node_constraints_[i], hanging_triplets[i], local_idx);
+    }
+
+    // Edge constraints
+    std::vector<std::vector<Eigen::Triplet<Real>>> edge_triplets(edge_constraints_.size());
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < edge_constraints_.size(); ++i) {
+        Index local_idx = 0;
+        add_conforming_edge_constraints(edge_constraints_[i], edge_triplets[i], local_idx);
+    }
+
+    // Combine all triplets sequentially with correct constraint indexing
     Index constraint_idx = 0;
 
-    // Add vertex constraints
-    for (const auto& info : vertex_constraints_) {
-        add_vertex_constraints(info, triplets, constraint_idx);
+    // Add vertex constraint triplets with proper row offset
+    for (size_t i = 0; i < vertex_constraints_.size(); ++i) {
+        Index offset = constraint_idx;
+        for (auto& triplet : vertex_triplets[i]) {
+            triplets.emplace_back(offset + triplet.row(), triplet.col(), triplet.value());
+        }
+        constraint_idx += vertex_triplets[i].empty() ? 0 :
+                          (vertex_triplets[i].back().row() + 1);
     }
 
-    // Add hanging node constraints
-    for (const auto& info : hanging_node_constraints_) {
-        add_hanging_node_constraints(info, triplets, constraint_idx);
+    // Add hanging node constraint triplets with proper row offset
+    for (size_t i = 0; i < hanging_node_constraints_.size(); ++i) {
+        Index offset = constraint_idx;
+        for (auto& triplet : hanging_triplets[i]) {
+            triplets.emplace_back(offset + triplet.row(), triplet.col(), triplet.value());
+        }
+        constraint_idx += hanging_triplets[i].empty() ? 0 :
+                          (hanging_triplets[i].back().row() + 1);
     }
 
-    // Add conforming edge constraints
-    for (const auto& info : edge_constraints_) {
-        add_conforming_edge_constraints(info, triplets, constraint_idx);
+    // Add edge constraint triplets with proper row offset
+    for (size_t i = 0; i < edge_constraints_.size(); ++i) {
+        Index offset = constraint_idx;
+        for (auto& triplet : edge_triplets[i]) {
+            triplets.emplace_back(offset + triplet.row(), triplet.col(), triplet.value());
+        }
+        constraint_idx += edge_triplets[i].empty() ? 0 :
+                          (edge_triplets[i].back().row() + 1);
     }
 
     SpMat A(nrows, ncols);
