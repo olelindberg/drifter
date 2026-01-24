@@ -1478,9 +1478,11 @@ TEST_F(BezierBathymetrySmootherTest, NonConformingOnePlusFour) {
   }
   std::cout << "\n";
 
-  // Sinusoidal bathymetry to exercise smoothing
+  // Bilinear bathymetry that satisfies natural BCs (z_xx = z_yy = 0 everywhere)
+  // z = 50 + 0.3*x + 0.2*y + 0.01*xy
+  // This ensures z_nn = 0 at all boundaries since z_xx = z_yy = 0
   auto bathy = [](Real x, Real y) {
-    return 50.0 + 20.0 * std::sin(x * M_PI / 50.0) * std::cos(y * M_PI / 50.0);
+    return 50.0 + 0.3 * x + 0.2 * y + 0.01 * x * y;
   };
 
   BezierBathymetrySmoother smoother(*quadtree);

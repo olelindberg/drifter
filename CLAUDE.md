@@ -181,7 +181,31 @@ This corrects numerical drift when λ is large and the data fitting term dominat
 **Configuration (`BezierSmootherConfig`):**
 - `lambda` - Data fitting weight (0 = pure thin plate/soap film, higher = closer to data)
 - `gradient_weight` - First derivative penalty (slope smoothing)
-- `enable_boundary_dirichlet` - Pin boundary corner DOFs to input data
+- `enable_natural_bc` - Enable natural boundary conditions (default: true)
+- `enable_boundary_dirichlet` - Pin boundary corner DOFs to input data (default: false, mutually exclusive with natural BC)
+
+**Boundary Conditions:**
+
+The biharmonic (thin plate) equation requires two boundary conditions. Two options are available:
+
+1. **Natural boundary conditions** (default, `enable_natural_bc = true`):
+   - Enforces zero normal curvature at all boundary DOFs: z_nn = 0
+   - Formula: z_nn = nx² · z_xx + 2·nx·ny · z_xy + ny² · z_yy = 0
+   - For axis-aligned boundaries:
+     - Left/right edges (n = (±1, 0)): z_xx = 0
+     - Bottom/top edges (n = (0, ±1)): z_yy = 0
+   - Domain corners get TWO constraints (z_xx = 0 AND z_yy = 0) since they lie on two edges
+   - This is the standard "natural spline" or "free edge" boundary condition
+   - Results in smoother boundary behavior without forced values
+   - The surface is determined by data fitting + C² continuity + smoothness energy
+
+2. **Dirichlet boundary conditions** (`enable_boundary_dirichlet = true`, `enable_natural_bc = false`):
+   - Pins boundary corner DOFs to match input bathymetry data
+   - Applied only at 4 domain corner vertices (not interior edge DOFs)
+   - Preserves C² constraints at shared boundary vertices
+   - May introduce boundary oscillations if data is noisy
+
+Natural BCs are preferred for most applications as they produce smoother surfaces and avoid boundary artifacts.
 
 **DOF Structure (36 per element):**
 
@@ -893,6 +917,116 @@ Integration test fixture `SimulationTest` in `tests/integration/test_integration
 Test organization:
 - `tests/unit/` - Component-level tests
 - `tests/integration/` - Full pipeline tests (mesh → physics → output)
+
+### Integration Tests
+
+**Bezier Bathymetry Smoother** ([test_bezier_bathymetry_smoother.cpp](tests/integration/test_bezier_bathymetry_smoother.cpp)):
+- `ConstructFromQuadtree` - Verify construction from 2D quadtree mesh
+- `ConstructFromOctree` - Verify construction from 3D octree (uses bottom face)
+- `SolveSingleElementConstant` - Single element with constant bathymetry
+- `SolveConstantBathymetry` - 2×2 mesh with constant data (zero energy solution)
+- `SolveLinearBathymetry` - Linear bathymetry exactly reproduced (quintic can represent linear)
+- `SolveQuadraticBathymetry` - Quadratic bathymetry exactly reproduced
+- `C2ContinuityAtInterface` - Verify C² continuity at element interfaces
+- `RegularizationSmooths` - Higher smoothing weight reduces oscillations
+- `BoundConstraints` - Elevation bounds enforced via active-set method
+- `ScatteredPointInput` - Fitting from scattered XYZ points
+- `GradientEvaluation` - Gradient computation accuracy
+- `ObjectiveValue` - Objective function components (data + regularization)
+- `VTKOutput` - VTK file generation
+- `LargerMesh` - 4×4 mesh scalability
+- `GeoTiffBathymetry` - Real bathymetry from GeoTIFF (Trondheimsfjorden)
+- `GeoTiffHigherResolution` - 8×8 mesh with GeoTIFF data
+- `DirichletSingleElement` - Dirichlet BCs on single element
+- `DirichletMultiElement` - Dirichlet BCs on 2×2 mesh
+- `DirichletVsNonDirichlet` - Compare Dirichlet vs natural BC solutions
+- `GeoTiffWithDirichlet` - GeoTIFF data with Dirichlet BCs
+- `NaturalBCConstraintCounts` - Verify natural BC constraint counting
+- `NaturalBCConstantBathymetry` - Constant data with natural BCs (trivially satisfies z_nn=0)
+- `NaturalBCLinearBathymetry` - Linear data with natural BCs (zero curvature)
+- `NaturalBCVsDirichlet` - Compare natural vs Dirichlet boundary behavior
+- `NaturalBCSmoothBoundaries` - Verify smooth boundary behavior with natural BCs
+- `NonConformingOnePlusFour` - Non-conforming 1+4 mesh (coarse + 2×2 fine)
+- `MultiresolutionFiveLevels` - AMR mesh with 5 refinement levels
+- `MultiresolutionGeoTiffFiveLevels` - GeoTIFF with 5-level AMR (coastline refinement)
+- `MultiresolutionContinuityVerification` - Verify C² at conforming and non-conforming interfaces
+- `MultiresolutionLargeMeshStress` - Large AMR mesh stress test
+
+**CG Bathymetry Smoother** ([test_cg_bathymetry_smoother.cpp](tests/integration/test_cg_bathymetry_smoother.cpp)):
+- `ConstructFromOctree` - Construction from octree
+- `ConstructFromQuadtree` - Construction from quadtree
+- `SolveConstantBathymetry` - Constant bathymetry reproduction
+- `SolveLinearBathymetry` - Linear bathymetry reproduction
+- `SolveQuadraticBathymetry` - Quadratic bathymetry fitting
+- `SolveBeforeBathymetrySetThrows` - Error handling for unset bathymetry
+- `EvaluateBeforeSolveThrows` - Error handling for pre-solve evaluation
+- `SmoothingReducesOscillations` - Regularization effect on noisy data
+- `GradientOfConstant` - Gradient of constant field (should be zero)
+- `GradientOfLinear` - Gradient accuracy for linear field
+- `TransferToSeabed` - Transfer solution to SeabedSurface
+- `SolutionAtDof` - DOF value extraction
+- `SolutionVectorAccess` - Full solution vector access
+- `EvaluateOutsideDomain` - Extrapolation outside domain
+- `HighBetaMatchesData` - High data weight → close to input
+- `HighAlphaFlattens` - High smoothing weight → flattened surface
+- `MeshAccessor` - Mesh reference accessor
+- `DofManagerAccessor` - DOF manager accessor
+- `UniformMeshVTKOutput` - VTK output for uniform mesh
+- `NonConformingMeshVTKOutput` - VTK output for non-conforming mesh
+- `FourPlusOneMeshVTKOutput` - VTK output for 4+1 AMR mesh
+- `NoisyBathymetrySmoothing` - Smoothing of noisy bathymetry data
+
+**Bathymetry Integration** ([test_bathymetry.cpp](tests/integration/test_bathymetry.cpp)):
+- `GeoTiffBathymetryMesh` - Load GeoTIFF and generate mesh
+- `GeoTiffFullDomainMesh` - Full domain mesh from GeoTIFF bounds
+- `CoastlineAdaptiveOctreeMesh` - Coastline-adaptive refinement with R-tree
+- `HighResolutionSeabedVTK` - High-resolution seabed surface VTK output
+- `CompareAdaptiveBathymetryMethods` - Compare CG vs Bezier smoothers
+- `CGBathymetrySmootherWithRealData` - CG smoother with real bathymetry
+
+**Mesh** ([test_mesh.cpp](tests/integration/test_mesh.cpp)):
+- `OctreeMeshCreation` - Octree mesh creation and properties
+- `FaceConnections` - Face connectivity (conforming and non-conforming)
+
+**DG Operators** ([test_dg_operators.cpp](tests/integration/test_dg_operators.cpp)):
+- `GradientExact` - Gradient operator exactness for polynomials
+- `DivergenceExact` - Divergence operator exactness
+- `MassMatrixAction` - Mass matrix action on field
+- `MassInverseConsistency` - Mass matrix inversion consistency
+- `FaceInterpolation` - Face interpolation operator
+- `DiscreteGreensIdentity` - Discrete Green's identity verification
+- `StiffnessDerivation` - Stiffness matrix from volume and surface terms
+- `IntegrationByParts` - Integration by parts on DG operators
+
+**Initial Conditions** ([test_initial_conditions.cpp](tests/integration/test_initial_conditions.cpp)):
+- `QuiescentInitialCondition` - Rest state (zero velocity)
+- `KelvinWaveInitialCondition` - Kelvin wave setup
+- `LockExchangeInitialCondition` - Lock exchange (gravity current)
+
+**Conservation** ([test_conservation.cpp](tests/integration/test_conservation.cpp)):
+- `MassConservationConstant` - Mass conservation for constant field
+- `FluxConservationAtInterface` - Flux continuity at element interfaces
+- `DivergenceTheorem` - Discrete divergence theorem
+- `EnergyConservationShallowWater` - Energy conservation in shallow water
+- `EnstrophyDiagnostic` - Enstrophy computation
+- `BoundaryFluxComputation` - Boundary flux calculation
+- `TracerConservation` - Tracer mass conservation
+
+**Time Stepping** ([test_time_stepping.cpp](tests/integration/test_time_stepping.cpp)):
+- `TimeStepperRK3SSP` - RK3-SSP time integrator
+- `TimeStepperRK4` - RK4 time integrator
+- `AdaptiveTimeController` - Adaptive time step with CFL condition
+
+**Full Simulation** ([test_simulation_full.cpp](tests/integration/test_simulation_full.cpp)):
+- `AdvectionSanityCheck` - Basic advection correctness
+- `KelvinWavePhysics` - Kelvin wave propagation physics
+- `FullSimulationWithOutput` - Complete simulation with VTK output
+- `SimulationDiagnostics` - Diagnostic computation (energy, enstrophy)
+
+**VTK Output** ([test_vtk_output.cpp](tests/integration/test_vtk_output.cpp)):
+- `VTKWriterCreation` - VTK writer instantiation
+- `VTKWriterLegacyFormat` - Legacy VTK format output
+- `VTKPVDCollection` - PVD collection for time series
 
 ## Dependencies
 

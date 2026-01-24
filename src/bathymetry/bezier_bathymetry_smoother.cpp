@@ -2,6 +2,7 @@
 #include "dg/basis_hexahedron.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
+#include <omp.h>
 #include <fstream>
 #include <iomanip>
 #include <set>
@@ -73,21 +74,52 @@ void BezierBathymetrySmoother::solve() {
 
 MatX BezierBathymetrySmoother::build_global_hessian() const {
     Index ndofs = data_assembler_->total_dofs();
-    MatX H_global = MatX::Zero(ndofs, ndofs);
+    Index num_elements = quadtree_->num_elements();
 
-    // Add scaled element Hessians
-    for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-        Vec2 size = quadtree_->element_size(e);
-        Real dx = size(0);
-        Real dy = size(1);
+    // Build Hessian using sparse triplets for thread-safe parallel assembly
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(num_elements * BezierBasis2D::NDOF * BezierBasis2D::NDOF);
 
-        MatX H_elem = hessian_->scaled_hessian(dx, dy);
+    #pragma omp parallel
+    {
+        // Per-thread local triplet storage
+        std::vector<Eigen::Triplet<Real>> local_triplets;
+        local_triplets.reserve(num_elements * BezierBasis2D::NDOF * BezierBasis2D::NDOF / omp_get_num_threads());
 
-        Index base = e * BezierBasis2D::NDOF;
-        H_global.block(base, base, BezierBasis2D::NDOF, BezierBasis2D::NDOF) += H_elem;
+        #pragma omp for nowait
+        for (Index e = 0; e < num_elements; ++e) {
+            Vec2 size = quadtree_->element_size(e);
+            Real dx = size(0);
+            Real dy = size(1);
+
+            MatX H_elem = hessian_->scaled_hessian(dx, dy);
+
+            Index base = e * BezierBasis2D::NDOF;
+
+            // Add element Hessian to local triplets
+            for (Index i = 0; i < BezierBasis2D::NDOF; ++i) {
+                for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
+                    if (std::abs(H_elem(i, j)) > 1e-16) {  // Skip near-zero entries
+                        local_triplets.emplace_back(base + i, base + j, H_elem(i, j));
+                    }
+                }
+            }
+        }
+
+        // Combine all thread-local triplets into global triplet vector
+        #pragma omp critical
+        {
+            triplets.insert(triplets.end(), local_triplets.begin(), local_triplets.end());
+        }
     }
 
-    return H_global;
+    // Assemble sparse matrix from triplets
+    SpMat H_sparse(ndofs, ndofs);
+    H_sparse.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Convert back to dense (required for current QP solver interface)
+    // TODO: Future optimization - keep sparse throughout solve
+    return MatX(H_sparse);
 }
 
 void BezierBathymetrySmoother::solve_kkt() {
