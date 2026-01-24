@@ -4,6 +4,8 @@
 
 namespace drifter {
 
+using Eigen::Triplet;
+
 BezierMultigridSolver::BezierMultigridSolver(const QuadtreeAdapter& quadtree,
                                               const MultigridConfig& config)
     : config_(config), finest_grid_(&quadtree) {
@@ -79,20 +81,152 @@ void BezierMultigridSolver::build_grid_hierarchy(
 }
 
 SpMat BezierMultigridSolver::build_restriction(int fine_level) {
-  // Stub: Will be implemented in Step 2.3
-  // Return identity matrix as placeholder
-  Index ndofs = grids_[fine_level]->num_elements() * 36;
-  SpMat R(ndofs, ndofs);
-  R.setIdentity();
+  // Build L2 projection restriction operator: fine → coarse
+  // For 2:1 refinement, each coarse element has 4 fine children
+  //
+  // Restriction matrix R: ndofs_coarse × ndofs_fine
+  // R * x_fine = x_coarse (approximately, in L2 sense)
+  //
+  // For Bezier surfaces, we use weighted averaging based on:
+  // - Bezier basis function overlap integrals
+  // - Fine element quadrature weights
+  //
+  // Each coarse Bezier control point receives contributions from
+  // multiple fine control points based on their spatial overlap
+
+  if (grids_.empty() || fine_level >= static_cast<int>(grids_.size())) {
+    // No hierarchy yet - return empty matrix
+    SpMat R(0, 0);
+    return R;
+  }
+
+  const auto& fine_grid = *grids_[fine_level];
+  const auto& coarse_grid = *grids_[fine_level - 1];
+
+  Index ndofs_fine = fine_grid.num_elements() * 36;
+  Index ndofs_coarse = coarse_grid.num_elements() * 36;
+
+  // Build restriction via L2 projection
+  std::vector<Triplet<Real>> triplets;
+  triplets.reserve(ndofs_coarse * 4 * 36); // Rough estimate
+
+  // For each coarse element, find corresponding fine elements
+  for (Index coarse_elem = 0; coarse_elem < coarse_grid.num_elements();
+       ++coarse_elem) {
+    QuadBounds coarse_bounds = coarse_grid.element_bounds(coarse_elem);
+
+    // Find fine elements that overlap this coarse element
+    std::vector<Index> fine_elements;
+    for (Index fine_elem = 0; fine_elem < fine_grid.num_elements();
+         ++fine_elem) {
+      QuadBounds fine_bounds = fine_grid.element_bounds(fine_elem);
+
+      // Check if fine element center is inside coarse element
+      Vec2 fine_center = fine_bounds.center();
+      if (coarse_bounds.contains(fine_center, 1e-10)) {
+        fine_elements.push_back(fine_elem);
+      }
+    }
+
+    // For now, use simple averaging as placeholder
+    // TODO: Implement proper L2 projection using Bezier basis overlap integrals
+    //
+    // Proper implementation would:
+    // 1. Evaluate fine Bezier surfaces at coarse control point locations
+    // 2. Use weighted least-squares to fit coarse control points
+    // 3. Account for derivative constraints in C² continuity
+
+    // Placeholder: Simple identity restriction (1:1 mapping)
+    // This works only if fine and coarse have same DOF count
+    if (fine_elements.size() > 0 && ndofs_fine == ndofs_coarse) {
+      Index coarse_base = coarse_elem * 36;
+      Index fine_base = fine_elements[0] * 36;
+
+      for (int dof = 0; dof < 36; ++dof) {
+        triplets.emplace_back(coarse_base + dof, fine_base + dof, 1.0);
+      }
+    }
+  }
+
+  SpMat R(ndofs_coarse, ndofs_fine);
+  R.setFromTriplets(triplets.begin(), triplets.end());
+
   return R;
 }
 
 SpMat BezierMultigridSolver::build_prolongation(int coarse_level) {
-  // Stub: Will be implemented in Step 2.4
-  // Return identity matrix as placeholder
-  Index ndofs = grids_[coarse_level]->num_elements() * 36;
-  SpMat P(ndofs, ndofs);
-  P.setIdentity();
+  // Build prolongation (interpolation) operator: coarse → fine
+  // For 2:1 refinement, each coarse element maps to 4 fine children
+  //
+  // Prolongation matrix P: ndofs_fine × ndofs_coarse
+  // x_fine += P * correction_coarse
+  //
+  // For Bezier surfaces, prolongation evaluates the coarse Bezier surface
+  // at fine control point locations. Each fine control point receives
+  // a weighted combination of coarse control points.
+  //
+  // For L2 projection, P ≈ R^T (transpose of restriction)
+  // For Galerkin coarsening, this ensures A_coarse = R * A_fine * P
+
+  if (grids_.empty() || coarse_level >= static_cast<int>(grids_.size()) - 1) {
+    // No hierarchy yet - return empty matrix
+    SpMat P(0, 0);
+    return P;
+  }
+
+  const auto& coarse_grid = *grids_[coarse_level];
+  const auto& fine_grid = *grids_[coarse_level + 1];
+
+  Index ndofs_coarse = coarse_grid.num_elements() * 36;
+  Index ndofs_fine = fine_grid.num_elements() * 36;
+
+  // Build prolongation via Bezier evaluation
+  std::vector<Triplet<Real>> triplets;
+  triplets.reserve(ndofs_fine * 36); // Rough estimate
+
+  // For each fine element, find parent coarse element
+  for (Index fine_elem = 0; fine_elem < fine_grid.num_elements();
+       ++fine_elem) {
+    QuadBounds fine_bounds = fine_grid.element_bounds(fine_elem);
+    Vec2 fine_center = fine_bounds.center();
+
+    // Find coarse element containing this fine element
+    Index coarse_elem = -1;
+    for (Index c = 0; c < coarse_grid.num_elements(); ++c) {
+      QuadBounds coarse_bounds = coarse_grid.element_bounds(c);
+      if (coarse_bounds.contains(fine_center, 1e-10)) {
+        coarse_elem = c;
+        break;
+      }
+    }
+
+    if (coarse_elem < 0) {
+      // Fine element not found in coarse grid - skip
+      continue;
+    }
+
+    // For now, use simple identity as placeholder
+    // TODO: Implement proper Bezier evaluation
+    //
+    // Proper implementation would:
+    // 1. Map fine control points to coarse element parameter space
+    // 2. Evaluate coarse Bezier basis at these parameter locations
+    // 3. Build interpolation weights from basis values
+
+    // Placeholder: Simple 1:1 mapping (works only if DOF counts match)
+    if (ndofs_fine == ndofs_coarse) {
+      Index fine_base = fine_elem * 36;
+      Index coarse_base = coarse_elem * 36;
+
+      for (int dof = 0; dof < 36; ++dof) {
+        triplets.emplace_back(fine_base + dof, coarse_base + dof, 1.0);
+      }
+    }
+  }
+
+  SpMat P(ndofs_fine, ndofs_coarse);
+  P.setFromTriplets(triplets.begin(), triplets.end());
+
   return P;
 }
 
