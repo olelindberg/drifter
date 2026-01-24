@@ -239,13 +239,79 @@ SpMat BezierMultigridSolver::build_coarse_operator(
 }
 
 void BezierMultigridSolver::v_cycle(int level, VecX& x, const VecX& rhs) {
-  // Stub: Will be implemented in Steps 2.6-2.7
-  // For now, just perform smoothing
-  if (level == config_.coarsest_level) {
-    direct_solve(operators_[level], x, rhs);
-  } else {
-    smooth(operators_[level], x, rhs, config_.num_presmooth);
+  // Two-level V-cycle multigrid algorithm
+  //
+  // Algorithm:
+  // 1. Pre-smooth: Reduce high-frequency error on fine grid
+  // 2. Restrict: Project residual to coarse grid
+  // 3. Coarse solve: Solve error equation on coarse grid
+  // 4. Prolongate: Interpolate correction to fine grid
+  // 5. Post-smooth: Clean up interpolation artifacts
+  //
+  // For recursive V-cycle (Step 2.7), replace coarse solve with
+  // recursive v_cycle call
+
+  if (level == config_.coarsest_level || grids_.empty()) {
+    // Base case: Direct solve on coarsest grid
+    if (!operators_.empty() && level < static_cast<int>(operators_.size())) {
+      direct_solve(operators_[level], x, rhs);
+    }
+    return;
   }
+
+  // Check that we have valid operators for this level
+  if (level >= static_cast<int>(operators_.size())) {
+    // No operator for this level - just smooth
+    if (!operators_.empty()) {
+      smooth(operators_.back(), x, rhs, config_.num_presmooth);
+    }
+    return;
+  }
+
+  const SpMat& A_fine = operators_[level];
+
+  // Step 1: Pre-smoothing on fine grid
+  smooth(A_fine, x, rhs, config_.num_presmooth);
+
+  // Step 2: Compute residual on fine grid
+  VecX residual_fine = rhs - A_fine * x;
+
+  // Step 3: Restrict residual to coarse grid
+  if (level - 1 >= 0 &&
+      level - 1 < static_cast<int>(restriction_ops_.size())) {
+    const SpMat& R = restriction_ops_[level - 1];
+    VecX rhs_coarse = R * residual_fine;
+
+    // Step 4: Solve coarse grid equation for error
+    // A_coarse * e_coarse = rhs_coarse
+    VecX e_coarse = VecX::Zero(rhs_coarse.size());
+
+    if (level - 1 < static_cast<int>(operators_.size())) {
+      const SpMat& A_coarse = operators_[level - 1];
+
+      if (config_.use_direct_coarse_solve) {
+        // Direct solve on coarse grid
+        direct_solve(A_coarse, e_coarse, rhs_coarse);
+      } else {
+        // Recursive V-cycle (Step 2.7)
+        // v_cycle(level - 1, e_coarse, rhs_coarse);
+        // For now, use direct solve
+        direct_solve(A_coarse, e_coarse, rhs_coarse);
+      }
+
+      // Step 5: Prolongate correction to fine grid
+      if (level - 1 < static_cast<int>(prolongation_ops_.size())) {
+        const SpMat& P = prolongation_ops_[level - 1];
+        VecX correction_fine = P * e_coarse;
+
+        // Apply correction
+        x += correction_fine;
+      }
+    }
+  }
+
+  // Step 6: Post-smoothing on fine grid
+  smooth(A_fine, x, rhs, config_.num_postsmooth);
 }
 
 void BezierMultigridSolver::smooth(const SpMat& A, VecX& x, const VecX& b,
