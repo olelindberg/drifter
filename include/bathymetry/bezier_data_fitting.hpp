@@ -86,6 +86,20 @@ public:
     /// @param AtWb Output: B^T * diag(w) * b (total_dofs)
     void assemble_normal_equations(MatX& AtWA, VecX& AtWb) const;
 
+    /// @brief Build normal equations with sparse output (memory-efficient)
+    ///
+    /// Same as assemble_normal_equations() but returns sparse matrix directly
+    /// without allocating dense intermediate storage. This avoids the 26.4 GB
+    /// dense allocation for large meshes (e.g., 40×40 = 1,600 elements).
+    ///
+    /// The normal matrix B^T W B is block-diagonal sparse with only 0.06%
+    /// non-zeros (36×36 blocks per element), so sparse storage uses ~16 MB
+    /// instead of 26.4 GB for a 57,600 DOF system.
+    ///
+    /// @param AtWA Output: B^T * diag(w) * B (sparse, total_dofs x total_dofs)
+    /// @param AtWb Output: B^T * diag(w) * b (total_dofs)
+    void assemble_normal_equations_sparse(SpMat& AtWA, VecX& AtWb) const;
+
     // =========================================================================
     // Queries
     // =========================================================================

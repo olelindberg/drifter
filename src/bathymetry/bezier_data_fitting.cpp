@@ -308,4 +308,101 @@ void BezierDataFittingAssembler::assemble_normal_equations(MatX& AtWA, VecX& AtW
     AtWb = Eigen::Map<VecX>(rhs_contributions.data(), ndofs);
 }
 
+void BezierDataFittingAssembler::assemble_normal_equations_sparse(SpMat& AtWA, VecX& AtWb) const {
+    if (points_.empty()) {
+        throw std::runtime_error("BezierDataFittingAssembler: no data points set");
+    }
+
+    Index ndofs = total_dofs();
+    Index num_elements = mesh_.num_elements();
+
+    // Determine number of threads
+    int num_threads = 1;
+    #pragma omp parallel
+    {
+        #pragma omp single
+        num_threads = omp_get_num_threads();
+    }
+
+    // Per-thread storage for sparse assembly
+    std::vector<std::vector<Eigen::Triplet<Real>>> thread_triplets(num_threads);
+    std::vector<VecX> thread_rhs(num_threads, VecX::Zero(ndofs));
+
+    // Pre-reserve triplet capacity based on element count
+    // Each element contributes at most 36×36 = 1,296 triplets
+    Index elements_per_thread = (num_elements + num_threads - 1) / num_threads;
+    Index triplets_per_thread = elements_per_thread * BezierBasis2D::NDOF * BezierBasis2D::NDOF;
+
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        thread_triplets[tid].reserve(triplets_per_thread);
+
+        #pragma omp for nowait schedule(dynamic)
+        for (Index e = 0; e < num_elements; ++e) {
+            // Find all points in this element
+            std::vector<Index> elem_points;
+            for (Index p = 0; p < num_points(); ++p) {
+                if (point_elements_[p] == e) {
+                    elem_points.push_back(p);
+                }
+            }
+
+            if (elem_points.empty()) continue;
+
+            // Build local matrices (36×36 block)
+            MatX local_AtWA = MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
+            VecX local_AtWb = VecX::Zero(BezierBasis2D::NDOF);
+
+            for (Index p : elem_points) {
+                const auto& pt = points_[p];
+                Vec2 uv = physical_to_param(e, pt.x, pt.y);
+                VecX phi = basis_->evaluate(uv(0), uv(1));
+
+                // AtWA += w * phi * phi^T
+                local_AtWA.noalias() += pt.weight * phi * phi.transpose();
+
+                // AtWb += w * phi * z
+                local_AtWb.noalias() += pt.weight * pt.z * phi;
+            }
+
+            // Add to thread-local triplets (36×36 block)
+            Index base = global_dof(e, 0);
+            for (Index i = 0; i < BezierBasis2D::NDOF; ++i) {
+                for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
+                    Real value = local_AtWA(i, j);
+                    if (std::abs(value) > 1e-16) {
+                        thread_triplets[tid].emplace_back(base + i, base + j, value);
+                    }
+                }
+                // Add to thread-local RHS
+                thread_rhs[tid](base + i) += local_AtWb(i);
+            }
+        }
+    }
+
+    // Calculate total triplets for pre-reserve (Phase 4 optimization)
+    size_t total_triplets = 0;
+    for (const auto& t : thread_triplets) {
+        total_triplets += t.size();
+    }
+
+    // Merge thread-local triplets with pre-reserve
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(total_triplets);
+    for (const auto& thread_trips : thread_triplets) {
+        triplets.insert(triplets.end(), thread_trips.begin(), thread_trips.end());
+    }
+
+    // Build sparse matrix directly (no dense intermediate)
+    AtWA.resize(ndofs, ndofs);
+    AtWA.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Merge thread-local RHS vectors
+    AtWb.setZero(ndofs);
+    for (const auto& rhs : thread_rhs) {
+        AtWb += rhs;
+    }
+}
+
 }  // namespace drifter

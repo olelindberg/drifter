@@ -177,26 +177,24 @@ void BezierBathymetrySmoother::solve_kkt() {
     auto t_start = std::chrono::high_resolution_clock::now();
     auto t_last = t_start;
 
-    // Build normal equations components
-    MatX AtWA;
+    // Build normal equations components (sparse, memory-efficient)
+    SpMat AtWA_sparse;
     VecX AtWb;
-    data_assembler_->assemble_normal_equations(AtWA, AtWb);
+    data_assembler_->assemble_normal_equations_sparse(AtWA_sparse, AtWb);
 
     if (enable_profiling) {
         auto t_now = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
-        std::cout << "[Profile] Data fitting assembly: " << elapsed << " ms\n";
+        std::cout << "[Profile] Data fitting assembly (sparse): " << elapsed << " ms\n";
         t_last = t_now;
     }
 
     // Ridge regularization (Tikhonov) - matches ShipMesh's lambda = 0.0001
+    // Add directly to sparse matrix diagonal
     const Real ridge_lambda = 1e-4;
-    Index n = AtWA.rows();
-
-    // Add ridge regularization to AtWA
-    MatX AtWA_reg = AtWA;
+    Index n = AtWA_sparse.rows();
     for (Index i = 0; i < n; ++i) {
-        AtWA_reg(i, i) += ridge_lambda;
+        AtWA_sparse.coeffRef(i, i) += ridge_lambda;
     }
 
     // Build smoothness Hessian (thin plate energy)
@@ -208,9 +206,6 @@ void BezierBathymetrySmoother::solve_kkt() {
         std::cout << "[Profile] Hessian assembly: " << elapsed << " ms\n";
         t_last = t_now;
     }
-
-    // Convert AtWA to sparse (it's actually sparse - most elements are zero)
-    SpMat AtWA_sparse = AtWA_reg.sparseView();
 
     if (enable_profiling) {
         auto t_now = std::chrono::high_resolution_clock::now();

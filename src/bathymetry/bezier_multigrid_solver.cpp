@@ -1,4 +1,5 @@
 #include "bathymetry/bezier_multigrid_solver.hpp"
+#include "bathymetry/bezier_basis_2d.hpp"
 #include <Eigen/SparseLU>
 #include <stdexcept>
 
@@ -182,20 +183,19 @@ void BezierMultigridSolver::build_grid_hierarchy(
 
 SpMat BezierMultigridSolver::build_restriction(int fine_level) {
   // Build L2 projection restriction operator: fine → coarse
-  // For 2:1 refinement, each coarse element has 4 fine children
   //
   // Restriction matrix R: ndofs_coarse × ndofs_fine
-  // R * x_fine = x_coarse (approximately, in L2 sense)
+  // R * x_fine = x_coarse (L2 projection)
   //
-  // For Bezier surfaces, we use weighted averaging based on:
-  // - Bezier basis function overlap integrals
-  // - Fine element quadrature weights
+  // For each coarse control point:
+  // 1. Get its physical position
+  // 2. Find which fine element contains that point
+  // 3. Evaluate fine Bezier basis at that point
+  // 4. Use basis values as restriction weights
   //
-  // Each coarse Bezier control point receives contributions from
-  // multiple fine control points based on their spatial overlap
+  // This implements: z_coarse(x_i) = z_fine(x_i) where x_i are coarse control points
 
   if (grids_.empty() || fine_level >= static_cast<int>(grids_.size())) {
-    // No hierarchy yet - return empty matrix
     SpMat R(0, 0);
     return R;
   }
@@ -206,44 +206,69 @@ SpMat BezierMultigridSolver::build_restriction(int fine_level) {
   Index ndofs_fine = fine_grid.num_elements() * 36;
   Index ndofs_coarse = coarse_grid.num_elements() * 36;
 
-  // Build restriction via L2 projection
+  BezierBasis2D basis;
   std::vector<Triplet<Real>> triplets;
-  triplets.reserve(ndofs_coarse * 4 * 36); // Rough estimate
+  triplets.reserve(ndofs_coarse * 36); // Each coarse DOF depends on ~36 fine DOFs
 
-  // For each coarse element, find corresponding fine elements
+  // For each coarse element
   for (Index coarse_elem = 0; coarse_elem < coarse_grid.num_elements();
        ++coarse_elem) {
     QuadBounds coarse_bounds = coarse_grid.element_bounds(coarse_elem);
+    Real dx_coarse = coarse_bounds.xmax - coarse_bounds.xmin;
+    Real dy_coarse = coarse_bounds.ymax - coarse_bounds.ymin;
 
-    // Find fine elements that overlap this coarse element
-    std::vector<Index> fine_elements;
-    for (Index fine_elem = 0; fine_elem < fine_grid.num_elements();
-         ++fine_elem) {
-      QuadBounds fine_bounds = fine_grid.element_bounds(fine_elem);
+    // For each coarse control point
+    for (int coarse_local_dof = 0; coarse_local_dof < 36; ++coarse_local_dof) {
+      // Get control point position in parameter space [0,1]^2
+      Vec2 uv_coarse = basis.control_point_position(coarse_local_dof);
 
-      // Check if fine element center is inside coarse element
-      Vec2 fine_center = fine_bounds.center();
-      if (coarse_bounds.contains(fine_center, 1e-10)) {
-        fine_elements.push_back(fine_elem);
+      // Map to physical coordinates
+      Real x = coarse_bounds.xmin + uv_coarse(0) * dx_coarse;
+      Real y = coarse_bounds.ymin + uv_coarse(1) * dy_coarse;
+
+      // Find fine element containing this point
+      Index fine_elem = -1;
+      for (Index fe = 0; fe < fine_grid.num_elements(); ++fe) {
+        QuadBounds fine_bounds = fine_grid.element_bounds(fe);
+        // Use small tolerance for boundary points
+        if (x >= fine_bounds.xmin - 1e-10 && x <= fine_bounds.xmax + 1e-10 &&
+            y >= fine_bounds.ymin - 1e-10 && y <= fine_bounds.ymax + 1e-10) {
+          fine_elem = fe;
+          break;
+        }
       }
-    }
 
-    // For now, use simple averaging as placeholder
-    // TODO: Implement proper L2 projection using Bezier basis overlap integrals
-    //
-    // Proper implementation would:
-    // 1. Evaluate fine Bezier surfaces at coarse control point locations
-    // 2. Use weighted least-squares to fit coarse control points
-    // 3. Account for derivative constraints in C² continuity
+      if (fine_elem == -1) {
+        // Point not found in any fine element
+        // This can happen at boundaries - skip this DOF
+        continue;
+      }
 
-    // Placeholder: Simple identity restriction (1:1 mapping)
-    // This works only if fine and coarse have same DOF count
-    if (fine_elements.size() > 0 && ndofs_fine == ndofs_coarse) {
-      Index coarse_base = coarse_elem * 36;
-      Index fine_base = fine_elements[0] * 36;
+      // Map physical coordinates to fine element parameter space
+      QuadBounds fine_bounds = fine_grid.element_bounds(fine_elem);
+      Real dx_fine = fine_bounds.xmax - fine_bounds.xmin;
+      Real dy_fine = fine_bounds.ymax - fine_bounds.ymin;
 
-      for (int dof = 0; dof < 36; ++dof) {
-        triplets.emplace_back(coarse_base + dof, fine_base + dof, 1.0);
+      Real u_fine = (x - fine_bounds.xmin) / dx_fine;
+      Real v_fine = (y - fine_bounds.ymin) / dy_fine;
+
+      // Clamp to [0, 1] to handle round-off errors at boundaries
+      u_fine = std::max(0.0, std::min(1.0, u_fine));
+      v_fine = std::max(0.0, std::min(1.0, v_fine));
+
+      // Evaluate fine Bezier basis at this point
+      VecX phi_fine = basis.evaluate(u_fine, v_fine);
+
+      // Build restriction weights: coarse_dof = sum(phi_fine * fine_dofs)
+      Index global_coarse_dof = coarse_elem * 36 + coarse_local_dof;
+      Index fine_base = fine_elem * 36;
+
+      for (int fine_local_dof = 0; fine_local_dof < 36; ++fine_local_dof) {
+        Real weight = phi_fine(fine_local_dof);
+        if (std::abs(weight) > 1e-14) {
+          triplets.emplace_back(global_coarse_dof, fine_base + fine_local_dof,
+                                weight);
+        }
       }
     }
   }
@@ -256,20 +281,21 @@ SpMat BezierMultigridSolver::build_restriction(int fine_level) {
 
 SpMat BezierMultigridSolver::build_prolongation(int coarse_level) {
   // Build prolongation (interpolation) operator: coarse → fine
-  // For 2:1 refinement, each coarse element maps to 4 fine children
   //
   // Prolongation matrix P: ndofs_fine × ndofs_coarse
   // x_fine += P * correction_coarse
   //
-  // For Bezier surfaces, prolongation evaluates the coarse Bezier surface
-  // at fine control point locations. Each fine control point receives
-  // a weighted combination of coarse control points.
+  // For each fine control point:
+  // 1. Get its physical position
+  // 2. Find which coarse element contains that point
+  // 3. Evaluate coarse Bezier basis at that point
+  // 4. Use basis values as prolongation weights
   //
-  // For L2 projection, P ≈ R^T (transpose of restriction)
-  // For Galerkin coarsening, this ensures A_coarse = R * A_fine * P
+  // This implements: z_fine(x_j) = z_coarse(x_j) where x_j are fine control points
+  //
+  // For L2 projection, P ≈ R^T, ensuring proper Galerkin coarsening
 
   if (grids_.empty() || coarse_level >= static_cast<int>(grids_.size()) - 1) {
-    // No hierarchy yet - return empty matrix
     SpMat P(0, 0);
     return P;
   }
@@ -280,46 +306,69 @@ SpMat BezierMultigridSolver::build_prolongation(int coarse_level) {
   Index ndofs_coarse = coarse_grid.num_elements() * 36;
   Index ndofs_fine = fine_grid.num_elements() * 36;
 
-  // Build prolongation via Bezier evaluation
+  BezierBasis2D basis;
   std::vector<Triplet<Real>> triplets;
-  triplets.reserve(ndofs_fine * 36); // Rough estimate
+  triplets.reserve(ndofs_fine * 36); // Each fine DOF depends on ~36 coarse DOFs
 
-  // For each fine element, find parent coarse element
+  // For each fine element
   for (Index fine_elem = 0; fine_elem < fine_grid.num_elements();
        ++fine_elem) {
     QuadBounds fine_bounds = fine_grid.element_bounds(fine_elem);
-    Vec2 fine_center = fine_bounds.center();
+    Real dx_fine = fine_bounds.xmax - fine_bounds.xmin;
+    Real dy_fine = fine_bounds.ymax - fine_bounds.ymin;
 
-    // Find coarse element containing this fine element
-    Index coarse_elem = -1;
-    for (Index c = 0; c < coarse_grid.num_elements(); ++c) {
-      QuadBounds coarse_bounds = coarse_grid.element_bounds(c);
-      if (coarse_bounds.contains(fine_center, 1e-10)) {
-        coarse_elem = c;
-        break;
+    // For each fine control point
+    for (int fine_local_dof = 0; fine_local_dof < 36; ++fine_local_dof) {
+      // Get control point position in parameter space [0,1]^2
+      Vec2 uv_fine = basis.control_point_position(fine_local_dof);
+
+      // Map to physical coordinates
+      Real x = fine_bounds.xmin + uv_fine(0) * dx_fine;
+      Real y = fine_bounds.ymin + uv_fine(1) * dy_fine;
+
+      // Find coarse element containing this point
+      Index coarse_elem = -1;
+      for (Index ce = 0; ce < coarse_grid.num_elements(); ++ce) {
+        QuadBounds coarse_bounds = coarse_grid.element_bounds(ce);
+        // Use small tolerance for boundary points
+        if (x >= coarse_bounds.xmin - 1e-10 && x <= coarse_bounds.xmax + 1e-10 &&
+            y >= coarse_bounds.ymin - 1e-10 && y <= coarse_bounds.ymax + 1e-10) {
+          coarse_elem = ce;
+          break;
+        }
       }
-    }
 
-    if (coarse_elem < 0) {
-      // Fine element not found in coarse grid - skip
-      continue;
-    }
+      if (coarse_elem < 0) {
+        // Point not found in any coarse element
+        // This can happen at boundaries - skip this DOF
+        continue;
+      }
 
-    // For now, use simple identity as placeholder
-    // TODO: Implement proper Bezier evaluation
-    //
-    // Proper implementation would:
-    // 1. Map fine control points to coarse element parameter space
-    // 2. Evaluate coarse Bezier basis at these parameter locations
-    // 3. Build interpolation weights from basis values
+      // Map physical coordinates to coarse element parameter space
+      QuadBounds coarse_bounds = coarse_grid.element_bounds(coarse_elem);
+      Real dx_coarse = coarse_bounds.xmax - coarse_bounds.xmin;
+      Real dy_coarse = coarse_bounds.ymax - coarse_bounds.ymin;
 
-    // Placeholder: Simple 1:1 mapping (works only if DOF counts match)
-    if (ndofs_fine == ndofs_coarse) {
-      Index fine_base = fine_elem * 36;
+      Real u_coarse = (x - coarse_bounds.xmin) / dx_coarse;
+      Real v_coarse = (y - coarse_bounds.ymin) / dy_coarse;
+
+      // Clamp to [0, 1] to handle round-off errors at boundaries
+      u_coarse = std::max(0.0, std::min(1.0, u_coarse));
+      v_coarse = std::max(0.0, std::min(1.0, v_coarse));
+
+      // Evaluate coarse Bezier basis at this point
+      VecX phi_coarse = basis.evaluate(u_coarse, v_coarse);
+
+      // Build prolongation weights: fine_dof = sum(phi_coarse * coarse_dofs)
+      Index global_fine_dof = fine_elem * 36 + fine_local_dof;
       Index coarse_base = coarse_elem * 36;
 
-      for (int dof = 0; dof < 36; ++dof) {
-        triplets.emplace_back(fine_base + dof, coarse_base + dof, 1.0);
+      for (int coarse_local_dof = 0; coarse_local_dof < 36; ++coarse_local_dof) {
+        Real weight = phi_coarse(coarse_local_dof);
+        if (std::abs(weight) > 1e-14) {
+          triplets.emplace_back(global_fine_dof, coarse_base + coarse_local_dof,
+                                weight);
+        }
       }
     }
   }

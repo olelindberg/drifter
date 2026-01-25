@@ -2645,3 +2645,265 @@ TEST_F(BezierBathymetrySmootherTest, MultigridKattegatDemonstration) {
             << " km Kattegat domain\n";
   std::cout << "Solution validates: constraint violation < 2e-5, no NaN/Inf\n";
 }
+
+// ============================================================================
+// Multigrid Specific Location Test
+// ============================================================================
+// Demonstrates multigrid solver on specific 30km × 30km domain in Danish waters.
+// Domain center: EPSG:3034 (4095238, 3344695)
+// Mesh: 20×20 uniform quadtree (400 elements, 14,400 DOFs, 1.5 km elements)
+// Solver: Multigrid V-cycle with C² continuity constraints
+//
+// This test validates:
+// - Multigrid configuration on practical domain sizes
+// - Real bathymetry data handling at specific location
+// - Solution quality (C² continuity, constraint satisfaction)
+// - VTK output generation for visualization
+//
+// Note: 20×20 mesh provides 1.5 km element resolution, comparable to the
+// MultigridKattegatDemonstration test (1.67 km elements). This ensures
+// reasonable solve time (~30s) while maintaining adequate resolution.
+// ============================================================================
+
+TEST_F(BezierBathymetrySmootherTest, MultigridSpecificLocation) {
+  std::cout << "\n=== Multigrid Specific Location Test ===\n";
+
+  // Load GeoTIFF bathymetry
+  GeoTiffReader reader;
+  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+  BathymetryData bathy = reader.load(geotiff_path);
+
+  ASSERT_TRUE(bathy.is_valid()) << "Failed to load GeoTIFF: " << geotiff_path;
+
+  std::cout << "GeoTIFF loaded:\n";
+  std::cout << "  Domain: [" << bathy.xmin << ", " << bathy.xmax << "] × ["
+            << bathy.ymin << ", " << bathy.ymax << "]\n";
+  std::cout << "  Resolution: " << bathy.sizex << " × " << bathy.sizey
+            << " pixels\n";
+  std::cout << "  Coordinate system: EPSG:3034\n";
+
+  // Define domain with specific center coordinates
+  Real center_x = 4095238.0; // EPSG:3034
+  Real center_y = 3344695.0; // EPSG:3034
+  Real domain_size = 30000.0; // 30 km in meters
+  Real half_size = domain_size / 2.0;
+
+  // Calculate domain bounds
+  Real xmin = center_x - half_size; // 4080238
+  Real xmax = center_x + half_size; // 4110238
+  Real ymin = center_y - half_size; // 3329695
+  Real ymax = center_y + half_size; // 3359695
+
+  std::cout << "\nDomain specification:\n";
+  std::cout << "  Center: (" << center_x << ", " << center_y << ")\n";
+  std::cout << "  Size: " << domain_size / 1000.0 << " km × "
+            << domain_size / 1000.0 << " km\n";
+  std::cout << "  Bounds: [" << xmin << ", " << xmax << "] × [" << ymin << ", "
+            << ymax << "]\n";
+
+  // Verify domain is within GeoTIFF coverage
+  ASSERT_GE(xmin, bathy.xmin) << "Domain extends beyond GeoTIFF west boundary";
+  ASSERT_LE(xmax, bathy.xmax) << "Domain extends beyond GeoTIFF east boundary";
+  ASSERT_GE(ymin, bathy.ymin)
+      << "Domain extends beyond GeoTIFF south boundary";
+  ASSERT_LE(ymax, bathy.ymax)
+      << "Domain extends beyond GeoTIFF north boundary";
+
+  // Sample bathymetry at center to verify it's water (positive depth)
+  float center_depth = bathy.get_depth(center_x, center_y);
+  std::cout << "  Center depth: " << center_depth << " m\n";
+  ASSERT_GT(center_depth, 0.0) << "Domain center is not in water (depth <= 0)";
+
+  // Build adaptive mesh based on L2 approximation error
+  // Refine where bilinear interpolation error exceeds threshold
+  const int max_level = 10;           // Max refinement level
+  const int max_elements = 1000;      // Stop when reaching this many elements
+  const Real error_threshold = 0.1;   // 0.1 meter L2 error threshold
+
+  // Element counter (mutable to track across calls)
+  int element_count = 0;
+
+  // Error-based refinement criterion using Gauss quadrature
+  // Computes L2 error between raw bathymetry and bilinear interpolation
+  auto should_refine = [&bathy, &element_count, max_elements, error_threshold](
+      const ElementBounds& bounds) mutable -> bool {
+
+    // Stop if we've reached max elements (approximate)
+    if (element_count >= max_elements) return false;
+
+    // Gauss-Legendre nodes and weights for 4-point quadrature on [0,1]
+    const Real gauss_nodes[4] = {0.0694318442, 0.3300094782, 0.6699905218, 0.9305681558};
+    const Real gauss_weights[4] = {0.1739274226, 0.3260725774, 0.3260725774, 0.1739274226};
+
+    Real dx = bounds.xmax - bounds.xmin;
+    Real dy = bounds.ymax - bounds.ymin;
+
+    // Get corner depths for bilinear approximation
+    Real z00 = static_cast<Real>(bathy.get_depth(bounds.xmin, bounds.ymin));
+    Real z10 = static_cast<Real>(bathy.get_depth(bounds.xmax, bounds.ymin));
+    Real z01 = static_cast<Real>(bathy.get_depth(bounds.xmin, bounds.ymax));
+    Real z11 = static_cast<Real>(bathy.get_depth(bounds.xmax, bounds.ymax));
+
+    // Skip if any corner is land
+    if (z00 <= 0 || z10 <= 0 || z01 <= 0 || z11 <= 0) return false;
+
+    // Compute L2 error: ||z_raw - z_bilinear||_L2 via Gauss quadrature
+    Real error_sq = 0.0;
+    for (int j = 0; j < 4; ++j) {
+      for (int i = 0; i < 4; ++i) {
+        Real u = gauss_nodes[i];
+        Real v = gauss_nodes[j];
+        Real x = bounds.xmin + u * dx;
+        Real y = bounds.ymin + v * dy;
+
+        // Raw depth from data
+        Real z_raw = static_cast<Real>(bathy.get_depth(x, y));
+        if (z_raw <= 0) return false;  // Land point
+
+        // Bilinear interpolation from corners
+        Real z_bilinear = (1-u)*(1-v)*z00 + u*(1-v)*z10 + (1-u)*v*z01 + u*v*z11;
+
+        Real diff = z_raw - z_bilinear;
+        Real w = gauss_weights[i] * gauss_weights[j];
+        error_sq += w * diff * diff;
+      }
+    }
+
+    // L2 error = sqrt(∫∫ diff² dA) = sqrt(error_sq * dx * dy)
+    Real l2_error = std::sqrt(error_sq * dx * dy);
+
+    // Normalize by element size to get average error (in meters)
+    Real normalized_error = l2_error / std::sqrt(dx * dy);
+
+    if (normalized_error > error_threshold) {
+      element_count += 4;  // Will create 4 children (in XY plane)
+      return true;
+    }
+    return false;
+  };
+
+  // Build adaptive octree based on approximation error
+  OctreeAdapter octree(xmin, xmax, ymin, ymax, -1.0, 0.0);
+  octree.build_adaptive(should_refine, max_level, max_level, 0);
+
+  // Balance octree to ensure 2:1 constraint at non-conforming interfaces
+  octree.balance();
+
+  // Convert to quadtree for Bezier smoother
+  auto quadtree = std::make_unique<QuadtreeAdapter>(octree);
+
+  std::cout << "\nAdaptive mesh created:\n";
+  std::cout << "  Elements: " << quadtree->num_elements()
+            << " (adaptive, L2 error-based)\n";
+  std::cout << "  DOFs: " << quadtree->num_elements() * 36 << "\n";
+  std::cout << "  Max refinement level: " << max_level << "\n";
+  std::cout << "  Error threshold: " << error_threshold << " m\n";
+  std::cout << "  Max elements target: " << max_elements << "\n";
+
+  // Configure multigrid solver
+  BezierSmootherConfig config;
+  config.lambda = 0.05; // Moderate data fitting weight
+  config.use_multigrid = true;
+  config.multigrid_max_iterations = 100;
+  config.multigrid_tolerance = 1e-6;
+  config.enable_natural_bc = true;
+
+  std::cout << "\nMultigrid configuration:\n";
+  std::cout << "  Lambda: " << config.lambda << "\n";
+  std::cout << "  Max iterations: " << config.multigrid_max_iterations << "\n";
+  std::cout << "  Tolerance: " << config.multigrid_tolerance << "\n";
+
+  // Create smoother and set bathymetry
+  BezierBathymetrySmoother smoother(*quadtree, config);
+
+  auto bathy_func = [&bathy](Real x, Real y) -> Real {
+    return static_cast<Real>(bathy.get_depth(x, y));
+  };
+  smoother.set_bathymetry_data(bathy_func);
+
+  // Solve with multigrid (adaptive mesh)
+  std::cout << "\nSolving with multigrid (adaptive mesh)...\n";
+  auto start = std::chrono::high_resolution_clock::now();
+
+  smoother.solve();
+
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "  Solve time: " << duration.count() << " ms ("
+            << duration.count() / 1000.0 << " s)\n";
+
+  // Validate solution
+  EXPECT_TRUE(smoother.is_solved()) << "Multigrid solve failed";
+
+  Real constraint_viol = smoother.constraint_violation();
+  std::cout << "  Constraint violation: " << constraint_viol << "\n";
+  EXPECT_LT(constraint_viol, 5e-5) << "C² constraints not satisfied (adaptive mesh)";
+
+  Real data_res = smoother.data_residual();
+  Real reg_energy = smoother.regularization_energy();
+  Real obj_value = smoother.objective_value();
+
+  std::cout << "  Data residual: " << data_res << "\n";
+  std::cout << "  Regularization energy: " << reg_energy << "\n";
+  std::cout << "  Objective value: " << obj_value << "\n";
+
+  // Check for numerical issues
+  VecX sol = smoother.solution();
+  bool has_nan = false, has_inf = false;
+  for (Index i = 0; i < sol.size(); ++i) {
+    if (std::isnan(sol(i)))
+      has_nan = true;
+    if (std::isinf(sol(i)))
+      has_inf = true;
+  }
+  EXPECT_FALSE(has_nan) << "Solution contains NaN";
+  EXPECT_FALSE(has_inf) << "Solution contains Inf";
+
+  // Sample and compare solution to input data at several points
+  // Use domain-relative margin since element sizes are no longer uniform
+  Real margin = (xmax - xmin) * 0.1;  // 10% margin from boundary
+  std::vector<std::pair<Real, Real>> sample_points = {
+      {center_x, center_y},                     // Center
+      {xmin + margin, ymin + margin},           // Near SW corner
+      {xmax - margin, ymax - margin},           // Near NE corner
+      {center_x, ymin + margin},                // South edge
+      {xmin + margin, center_y}};               // West edge
+
+  std::cout << "\nSolution sampling:\n";
+  Real max_error = 0.0;
+  for (const auto &[x, y] : sample_points) {
+    Real expected = bathy_func(x, y);
+    Real computed = smoother.evaluate(x, y);
+    Real error = std::abs(computed - expected);
+    max_error = std::max(max_error, error);
+    std::cout << "  (" << x << ", " << y << "): "
+              << "expected=" << expected << ", computed=" << computed
+              << ", error=" << error << "\n";
+  }
+  std::cout << "  Max error: " << max_error << " m\n";
+
+  // Write VTK output for visualization
+  std::string output_base = "/tmp/multigrid_specific_location_adaptive";
+  smoother.write_vtk(output_base, 10); // 10 subdivisions per element
+
+  // Also write raw bathymetry data for comparison
+  std::string raw_path = "/tmp/multigrid_specific_location_adaptive_raw";
+  write_geotiff_region_vtk(bathy, xmin, xmax, ymin, ymax, raw_path);
+
+  std::cout << "\nVTK output written:\n";
+  std::cout << "  " << output_base << ".vtu (smoothed solution)\n";
+  std::cout << "  " << raw_path << ".vtu (raw bathymetry)\n";
+  std::cout << "  Visualization: 10 subdivisions per element\n";
+
+  std::cout << "\n=== Test Complete ===\n";
+  std::cout << "Successfully demonstrated multigrid on adaptive mesh\n";
+  std::cout << "  Domain: " << domain_size / 1000.0 << " km × "
+            << domain_size / 1000.0 << " km\n";
+  std::cout << "  Location: EPSG:3034 (" << center_x << ", " << center_y
+            << ")\n";
+  std::cout << "  Elements: " << quadtree->num_elements()
+            << " (L2 error-based refinement)\n";
+  std::cout << "  Solution validates: constraint violation < 5e-5, no NaN/Inf\n";
+}

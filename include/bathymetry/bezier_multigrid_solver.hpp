@@ -63,7 +63,6 @@ public:
 
   /// @brief Get number of levels in hierarchy
   int num_levels() const {
-    // Placeholder: return 1 until grid hierarchy is built in Step 2.2
     return grids_.empty() ? 1 : static_cast<int>(grids_.size());
   }
 
@@ -161,9 +160,8 @@ private:
 // - Future: Replace coarsest solve with iterative for better scaling
 //
 // Current Limitations (TODO):
-// - Grid hierarchy extraction incomplete (Step 2.2)
-// - Restriction/prolongation use placeholder implementations
-// - Optimal for uniform meshes when fully implemented
+// - Optimal for uniform meshes; non-conforming AMR may fall back to direct solve
+// - Uzawa smoother not yet implemented for better KKT convergence
 //
 // ============================================================================
 

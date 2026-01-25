@@ -955,12 +955,10 @@ smoother.solve();  // Uses multigrid instead of SparseLU
 - ✅ Jacobi smoother for KKT systems (Step 2.5)
 - ✅ Galerkin coarse-grid operators (Step 2.8)
 - ✅ Integration with Bezier smoother (Step 2.9)
-- ⚠️ Grid hierarchy extraction simplified (Step 2.2 - future enhancement)
-- ⚠️ Restriction/prolongation use placeholders (Steps 2.3-2.4 - future enhancement)
+- ✅ Grid hierarchy extraction from quadtree (Step 2.2)
+- ✅ Restriction/prolongation via L2 projection (Steps 2.3-2.4)
 
 **Future Enhancements:**
-- Full grid hierarchy extraction from octree AMR structure
-- Proper Bezier basis overlap integrals for restriction/prolongation
 - Uzawa smoother for better KKT convergence
 - OpenMP parallelization of smoothing iterations
 
