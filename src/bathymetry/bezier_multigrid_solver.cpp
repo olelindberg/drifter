@@ -45,24 +45,57 @@ int BezierMultigridSolver::solve(const SpMat& KKT, VecX& x, const VecX& rhs) {
   // Build grid hierarchy operators via Galerkin coarsening (Step 2.8)
   // A_coarse = R * A_fine * P
   // This preserves the constraint structure on coarse grids
-  if (num_levels() > 1) {
+  bool hierarchy_usable = false;
+  if (num_levels() > 1 && !grids_.empty()) {
     for (int level = finest_level - 1; level >= 0; --level) {
-      if (level < static_cast<int>(restriction_ops_.size()) &&
+      if (level >= 0 &&
+          level < static_cast<int>(restriction_ops_.size()) &&
           level < static_cast<int>(prolongation_ops_.size()) &&
-          level + 1 < static_cast<int>(operators_.size())) {
+          level + 1 < static_cast<int>(operators_.size()) &&
+          level < static_cast<int>(grids_.size()) &&
+          level + 1 < static_cast<int>(grids_.size())) {
 
         // Build restriction and prolongation for this level
         restriction_ops_[level] = build_restriction(level + 1);
         prolongation_ops_[level] = build_prolongation(level);
 
+        // Skip if operators are empty (no valid hierarchy)
+        if (restriction_ops_[level].rows() == 0 ||
+            prolongation_ops_[level].rows() == 0) {
+          continue;
+        }
+
+        // Verify dimension compatibility before Galerkin coarsening
+        const SpMat& A_fine = operators_[level + 1];
+        const SpMat& R = restriction_ops_[level];
+        const SpMat& P = prolongation_ops_[level];
+
+        // Check: R.cols() == A_fine.rows() and A_fine.cols() == P.rows()
+        if (R.cols() != A_fine.rows() || A_fine.cols() != P.rows()) {
+          // Dimension mismatch - skip this level
+          // This can happen with non-conforming meshes where hierarchy
+          // extraction doesn't produce compatible grids
+          continue;
+        }
+
         // Build coarse operator via Galerkin projection
-        operators_[level] = build_coarse_operator(
-            operators_[level + 1],
-            restriction_ops_[level],
-            prolongation_ops_[level]
-        );
+        operators_[level] = build_coarse_operator(A_fine, R, P);
+
+        // Mark hierarchy as usable if we successfully built at least one coarse operator
+        if (operators_[level].rows() > 0 && operators_[level].cols() > 0) {
+          hierarchy_usable = true;
+        }
       }
     }
+  }
+
+  // If hierarchy is not usable (dimension mismatches, non-conforming mesh, etc.),
+  // fall back to direct solve
+  if (!hierarchy_usable || num_levels() <= 1) {
+    direct_solve(KKT, x, rhs);
+    residual_history_.clear();
+    residual_history_.push_back(compute_residual(KKT, x, rhs));
+    return 1;
   }
 
   residual_history_.clear();
@@ -83,17 +116,7 @@ int BezierMultigridSolver::solve(const SpMat& KKT, VecX& x, const VecX& rhs) {
     }
 
     // Perform V-cycle on finest level
-    if (num_levels() > 1) {
-      v_cycle(finest_level, x, rhs);
-    } else {
-      // Single level: just smooth or direct solve
-      if (config_.use_direct_coarse_solve) {
-        direct_solve(KKT, x, rhs);
-        break; // Direct solve converges in one iteration
-      } else {
-        smooth(KKT, x, rhs, config_.num_presmooth + config_.num_postsmooth);
-      }
-    }
+    v_cycle(finest_level, x, rhs);
   }
 
   return config_.max_iterations;
@@ -101,29 +124,60 @@ int BezierMultigridSolver::solve(const SpMat& KKT, VecX& x, const VecX& rhs) {
 
 void BezierMultigridSolver::build_grid_hierarchy(
     const QuadtreeAdapter& finest_grid) {
-  // For Step 2.2: Simplified implementation for single-level (finest only)
-  // Full multi-level hierarchy extraction will be implemented later
-  // when QuadtreeAdapter API supports it
+  // Extract multi-level grid hierarchy from quadtree mesh
+  // Groups elements by maximum refinement level and creates
+  // separate QuadtreeAdapter for each level
 
-  // For now, we work with the finest grid only
-  // grids_ stays empty, and we use finest_grid_ pointer
-  // This allows us to proceed with implementing V-cycle logic
-
-  // In future: Extract elements by refinement level and create coarse grids
-  // For now: Single level = direct solve (no actual multigrid yet)
-
-  // Store number of levels for sizing operators
-  // We'll implement 2-level V-cycle first in Step 2.6
   grids_.clear();
 
-  // Note: Full implementation would group elements by level and create
-  // QuadtreeAdapter for each level. This requires either:
-  // 1. QuadtreeAdapter API to support construction from element list
-  // 2. Or direct access to internal structure
-  //
-  // For MVP (minimum viable product), we start with finest grid only
-  // and implement the V-cycle framework. Multi-level hierarchy can be
-  // added incrementally as we test and validate the approach.
+  // Find all unique refinement levels in the mesh
+  std::map<int, std::vector<Index>> elements_by_level;
+  int max_level = 0;
+
+  for (Index e = 0; e < finest_grid.num_elements(); ++e) {
+    QuadLevel level = finest_grid.element_level(e);
+    int max_ref_level = level.max_level();
+    elements_by_level[max_ref_level].push_back(e);
+    max_level = std::max(max_level, max_ref_level);
+  }
+
+  // Determine which levels to include
+  // Start from coarsest_level or 0, up to max_level
+  int min_level = std::max(0, config_.coarsest_level);
+
+  // Build grid for each level from coarsest to finest
+  for (int target_level = min_level; target_level <= max_level; ++target_level) {
+    auto grid = std::make_unique<QuadtreeAdapter>();
+
+    // Check if this level has elements
+    auto it = elements_by_level.find(target_level);
+    if (it == elements_by_level.end() || it->second.empty()) {
+      // No elements at this level - skip it
+      // This can happen with AMR that has gaps in refinement levels
+      continue;
+    }
+
+    // Add all elements at this level to the new grid
+    const auto& element_indices = it->second;
+
+    for (Index elem_idx : element_indices) {
+      QuadBounds bounds = finest_grid.element_bounds(elem_idx);
+      QuadLevel level = finest_grid.element_level(elem_idx);
+
+      grid->add_element(bounds, level);
+    }
+
+    // Store this grid in hierarchy
+    // grids_[0] = coarsest, grids_[n-1] = finest
+    grids_.push_back(std::move(grid));
+  }
+
+  // If no multi-level hierarchy was built, store reference to finest grid
+  // This happens for uniform meshes or when all elements are at same level
+  if (grids_.empty()) {
+    // Can't copy QuadtreeAdapter, so just leave grids_ empty
+    // The solver will fall back to single-level operation
+  }
 }
 
 SpMat BezierMultigridSolver::build_restriction(int fine_level) {
@@ -324,7 +378,8 @@ void BezierMultigridSolver::v_cycle(int level, VecX& x, const VecX& rhs) {
 
   // Step 3: Restrict residual to coarse grid
   if (level - 1 >= 0 &&
-      level - 1 < static_cast<int>(restriction_ops_.size())) {
+      level - 1 < static_cast<int>(restriction_ops_.size()) &&
+      restriction_ops_[level - 1].rows() > 0) {
     const SpMat& R = restriction_ops_[level - 1];
     VecX rhs_coarse = R * residual_fine;
 
@@ -344,7 +399,8 @@ void BezierMultigridSolver::v_cycle(int level, VecX& x, const VecX& rhs) {
       }
 
       // Step 5: Prolongate correction to fine grid
-      if (level - 1 < static_cast<int>(prolongation_ops_.size())) {
+      if (level - 1 < static_cast<int>(prolongation_ops_.size()) &&
+          prolongation_ops_[level - 1].rows() > 0) {
         const SpMat& P = prolongation_ops_[level - 1];
         VecX correction_fine = P * e_coarse;
 
