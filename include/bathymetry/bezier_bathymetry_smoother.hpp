@@ -57,6 +57,17 @@ struct BezierSmootherConfig {
   /// At domain corners where two edges meet, both z_xx=0 and z_yy=0 are enforced.
   /// This is the standard "natural spline" boundary condition.
   bool enable_natural_bc = true;
+
+  /// Use multigrid solver instead of direct SparseLU
+  /// When enabled, uses geometric multigrid V-cycle for large systems
+  /// Significantly faster for deep AMR meshes (thousands of elements)
+  bool use_multigrid = false;
+
+  /// Maximum multigrid iterations
+  int multigrid_max_iterations = 100;
+
+  /// Multigrid convergence tolerance
+  Real multigrid_tolerance = 1e-6;
 };
 
 /// @brief Bezier bathymetry smoother with C² continuity

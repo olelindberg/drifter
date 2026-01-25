@@ -1,4 +1,5 @@
 #include "bathymetry/bezier_bathymetry_smoother.hpp"
+#include "bathymetry/bezier_multigrid_solver.hpp"
 #include "dg/basis_hexahedron.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/IterativeLinearSolvers>
@@ -431,31 +432,59 @@ void BezierBathymetrySmoother::solve_kkt() {
     }
 
     // Solve
-    Eigen::SparseLU<SpMat> solver;
-    solver.compute(KKT);
+    VecX sol;
 
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("BezierBathymetrySmoother: KKT factorization failed");
-    }
+    if (config_.use_multigrid) {
+        // Use geometric multigrid solver (fast for large systems)
+        MultigridConfig mg_config;
+        mg_config.max_iterations = config_.multigrid_max_iterations;
+        mg_config.tolerance = config_.multigrid_tolerance;
+        mg_config.num_presmooth = 2;
+        mg_config.num_postsmooth = 2;
+        mg_config.smoother_omega = 0.7;
+        mg_config.use_direct_coarse_solve = true;
 
-    if (enable_profiling) {
-        auto t_now = std::chrono::high_resolution_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
-        std::cout << "[Profile] SparseLU factorization: " << elapsed << " ms\n";
-        t_last = t_now;
-    }
+        BezierMultigridSolver mg_solver(*quadtree_, mg_config);
 
-    VecX sol = solver.solve(rhs);
+        sol = VecX::Zero(n + m);
+        int iterations = mg_solver.solve(KKT, sol, rhs);
 
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("BezierBathymetrySmoother: KKT solve failed");
-    }
+        if (enable_profiling) {
+            auto t_now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+            std::cout << "[Profile] Multigrid solve (" << iterations << " iterations): "
+                      << elapsed << " ms\n";
+            std::cout << "[Profile] Final residual: " << mg_solver.final_residual() << "\n";
+            t_last = t_now;
+        }
+    } else {
+        // Use direct SparseLU solver (exact but slow for large systems)
+        Eigen::SparseLU<SpMat> solver;
+        solver.compute(KKT);
 
-    if (enable_profiling) {
-        auto t_now = std::chrono::high_resolution_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
-        std::cout << "[Profile] SparseLU solve: " << elapsed << " ms\n";
-        t_last = t_now;
+        if (solver.info() != Eigen::Success) {
+            throw std::runtime_error("BezierBathymetrySmoother: KKT factorization failed");
+        }
+
+        if (enable_profiling) {
+            auto t_now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+            std::cout << "[Profile] SparseLU factorization: " << elapsed << " ms\n";
+            t_last = t_now;
+        }
+
+        sol = solver.solve(rhs);
+
+        if (solver.info() != Eigen::Success) {
+            throw std::runtime_error("BezierBathymetrySmoother: KKT solve failed");
+        }
+
+        if (enable_profiling) {
+            auto t_now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
+            std::cout << "[Profile] SparseLU solve: " << elapsed << " ms\n";
+            t_last = t_now;
+        }
     }
 
     solution_ = sol.head(n);
