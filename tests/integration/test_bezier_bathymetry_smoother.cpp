@@ -2439,3 +2439,209 @@ TEST_F(BezierBathymetrySmootherTest, MultigridNonConforming) {
   Real tol = 1e-6;
   EXPECT_LT(smoother.constraint_violation(), tol);
 }
+
+// ===========================================================================
+// Multigrid Large Domain Demonstration
+// ===========================================================================
+
+TEST_F(BezierBathymetrySmootherTest, MultigridKattegatDemonstration) {
+  // ============================================================================
+  // MULTIGRID LARGE DOMAIN DEMONSTRATION
+  // ============================================================================
+  // Demonstrates multigrid solver on large real-world bathymetry from Kattegat.
+  // Domain: ~50km × 50km region in Kattegat strait (Denmark/Sweden)
+  // Mesh: 30×30 uniform quadtree (900 elements, 32,400 DOFs)
+  // Solver: Multigrid V-cycle with C² continuity constraints
+  //
+  // This test validates:
+  // - Multigrid configuration on practical domain sizes
+  // - Real bathymetry data handling
+  // - Solution quality (C² continuity, constraint satisfaction)
+  // - VTK output generation for visualization
+  // ============================================================================
+
+  std::cout << "\n=== Multigrid Kattegat Demonstration ===\n";
+
+  // Load GeoTIFF bathymetry
+  GeoTiffReader reader;
+  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+  BathymetryData bathy = reader.load(geotiff_path);
+
+  ASSERT_TRUE(bathy.is_valid()) << "Failed to load GeoTIFF: " << geotiff_path;
+
+  std::cout << "GeoTIFF loaded:\n";
+  std::cout << "  Domain: [" << bathy.xmin << ", " << bathy.xmax << "] × ["
+            << bathy.ymin << ", " << bathy.ymax << "]\n";
+  std::cout << "  Resolution: " << bathy.sizex << " × " << bathy.sizey
+            << " pixels\n";
+
+  // Find suitable water region in Kattegat (northwest of domain)
+  // Search with 50km regions, focusing on Kattegat depths (10-50m typical)
+  Real region_size = 50000.0;  // 50 km
+  Real search_step = 25000.0;  // 25 km step
+
+  Real best_x = 0.0, best_y = 0.0;
+  Real max_depth_found = 0.0;
+  int water_regions_found = 0;
+
+  // Sample northwest quadrant (Kattegat location)
+  Real x_search_min = bathy.xmin + (bathy.xmax - bathy.xmin) * 0.1;
+  Real x_search_max = bathy.xmin + (bathy.xmax - bathy.xmin) * 0.5;
+  Real y_search_min = bathy.ymin + (bathy.ymax - bathy.ymin) * 0.5;
+  Real y_search_max = bathy.ymin + (bathy.ymax - bathy.ymin) * 0.9;
+
+  for (Real y = y_search_min; y <= y_search_max; y += search_step) {
+    for (Real x = x_search_min; x <= x_search_max; x += search_step) {
+      float depth = bathy.get_depth(x, y);
+      if (depth > max_depth_found && depth > 5.0) {
+        max_depth_found = depth;
+        best_x = x;
+        best_y = y;
+        water_regions_found++;
+      }
+    }
+  }
+
+  ASSERT_GT(max_depth_found, 5.0)
+      << "No suitable water region found in Kattegat area";
+
+  std::cout << "\nKattegat region selected:\n";
+  std::cout << "  Center: (" << best_x << ", " << best_y << ")\n";
+  std::cout << "  Max depth: " << max_depth_found << " m\n";
+  std::cout << "  Water regions surveyed: " << water_regions_found << "\n";
+
+  // Create mesh bounds centered on selected region
+  Real xmin = best_x - region_size / 2.0;
+  Real xmax = best_x + region_size / 2.0;
+  Real ymin = best_y - region_size / 2.0;
+  Real ymax = best_y + region_size / 2.0;
+
+  std::cout << "  Mesh bounds: [" << xmin << ", " << xmax << "] × [" << ymin
+            << ", " << ymax << "]\n";
+  std::cout << "  Domain size: " << (xmax - xmin) / 1000.0 << " km × "
+            << (ymax - ymin) / 1000.0 << " km\n";
+
+  // Create large uniform quadtree mesh
+  int nx = 30, ny = 30;
+  auto quadtree = std::make_unique<QuadtreeAdapter>();
+  Real dx = (xmax - xmin) / nx;
+  Real dy = (ymax - ymin) / ny;
+
+  for (int j = 0; j < ny; ++j) {
+    for (int i = 0; i < nx; ++i) {
+      QuadBounds bounds;
+      bounds.xmin = xmin + i * dx;
+      bounds.xmax = xmin + (i + 1) * dx;
+      bounds.ymin = ymin + j * dy;
+      bounds.ymax = ymin + (j + 1) * dy;
+      quadtree->add_element(bounds, QuadLevel{0, 0});
+    }
+  }
+
+  std::cout << "\nMesh created:\n";
+  std::cout << "  Elements: " << quadtree->num_elements() << " (" << nx << "×"
+            << ny << ")\n";
+  std::cout << "  DOFs: " << quadtree->num_elements() * 36 << "\n";
+  std::cout << "  Element size: " << dx / 1000.0 << " km × " << dy / 1000.0
+            << " km\n";
+
+  // Configure multigrid solver
+  BezierSmootherConfig config;
+  config.lambda = 0.05;  // Moderate data fitting weight
+  config.use_multigrid = true;
+  config.multigrid_max_iterations = 100;
+  config.multigrid_tolerance = 1e-6;
+  config.enable_natural_bc = true;
+
+  std::cout << "\nMultigrid configuration:\n";
+  std::cout << "  Lambda: " << config.lambda << "\n";
+  std::cout << "  Max iterations: " << config.multigrid_max_iterations << "\n";
+  std::cout << "  Tolerance: " << config.multigrid_tolerance << "\n";
+
+  // Create smoother and set bathymetry
+  BezierBathymetrySmoother smoother(*quadtree, config);
+
+  auto bathy_func = [&bathy](Real x, Real y) -> Real {
+    return static_cast<Real>(bathy.get_depth(x, y));
+  };
+  smoother.set_bathymetry_data(bathy_func);
+
+  // Solve with multigrid
+  std::cout << "\nSolving with multigrid...\n";
+  auto start = std::chrono::high_resolution_clock::now();
+
+  smoother.solve();
+
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+  std::cout << "  Solve time: " << duration.count() << " ms ("
+            << duration.count() / 1000.0 << " s)\n";
+
+  // Validate solution
+  EXPECT_TRUE(smoother.is_solved()) << "Multigrid solve failed";
+
+  Real constraint_viol = smoother.constraint_violation();
+  std::cout << "  Constraint violation: " << constraint_viol << "\n";
+  EXPECT_LT(constraint_viol, 2e-5) << "C² constraints not satisfied";
+
+  Real data_res = smoother.data_residual();
+  Real reg_energy = smoother.regularization_energy();
+  Real obj_value = smoother.objective_value();
+
+  std::cout << "  Data residual: " << data_res << "\n";
+  std::cout << "  Regularization energy: " << reg_energy << "\n";
+  std::cout << "  Objective value: " << obj_value << "\n";
+
+  // Check for numerical issues
+  VecX sol = smoother.solution();
+  bool has_nan = false, has_inf = false;
+  for (Index i = 0; i < sol.size(); ++i) {
+    if (std::isnan(sol(i))) has_nan = true;
+    if (std::isinf(sol(i))) has_inf = true;
+  }
+  EXPECT_FALSE(has_nan) << "Solution contains NaN";
+  EXPECT_FALSE(has_inf) << "Solution contains Inf";
+
+  // Sample and compare solution to input data at several points
+  std::vector<std::pair<Real, Real>> sample_points = {
+      {best_x, best_y},                             // Center
+      {xmin + dx, ymin + dy},                       // Near corner
+      {xmax - dx, ymax - dy},                       // Opposite corner
+      {(xmin + xmax) / 2, ymin + 2 * dy},           // Edge
+      {xmin + 3 * dx, (ymin + ymax) / 2}            // Different edge
+  };
+
+  std::cout << "\nSolution sampling:\n";
+  Real max_error = 0.0;
+  for (const auto& [x, y] : sample_points) {
+    Real expected = bathy_func(x, y);
+    Real computed = smoother.evaluate(x, y);
+    Real error = std::abs(computed - expected);
+    max_error = std::max(max_error, error);
+    std::cout << "  (" << x << ", " << y << "): "
+              << "expected=" << expected << ", computed=" << computed
+              << ", error=" << error << "\n";
+  }
+  std::cout << "  Max error: " << max_error << " m\n";
+
+  // Write VTK output for visualization
+  std::string output_base = "/tmp/multigrid_kattegat";
+  smoother.write_vtk(output_base, 10);  // 10 subdivisions per element
+
+  // Write raw GeoTIFF data at native resolution
+  std::string raw_path = "/tmp/multigrid_kattegat_raw";
+  write_geotiff_region_vtk(bathy, xmin, xmax, ymin, ymax, raw_path);
+
+  std::cout << "\nVTK output written:\n";
+  std::cout << "  " << output_base << ".vtu (smoothed solution)\n";
+  std::cout << "  " << raw_path << ".vtu (raw GeoTIFF data)\n";
+  std::cout << "  Visualization: 10 subdivisions per element\n";
+
+  std::cout << "\n=== Demonstration Complete ===\n";
+  std::cout << "Successfully demonstrated multigrid on "
+            << region_size / 1000.0 << " km × " << region_size / 1000.0
+            << " km Kattegat domain\n";
+  std::cout << "Solution validates: constraint violation < 2e-5, no NaN/Inf\n";
+}
