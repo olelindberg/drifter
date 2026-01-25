@@ -22,10 +22,24 @@ BezierMultigridSolver::BezierMultigridSolver(const QuadtreeAdapter& quadtree,
 }
 
 int BezierMultigridSolver::solve(const SpMat& KKT, VecX& x, const VecX& rhs) {
+  // Performance note: This multigrid solver achieves O(n) complexity for
+  // properly configured hierarchies. For single-level grids, it falls back
+  // to direct solve or simple smoothing.
+
   // Store finest level operator
   int finest_level = num_levels() - 1;
   if (finest_level >= 0 && finest_level < static_cast<int>(operators_.size())) {
     operators_[finest_level] = KKT;
+  }
+
+  // Early exit for single-level grids (no multigrid benefit)
+  if (num_levels() <= 1) {
+    if (config_.use_direct_coarse_solve) {
+      direct_solve(KKT, x, rhs);
+      residual_history_.push_back(0.0);
+      return 1;
+    }
+    // Otherwise fall through to smoothing iterations
   }
 
   // Build grid hierarchy operators via Galerkin coarsening (Step 2.8)
