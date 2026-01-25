@@ -23,10 +23,33 @@ BezierMultigridSolver::BezierMultigridSolver(const QuadtreeAdapter& quadtree,
 
 int BezierMultigridSolver::solve(const SpMat& KKT, VecX& x, const VecX& rhs) {
   // Store finest level operator
-  operators_[num_levels() - 1] = KKT;
+  int finest_level = num_levels() - 1;
+  if (finest_level >= 0 && finest_level < static_cast<int>(operators_.size())) {
+    operators_[finest_level] = KKT;
+  }
 
-  // Build restriction/prolongation operators (will be implemented in Steps 2.3-2.4)
-  // For now, just perform direct solve as placeholder
+  // Build grid hierarchy operators via Galerkin coarsening (Step 2.8)
+  // A_coarse = R * A_fine * P
+  // This preserves the constraint structure on coarse grids
+  if (num_levels() > 1) {
+    for (int level = finest_level - 1; level >= 0; --level) {
+      if (level < static_cast<int>(restriction_ops_.size()) &&
+          level < static_cast<int>(prolongation_ops_.size()) &&
+          level + 1 < static_cast<int>(operators_.size())) {
+
+        // Build restriction and prolongation for this level
+        restriction_ops_[level] = build_restriction(level + 1);
+        prolongation_ops_[level] = build_prolongation(level);
+
+        // Build coarse operator via Galerkin projection
+        operators_[level] = build_coarse_operator(
+            operators_[level + 1],
+            restriction_ops_[level],
+            prolongation_ops_[level]
+        );
+      }
+    }
+  }
 
   residual_history_.clear();
 
@@ -45,9 +68,18 @@ int BezierMultigridSolver::solve(const SpMat& KKT, VecX& x, const VecX& rhs) {
       return iter + 1;
     }
 
-    // Perform V-cycle (stub for now, will be implemented in Step 2.6)
-    // For now, just do a simple smoothing iteration as placeholder
-    smooth(KKT, x, rhs, 1);
+    // Perform V-cycle on finest level
+    if (num_levels() > 1) {
+      v_cycle(finest_level, x, rhs);
+    } else {
+      // Single level: just smooth or direct solve
+      if (config_.use_direct_coarse_solve) {
+        direct_solve(KKT, x, rhs);
+        break; // Direct solve converges in one iteration
+      } else {
+        smooth(KKT, x, rhs, config_.num_presmooth + config_.num_postsmooth);
+      }
+    }
   }
 
   return config_.max_iterations;
