@@ -2802,7 +2802,7 @@ TEST_F(BezierBathymetrySmootherTest, MultigridSpecificLocation) {
 
   // Configure multigrid solver
   BezierSmootherConfig config;
-  config.lambda = 0.05; // Moderate data fitting weight
+  config.lambda = 0.01; // Moderate data fitting weight
   config.use_multigrid = true;
   config.multigrid_max_iterations = 100;
   config.multigrid_tolerance = 1e-6;

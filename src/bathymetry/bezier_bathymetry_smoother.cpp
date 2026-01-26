@@ -1,4 +1,5 @@
 #include "bathymetry/bezier_bathymetry_smoother.hpp"
+#include "bathymetry/bezier_hierarchical_solver.hpp"
 #include "bathymetry/bezier_multigrid_solver.hpp"
 #include "dg/basis_hexahedron.hpp"
 #include "mesh/octree_adapter.hpp"
@@ -146,6 +147,19 @@ MatX BezierBathymetrySmoother::build_global_hessian() const {
 }
 
 void BezierBathymetrySmoother::solve_kkt() {
+    // Check if hierarchical solver should be used
+    if (config_.use_hierarchical) {
+        HierarchicalConfig hlc_config;
+        hlc_config.tolerance = config_.multigrid_tolerance;
+        hlc_config.verbose = config_.hierarchical_verbose;
+
+        BezierHierarchicalSolver hlc(*quadtree_, config_, hlc_config);
+        hlc.set_data_assembler(data_assembler_.get());
+        hlc.solve();
+        solution_ = hlc.solution();
+        return;
+    }
+
     // ShipMesh-style formulation:
     //   minimize: x^T * H * x  (thin plate energy / smoothness)
     //   subject to:

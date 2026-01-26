@@ -30,13 +30,14 @@ set(UNIT_TESTS
     unit/test_biharmonic_assembler.cpp
     unit/test_bezier_basis_2d.cpp
     unit/test_thin_plate_hessian.cpp
+    unit/test_bspline_basis.cpp
+    unit/test_hierarchical_solver.cpp
 )
 
 # Integration tests
 set(INTEGRATION_TESTS
     integration/test_dg_operators.cpp
     integration/test_conservation.cpp
-    integration/test_time_stepping.cpp
     integration/test_mesh.cpp
     integration/test_initial_conditions.cpp
     integration/test_vtk_output.cpp
@@ -44,6 +45,9 @@ set(INTEGRATION_TESTS
     integration/test_bathymetry.cpp
     integration/test_cg_bathymetry_smoother.cpp
     integration/test_bezier_bathymetry_smoother.cpp
+    integration/test_thb_surface.cpp
+    integration/test_hierarchical_solver.cpp
+    integration/test_adaptive_bezier_smoother.cpp
 )
 
 # Create unit test executable

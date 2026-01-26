@@ -68,6 +68,15 @@ struct BezierSmootherConfig {
 
   /// Multigrid convergence tolerance
   Real multigrid_tolerance = 1e-6;
+
+  /// Use hierarchical local correction solver instead of direct/multigrid
+  /// When enabled, uses a coarse-to-fine approach that solves smaller local
+  /// problems at each refinement level. Particularly efficient for AMR meshes
+  /// with localized refinement (e.g., near coastlines).
+  bool use_hierarchical = false;
+
+  /// Print progress information for hierarchical solver
+  bool hierarchical_verbose = false;
 };
 
 /// @brief Bezier bathymetry smoother with C² continuity
