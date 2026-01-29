@@ -176,6 +176,11 @@ public:
     /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1) in parameter space
     int corner_dof(int corner_id) const;
 
+    /// Get corner ID for a DOF index (inverse of corner_dof)
+    /// @param dof DOF index (0, 5, 30, or 35 for corners)
+    /// @return Corner ID (0-3), or -1 if not a corner DOF
+    int dof_to_corner(int dof) const;
+
     /// Get DOF indices along an edge (6 DOFs)
     /// @param edge_id 0: u=0 (left), 1: u=1 (right), 2: v=0 (bottom), 3: v=1 (top)
     std::vector<int> edge_dofs(int edge_id) const;

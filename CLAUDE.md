@@ -229,7 +229,11 @@ Parameter space (u,v) ∈ [0,1]²:
 - Edge 2 (bottom, v=0): DOFs [0, 6, 12, 18, 24, 30]
 - Edge 3 (top, v=1): DOFs [5, 11, 17, 23, 29, 35]
 
-### Bezier Continuity Constraints
+### Bezier Continuity Constraints (Reference)
+
+This section provides detailed reference for enforcing continuity between tensor-product Bezier elements. It covers constraint counts, DOF layouts, and worked examples for degrees 1, 3, and 5. Skip to "Testing" section if not implementing constraints.
+
+---
 
 This section describes the general theory for enforcing continuity between tensor-product Bezier elements of any degree. The constraint counts and DOF layouts vary by polynomial degree.
 
@@ -904,6 +908,48 @@ For vertices shared by n elements, use the "star" pattern: pick a reference elem
    - `scale_uu_vv = 1/(dx·dy)` (for cross term)
    - `scale_uv_uv = 2/(dx·dy)` (for z_uv² term)
 
+### CG Bezier Bathymetry Smoother (`bathymetry/cg_bezier_bathymetry_smoother.hpp`)
+
+Continuous Galerkin variant that shares DOFs at element boundaries, providing automatic C⁰ continuity. More efficient than DG (fewer DOFs) but requires explicit constraints for derivative continuity.
+
+**Key Differences from DG Smoother:**
+- DOFs at element boundaries are **shared** (not duplicated)
+- Automatic C⁰ continuity via shared DOFs
+- Explicit constraints needed for C¹/C² derivative continuity
+- Fewer total DOFs but requires constraint handling
+
+**Constraint Options (`CGBezierSmootherConfig`):**
+
+| Option | Constraints | Description |
+|--------|-------------|-------------|
+| `enable_c2_constraints` | 8 per shared vertex | Vertex derivative constraints (z_u, z_v, z_uu, z_uv, z_vv, z_uuv, z_uvv, z_uuvv) |
+| `enable_edge_constraints` | 8 per shared edge | Edge Gauss point constraints (z_n, z_nn at 4 points per edge) |
+
+**Recommended Configuration:**
+
+Edge-only constraints work well for eliminating kinks with fewer constraints:
+```cpp
+CGBezierSmootherConfig config;
+config.lambda = 1.0;
+config.enable_edge_constraints = true;  // 896 constraints for 8×8 mesh
+config.edge_ngauss = 4;                 // 4 Gauss points per edge
+// enable_c2_constraints = false (default)
+```
+
+Compared to vertex-only (1400 constraints), edge-only (896 constraints) directly addresses normal derivative discontinuities along element boundaries where kinks occur.
+
+**DOF Sharing:**
+```
+For quintic Bezier (6×6 = 36 DOFs per element):
+  - Corner DOFs (4): shared by all elements meeting at vertex
+  - Edge DOFs (4 per edge, excluding corners): shared by 2 elements
+  - Interior DOFs (16): unique per element
+
+For 8×8 uniform mesh:
+  - DG: 64 × 36 = 2304 DOFs
+  - CG: 1681 DOFs (27% fewer due to sharing)
+```
+
 ### Bezier Multigrid Solver (`bathymetry/bezier_multigrid_solver.hpp`)
 
 Geometric multigrid solver for large KKT systems arising from Bezier bathymetry smoothing. Enables efficient solving of deep AMR meshes with thousands of elements.
@@ -968,6 +1014,60 @@ smoother.solve();  // Uses multigrid instead of SparseLU
 - **Best for**: Deep AMR meshes with 7+ refinement levels
 - **Convergence**: Typically 5-15 V-cycle iterations
 
+### Adaptive Bezier Smoother (`bathymetry/adaptive_bezier_smoother.hpp`)
+
+Error-driven adaptive mesh refinement coupled with Bezier smoothing. Iteratively refines elements where fitting error exceeds threshold while maintaining C² continuity.
+
+**Algorithm:**
+1. Solve Bezier smoothing on current mesh
+2. Estimate L2 error per element: `||z_data - z_bezier||_L2`
+3. Mark elements where `normalized_error > threshold`
+4. Refine marked elements (with 2:1 balancing)
+5. Re-solve until `error < tolerance` everywhere OR max iterations/elements reached
+
+**Configuration (`AdaptiveBezierConfig`):**
+- `error_threshold` - Stop when max error < threshold (default: 0.1m)
+- `max_iterations` - Maximum adaptation iterations (default: 10)
+- `max_elements` - Maximum number of elements (default: 10000)
+- `refine_fraction` - Fraction of elements to refine per iteration (default: 0.2)
+- `smoother_config` - Underlying BezierSmootherConfig
+
+**Usage:**
+```cpp
+AdaptiveBezierConfig config;
+config.error_threshold = 0.5;  // 0.5 meter threshold
+config.smoother_config.use_multigrid = true;
+
+AdaptiveBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
+smoother.set_bathymetry_data(geotiff_source);
+auto result = smoother.solve_adaptive();
+```
+
+### THB-Spline Surface (`bathymetry/thb_spline/thb_surface.hpp`)
+
+Truncated Hierarchical B-spline surface for adaptive multiresolution bathymetry. Alternative to Bezier approach with automatic C² continuity via B-spline basis (no constraint system needed).
+
+**Key Properties:**
+- Single coherent C² surface (bicubic B-splines are analytically C²)
+- Resolution naturally matches octree/quadtree element sizes
+- Partition of unity maintained by truncation mechanism
+- Coarse regions naturally suppress high-frequency content
+
+**Components:**
+- `BSplineBasis1D` / `BSplineBasis2D` - Tensor-product B-spline evaluation
+- `THBHierarchy` - Multi-level spline hierarchy
+- `THBRefinementMask` - Marks active/passive basis functions per level
+- `THBTruncation` - Computes truncated basis coefficients
+- `THBDataFitting` - Least-squares fitting with truncated basis
+
+**Usage:**
+```cpp
+THBSurface surface(octree);
+surface.set_bathymetry_data(source);
+surface.solve();
+Real depth = surface.evaluate(x, y);
+```
+
 ## Testing
 
 Tests use GoogleTest framework with fixtures in `tests/test_utils.hpp`:
@@ -984,115 +1084,22 @@ Test organization:
 
 ### Integration Tests
 
-**Bezier Bathymetry Smoother** ([test_bezier_bathymetry_smoother.cpp](tests/integration/test_bezier_bathymetry_smoother.cpp)):
-- `ConstructFromQuadtree` - Verify construction from 2D quadtree mesh
-- `ConstructFromOctree` - Verify construction from 3D octree (uses bottom face)
-- `SolveSingleElementConstant` - Single element with constant bathymetry
-- `SolveConstantBathymetry` - 2×2 mesh with constant data (zero energy solution)
-- `SolveLinearBathymetry` - Linear bathymetry exactly reproduced (quintic can represent linear)
-- `SolveQuadraticBathymetry` - Quadratic bathymetry exactly reproduced
-- `C2ContinuityAtInterface` - Verify C² continuity at element interfaces
-- `RegularizationSmooths` - Higher smoothing weight reduces oscillations
-- `BoundConstraints` - Elevation bounds enforced via active-set method
-- `ScatteredPointInput` - Fitting from scattered XYZ points
-- `GradientEvaluation` - Gradient computation accuracy
-- `ObjectiveValue` - Objective function components (data + regularization)
-- `VTKOutput` - VTK file generation
-- `LargerMesh` - 4×4 mesh scalability
-- `GeoTiffBathymetry` - Real bathymetry from GeoTIFF (Trondheimsfjorden)
-- `GeoTiffHigherResolution` - 8×8 mesh with GeoTIFF data
-- `DirichletSingleElement` - Dirichlet BCs on single element
-- `DirichletMultiElement` - Dirichlet BCs on 2×2 mesh
-- `DirichletVsNonDirichlet` - Compare Dirichlet vs natural BC solutions
-- `GeoTiffWithDirichlet` - GeoTIFF data with Dirichlet BCs
-- `NaturalBCConstraintCounts` - Verify natural BC constraint counting
-- `NaturalBCConstantBathymetry` - Constant data with natural BCs (trivially satisfies z_nn=0)
-- `NaturalBCLinearBathymetry` - Linear data with natural BCs (zero curvature)
-- `NaturalBCVsDirichlet` - Compare natural vs Dirichlet boundary behavior
-- `NaturalBCSmoothBoundaries` - Verify smooth boundary behavior with natural BCs
-- `NonConformingOnePlusFour` - Non-conforming 1+4 mesh (coarse + 2×2 fine)
-- `MultiresolutionFiveLevels` - AMR mesh with 5 refinement levels
-- `MultiresolutionGeoTiffFiveLevels` - GeoTIFF with 5-level AMR (coastline refinement)
-- `MultiresolutionContinuityVerification` - Verify C² at conforming and non-conforming interfaces
-- `MultiresolutionLargeMeshStress` - Large AMR mesh stress test
-- `MultigridSolverSmallMesh` - Multigrid vs SparseLU comparison on 4×4 mesh
-- `MultigridNonConforming` - Multigrid on 1+4 non-conforming mesh with T-junctions
+Test files in `tests/integration/`:
 
-**CG Bathymetry Smoother** ([test_cg_bathymetry_smoother.cpp](tests/integration/test_cg_bathymetry_smoother.cpp)):
-- `ConstructFromOctree` - Construction from octree
-- `ConstructFromQuadtree` - Construction from quadtree
-- `SolveConstantBathymetry` - Constant bathymetry reproduction
-- `SolveLinearBathymetry` - Linear bathymetry reproduction
-- `SolveQuadraticBathymetry` - Quadratic bathymetry fitting
-- `SolveBeforeBathymetrySetThrows` - Error handling for unset bathymetry
-- `EvaluateBeforeSolveThrows` - Error handling for pre-solve evaluation
-- `SmoothingReducesOscillations` - Regularization effect on noisy data
-- `GradientOfConstant` - Gradient of constant field (should be zero)
-- `GradientOfLinear` - Gradient accuracy for linear field
-- `TransferToSeabed` - Transfer solution to SeabedSurface
-- `SolutionAtDof` - DOF value extraction
-- `SolutionVectorAccess` - Full solution vector access
-- `EvaluateOutsideDomain` - Extrapolation outside domain
-- `HighBetaMatchesData` - High data weight → close to input
-- `HighAlphaFlattens` - High smoothing weight → flattened surface
-- `MeshAccessor` - Mesh reference accessor
-- `DofManagerAccessor` - DOF manager accessor
-- `UniformMeshVTKOutput` - VTK output for uniform mesh
-- `NonConformingMeshVTKOutput` - VTK output for non-conforming mesh
-- `FourPlusOneMeshVTKOutput` - VTK output for 4+1 AMR mesh
-- `NoisyBathymetrySmoothing` - Smoothing of noisy bathymetry data
+| File | Purpose |
+|------|---------|
+| `test_bezier_bathymetry_smoother.cpp` | Bezier surface fitting, C² continuity, natural/Dirichlet BCs, non-conforming meshes, multigrid solver |
+| `test_cg_bezier_bathymetry_smoother.cpp` | CG Bezier smoother, DOF sharing, vertex/edge C² constraints, non-conforming meshes, GeoTIFF with constraint comparison |
+| `test_bathymetry.cpp` | GeoTIFF loading, coastline-adaptive refinement, seabed VTK output |
+| `test_mesh.cpp` | Octree mesh creation, face connectivity |
+| `test_dg_operators.cpp` | Gradient/divergence operators, mass matrix, face interpolation, discrete Green's identity |
+| `test_initial_conditions.cpp` | Quiescent, Kelvin wave, lock exchange initial conditions |
+| `test_conservation.cpp` | Mass, flux, energy, enstrophy, tracer conservation |
+| `test_time_stepping.cpp` | RK3-SSP, RK4, adaptive CFL time stepping |
+| `test_simulation_full.cpp` | Full simulation pipeline with diagnostics and VTK output |
+| `test_vtk_output.cpp` | VTK writer, legacy format, PVD time series |
 
-**Bathymetry Integration** ([test_bathymetry.cpp](tests/integration/test_bathymetry.cpp)):
-- `GeoTiffBathymetryMesh` - Load GeoTIFF and generate mesh
-- `GeoTiffFullDomainMesh` - Full domain mesh from GeoTIFF bounds
-- `CoastlineAdaptiveOctreeMesh` - Coastline-adaptive refinement with R-tree
-- `HighResolutionSeabedVTK` - High-resolution seabed surface VTK output
-- `CompareAdaptiveBathymetryMethods` - Compare CG vs Bezier smoothers
-- `CGBathymetrySmootherWithRealData` - CG smoother with real bathymetry
-
-**Mesh** ([test_mesh.cpp](tests/integration/test_mesh.cpp)):
-- `OctreeMeshCreation` - Octree mesh creation and properties
-- `FaceConnections` - Face connectivity (conforming and non-conforming)
-
-**DG Operators** ([test_dg_operators.cpp](tests/integration/test_dg_operators.cpp)):
-- `GradientExact` - Gradient operator exactness for polynomials
-- `DivergenceExact` - Divergence operator exactness
-- `MassMatrixAction` - Mass matrix action on field
-- `MassInverseConsistency` - Mass matrix inversion consistency
-- `FaceInterpolation` - Face interpolation operator
-- `DiscreteGreensIdentity` - Discrete Green's identity verification
-- `StiffnessDerivation` - Stiffness matrix from volume and surface terms
-- `IntegrationByParts` - Integration by parts on DG operators
-
-**Initial Conditions** ([test_initial_conditions.cpp](tests/integration/test_initial_conditions.cpp)):
-- `QuiescentInitialCondition` - Rest state (zero velocity)
-- `KelvinWaveInitialCondition` - Kelvin wave setup
-- `LockExchangeInitialCondition` - Lock exchange (gravity current)
-
-**Conservation** ([test_conservation.cpp](tests/integration/test_conservation.cpp)):
-- `MassConservationConstant` - Mass conservation for constant field
-- `FluxConservationAtInterface` - Flux continuity at element interfaces
-- `DivergenceTheorem` - Discrete divergence theorem
-- `EnergyConservationShallowWater` - Energy conservation in shallow water
-- `EnstrophyDiagnostic` - Enstrophy computation
-- `BoundaryFluxComputation` - Boundary flux calculation
-- `TracerConservation` - Tracer mass conservation
-
-**Time Stepping** ([test_time_stepping.cpp](tests/integration/test_time_stepping.cpp)):
-- `TimeStepperRK3SSP` - RK3-SSP time integrator
-- `TimeStepperRK4` - RK4 time integrator
-- `AdaptiveTimeController` - Adaptive time step with CFL condition
-
-**Full Simulation** ([test_simulation_full.cpp](tests/integration/test_simulation_full.cpp)):
-- `AdvectionSanityCheck` - Basic advection correctness
-- `KelvinWavePhysics` - Kelvin wave propagation physics
-- `FullSimulationWithOutput` - Complete simulation with VTK output
-- `SimulationDiagnostics` - Diagnostic computation (energy, enstrophy)
-
-**VTK Output** ([test_vtk_output.cpp](tests/integration/test_vtk_output.cpp)):
-- `VTKWriterCreation` - VTK writer instantiation
-- `VTKWriterLegacyFormat` - Legacy VTK format output
-- `VTKPVDCollection` - PVD collection for time series
+Run specific tests with gtest filter: `./build/tests/drifter_integration_tests --gtest_filter="BezierBathymetrySmoother*"`
 
 ## Dependencies
 

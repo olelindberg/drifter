@@ -146,6 +146,9 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/thb_spline/thb_truncation.cpp
     src/bathymetry/thb_spline/thb_data_fitting.cpp
     src/bathymetry/thb_spline/thb_surface.cpp
+    # CG Bezier bathymetry smoother
+    src/bathymetry/cg_bezier_dof_manager.cpp
+    src/bathymetry/cg_bezier_bathymetry_smoother.cpp
 )
 
 set(DG_SOURCES

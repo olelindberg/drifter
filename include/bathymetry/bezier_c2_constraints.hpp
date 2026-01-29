@@ -46,6 +46,20 @@ struct HangingNodeConstraintInfo {
     std::vector<int> fine_dofs;
 };
 
+/// @brief Constraint type for fine-to-fine continuity at a T-junction vertex
+///
+/// When two fine elements share a T-junction (hanging node) vertex on a coarse
+/// edge, they must be constrained to each other (not just to the coarse element)
+/// to ensure C² continuity between them.
+struct TJunctionVertexInfo {
+    Index fine_elem1;     ///< First fine element at the T-junction
+    Index fine_elem2;     ///< Second fine element at the T-junction
+    int corner1;          ///< Corner index (0-3) in fine_elem1
+    int corner2;          ///< Corner index (0-3) in fine_elem2
+    Real dx1, dy1;        ///< Size of fine_elem1
+    Real dx2, dy2;        ///< Size of fine_elem2
+};
+
 /// @brief Constraint type for a Dirichlet boundary condition
 struct DirichletConstraintInfo {
     Index elem;           ///< Element index
@@ -130,6 +144,11 @@ public:
     /// @brief Get all conforming edge constraints found
     const std::vector<EdgeConstraintInfo>& edge_constraints() const {
         return edge_constraints_;
+    }
+
+    /// @brief Get all T-junction vertex constraints (fine-to-fine)
+    const std::vector<TJunctionVertexInfo>& tjunction_vertex_constraints() const {
+        return t_junction_vertex_constraints_;
     }
 
     // =========================================================================
@@ -222,6 +241,7 @@ private:
     /// Cached constraint info (C² continuity)
     mutable std::vector<VertexConstraintInfo> vertex_constraints_;
     mutable std::vector<HangingNodeConstraintInfo> hanging_node_constraints_;
+    mutable std::vector<TJunctionVertexInfo> t_junction_vertex_constraints_;
     mutable std::vector<EdgeConstraintInfo> edge_constraints_;
     mutable bool constraints_built_ = false;
 
@@ -260,6 +280,15 @@ private:
     /// @param constraint_idx Current constraint row index (updated)
     void add_conforming_edge_constraints(
         const EdgeConstraintInfo& info,
+        std::vector<Eigen::Triplet<Real>>& triplets,
+        Index& constraint_idx) const;
+
+    /// Add C² constraints between two fine elements at a T-junction vertex
+    /// @param info T-junction vertex constraint information
+    /// @param triplets Output triplets for sparse matrix
+    /// @param constraint_idx Current constraint row index (updated)
+    void add_tjunction_vertex_constraints(
+        const TJunctionVertexInfo& info,
         std::vector<Eigen::Triplet<Real>>& triplets,
         Index& constraint_idx) const;
 

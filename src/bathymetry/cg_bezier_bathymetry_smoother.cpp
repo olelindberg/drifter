@@ -1,0 +1,931 @@
+#include "bathymetry/cg_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/bezier_data_fitting.hpp"  // For BathymetrySource, BathymetryPoint
+#include "dg/basis_hexahedron.hpp"             // For compute_gauss_lobatto_nodes
+#include "mesh/octree_adapter.hpp"
+#include <Eigen/SparseLU>
+#include <algorithm>
+#include <fstream>
+#include <stdexcept>
+
+namespace drifter {
+
+// =============================================================================
+// Gauss-Legendre quadrature points and weights
+// =============================================================================
+
+namespace {
+
+// Gauss-Legendre points and weights on [0, 1]
+void gauss_legendre_01(int n, std::vector<Real>& pts, std::vector<Real>& wts) {
+    pts.resize(n);
+    wts.resize(n);
+
+    if (n == 1) {
+        pts[0] = 0.5;
+        wts[0] = 1.0;
+    } else if (n == 2) {
+        pts[0] = 0.5 - 0.5 / std::sqrt(3.0);
+        pts[1] = 0.5 + 0.5 / std::sqrt(3.0);
+        wts[0] = wts[1] = 0.5;
+    } else if (n == 3) {
+        pts[0] = 0.5 - 0.5 * std::sqrt(0.6);
+        pts[1] = 0.5;
+        pts[2] = 0.5 + 0.5 * std::sqrt(0.6);
+        wts[0] = wts[2] = 5.0 / 18.0;
+        wts[1] = 8.0 / 18.0;
+    } else if (n == 4) {
+        Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        pts[0] = 0.5 * (1.0 - b);
+        pts[1] = 0.5 * (1.0 - a);
+        pts[2] = 0.5 * (1.0 + a);
+        pts[3] = 0.5 * (1.0 + b);
+        Real wa = (18.0 + std::sqrt(30.0)) / 72.0;
+        Real wb = (18.0 - std::sqrt(30.0)) / 72.0;
+        wts[0] = wts[3] = 0.5 * wb;
+        wts[1] = wts[2] = 0.5 * wa;
+    } else if (n == 5) {
+        pts[0] = 0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[1] = 0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[2] = 0.5;
+        pts[3] = 0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[4] = 0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        wts[0] = wts[4] = 0.5 * (322.0 - 13.0 * std::sqrt(70.0)) / 900.0;
+        wts[1] = wts[3] = 0.5 * (322.0 + 13.0 * std::sqrt(70.0)) / 900.0;
+        wts[2] = 0.5 * 128.0 / 225.0;
+    } else {
+        // Default to 6-point quadrature
+        pts = {0.03376524289842, 0.16939530676687, 0.38069040695840,
+               0.61930959304160, 0.83060469323313, 0.96623475710158};
+        wts = {0.08566224618959, 0.18038078652407, 0.23395696728635,
+               0.23395696728635, 0.18038078652407, 0.08566224618959};
+        for (auto& w : wts) w *= 0.5;
+    }
+}
+
+}  // anonymous namespace
+
+// =============================================================================
+// Construction
+// =============================================================================
+
+CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
+    const QuadtreeAdapter& mesh, const CGBezierSmootherConfig& config)
+    : quadtree_(&mesh), config_(config) {
+    init_components();
+}
+
+CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
+    const OctreeAdapter& octree, const CGBezierSmootherConfig& config)
+    : config_(config) {
+    // Create QuadtreeAdapter from octree bottom face
+    quadtree_owned_ = std::make_unique<QuadtreeAdapter>(octree);
+    quadtree_ = quadtree_owned_.get();
+    init_components();
+}
+
+void CGBezierBathymetrySmoother::init_components() {
+    basis_ = std::make_unique<BezierBasis2D>();
+    thin_plate_hessian_ = std::make_unique<ThinPlateHessian>(config_.ngauss_energy,
+                                                              config_.gradient_weight);
+    dof_manager_ = std::make_unique<CGBezierDofManager>(*quadtree_);
+
+    // Build vertex derivative constraints if C² continuity is enabled
+    if (config_.enable_c2_constraints) {
+        dof_manager_->build_vertex_derivative_constraints();
+    }
+
+    // Build edge derivative constraints if enabled
+    if (config_.enable_edge_constraints) {
+        dof_manager_->build_edge_derivative_constraints(config_.edge_ngauss);
+    }
+
+    // Initialize solution vector
+    solution_.setZero(dof_manager_->num_global_dofs());
+}
+
+// =============================================================================
+// Data input
+// =============================================================================
+
+void CGBezierBathymetrySmoother::set_bathymetry_data(const BathymetrySource& source) {
+    set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
+}
+
+void CGBezierBathymetrySmoother::set_bathymetry_data(
+    std::function<Real(Real, Real)> bathy_func) {
+    assemble_thin_plate_hessian();
+    assemble_data_fitting(bathy_func);
+    data_set_ = true;
+}
+
+void CGBezierBathymetrySmoother::set_scattered_points(const std::vector<Vec3>& points) {
+    std::vector<BathymetryPoint> bathy_points;
+    bathy_points.reserve(points.size());
+    for (const auto& p : points) {
+        bathy_points.emplace_back(p(0), p(1), p(2), 1.0);
+    }
+    set_scattered_points(bathy_points);
+}
+
+void CGBezierBathymetrySmoother::set_scattered_points(
+    const std::vector<BathymetryPoint>& points) {
+    // Build a function that returns nearest point value (simple approach)
+    // For production, should use proper scattered data interpolation
+
+    // Copy points for the lambda capture
+    std::vector<BathymetryPoint> pts = points;
+
+    auto bathy_func = [pts](Real x, Real y) -> Real {
+        Real min_dist = std::numeric_limits<Real>::max();
+        Real value = 0.0;
+        for (const auto& p : pts) {
+            Real dx = x - p.x;
+            Real dy = y - p.y;
+            Real dist = dx * dx + dy * dy;
+            if (dist < min_dist) {
+                min_dist = dist;
+                value = p.z;
+            }
+        }
+        return value;
+    };
+
+    set_bathymetry_data(bathy_func);
+}
+
+// =============================================================================
+// Assembly
+// =============================================================================
+
+void CGBezierBathymetrySmoother::assemble_thin_plate_hessian() {
+    Index num_dofs = dof_manager_->num_global_dofs();
+    Index num_elements = quadtree_->num_elements();
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(num_elements * 36 * 36);
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        // Get element size for scaling
+        Vec2 size = quadtree_->element_size(elem);
+        Real dx = size(0);
+        Real dy = size(1);
+
+        // Compute scaled local thin plate Hessian
+        MatX H_local = thin_plate_hessian_->scaled_hessian(dx, dy);
+
+        // Get global DOF indices for this element
+        const auto& global_dofs = dof_manager_->element_dofs(elem);
+
+        // Assemble into global matrix with CG connectivity
+        for (int i = 0; i < BezierBasis2D::NDOF; ++i) {
+            Index I = global_dofs[i];
+            for (int j = 0; j < BezierBasis2D::NDOF; ++j) {
+                Index J = global_dofs[j];
+                if (std::abs(H_local(i, j)) > 1e-16) {
+                    triplets.emplace_back(I, J, H_local(i, j));
+                }
+            }
+        }
+    }
+
+    H_global_.resize(num_dofs, num_dofs);
+    H_global_.setFromTriplets(triplets.begin(), triplets.end());
+}
+
+void CGBezierBathymetrySmoother::assemble_data_fitting(
+    std::function<Real(Real, Real)> bathy_func) {
+
+    Index num_dofs = dof_manager_->num_global_dofs();
+    Index num_elements = quadtree_->num_elements();
+    int ngauss = config_.ngauss_data;
+
+    // Get Gauss quadrature points and weights
+    std::vector<Real> gauss_pts, gauss_wts;
+    gauss_legendre_01(ngauss, gauss_pts, gauss_wts);
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(num_elements * ngauss * ngauss * 36 * 36);
+
+    BtWd_global_.setZero(num_dofs);
+    dTWd_global_ = 0.0;
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const auto& bounds = quadtree_->element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real jacobian = dx * dy;
+
+        const auto& global_dofs = dof_manager_->element_dofs(elem);
+
+        // Integrate over element using Gauss quadrature
+        for (int qi = 0; qi < ngauss; ++qi) {
+            Real u = gauss_pts[qi];
+            for (int qj = 0; qj < ngauss; ++qj) {
+                Real v = gauss_pts[qj];
+                Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian;
+
+                // Physical coordinates
+                Real x = bounds.xmin + u * dx;
+                Real y = bounds.ymin + v * dy;
+
+                // Bathymetry value at this point
+                Real d = bathy_func(x, y);
+
+                // Accumulate d^T W d for residual computation
+                dTWd_global_ += weight * d * d;
+
+                // Evaluate basis functions at (u, v)
+                VecX B = basis_->evaluate(u, v);
+
+                // Assemble B^T W B (outer product with weight)
+                for (int i = 0; i < BezierBasis2D::NDOF; ++i) {
+                    Index I = global_dofs[i];
+                    for (int j = 0; j < BezierBasis2D::NDOF; ++j) {
+                        Index J = global_dofs[j];
+                        triplets.emplace_back(I, J, weight * B(i) * B(j));
+                    }
+                    // Assemble B^T W d
+                    BtWd_global_(I) += weight * B(i) * d;
+                }
+            }
+        }
+    }
+
+    BtWB_global_.resize(num_dofs, num_dofs);
+    BtWB_global_.setFromTriplets(triplets.begin(), triplets.end());
+}
+
+// =============================================================================
+// Solve
+// =============================================================================
+
+void CGBezierBathymetrySmoother::solve() {
+    if (!data_set_) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: bathymetry data not set");
+    }
+
+    // Use constrained solve if we have any constraints (hanging nodes, vertex, or edge derivatives)
+    Index total_constraints = dof_manager_->num_constraints() +
+                              dof_manager_->num_vertex_derivative_constraints() +
+                              dof_manager_->num_edge_derivative_constraints();
+
+    if (total_constraints == 0) {
+        solve_unconstrained();
+    } else {
+        solve_with_constraints();
+    }
+
+    solved_ = true;
+}
+
+void CGBezierBathymetrySmoother::solve_unconstrained() {
+    Index num_dofs = dof_manager_->num_global_dofs();
+
+    // Build Q matrix using ShipMesh formulation:
+    // Q = alpha * H + lambda * (B^T W B + epsilon * I)
+    // where alpha normalizes H to have similar magnitude to B^T W B
+
+    // Compute scale factor to normalize thin plate Hessian to comparable magnitude as BtWB
+    // Note: H can be very small for large elements (scales as 1/element_size^3 for curvature)
+    // We only set alpha=0 for truly zero H (constant/linear functions have exactly zero curvature)
+    Real norm_BtWB = BtWB_global_.norm();
+    Real norm_H = H_global_.norm();
+    Real alpha = 0.0;
+    if (norm_H > 1e-14) {
+        // Always normalize H if it's nonzero - the previous threshold was too aggressive
+        alpha = norm_BtWB / norm_H;
+    }
+
+    // Build Q = alpha * H + lambda * (B^T W B + epsilon * I)
+    SpMat Q = alpha * H_global_ + config_.lambda * BtWB_global_;
+
+    // Add ridge regularization
+    for (Index i = 0; i < num_dofs; ++i) {
+        Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+    }
+
+    // RHS: c = -lambda * B^T W d
+    VecX c = -config_.lambda * BtWd_global_;
+
+    // Solve Q * x = -c
+    Eigen::SparseLU<SpMat> solver;
+    solver.compute(Q);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: SparseLU decomposition failed");
+    }
+
+    solution_ = solver.solve(-c);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: SparseLU solve failed");
+    }
+}
+
+void CGBezierBathymetrySmoother::solve_with_constraints() {
+    Index num_dofs = dof_manager_->num_global_dofs();
+    Index num_hanging_constraints = dof_manager_->num_constraints();
+    Index num_vertex_constraints = dof_manager_->num_vertex_derivative_constraints();
+    Index num_edge_constraints = dof_manager_->num_edge_derivative_constraints();
+    Index num_constraints = num_hanging_constraints + num_vertex_constraints + num_edge_constraints;
+
+    // Build Q matrix (same as unconstrained)
+    Real norm_BtWB = BtWB_global_.norm();
+    Real norm_H = H_global_.norm();
+    Real alpha = 0.0;
+    if (norm_H > 1e-14) {
+        alpha = norm_BtWB / norm_H;
+    }
+
+    SpMat Q = alpha * H_global_ + config_.lambda * BtWB_global_;
+    for (Index i = 0; i < num_dofs; ++i) {
+        Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+    }
+
+    VecX c = -config_.lambda * BtWd_global_;
+
+    // Build combined constraint matrix A
+    // First: hanging node constraints (from DOF manager)
+    // Second: vertex derivative constraints for C² continuity
+    std::vector<Eigen::Triplet<Real>> A_triplets;
+    A_triplets.reserve(num_constraints * 50);  // Estimate non-zeros
+
+    Index row = 0;
+
+    // Add hanging node constraints
+    for (const auto& hc : dof_manager_->constraints()) {
+        A_triplets.emplace_back(row, hc.slave_dof, 1.0);
+        for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
+            A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
+        }
+        ++row;
+    }
+
+    // Add vertex derivative constraints
+    // Form: sum(c1_k * phi1_k) / scale1 - sum(c2_k * phi2_k) / scale2 = 0
+    for (const auto& vc : dof_manager_->vertex_derivative_constraints()) {
+        const auto& global_dofs1 = dof_manager_->element_dofs(vc.elem1);
+        const auto& global_dofs2 = dof_manager_->element_dofs(vc.elem2);
+
+        // Element 1 contribution (positive)
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = vc.coeffs1(k) / vc.scale1;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs1[k], coeff);
+            }
+        }
+
+        // Element 2 contribution (negative)
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = vc.coeffs2(k) / vc.scale2;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs2[k], -coeff);
+            }
+        }
+
+        ++row;
+    }
+
+    // Add edge derivative constraints (at Gauss points along shared edges)
+    // Form: sum(c1_k * phi1_k) / scale1 - sum(c2_k * phi2_k) / scale2 = 0
+    for (const auto& ec : dof_manager_->edge_derivative_constraints()) {
+        const auto& global_dofs1 = dof_manager_->element_dofs(ec.elem1);
+        const auto& global_dofs2 = dof_manager_->element_dofs(ec.elem2);
+
+        // Element 1 contribution (positive)
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = ec.coeffs1(k) / ec.scale1;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs1[k], coeff);
+            }
+        }
+
+        // Element 2 contribution (negative)
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = ec.coeffs2(k) / ec.scale2;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs2[k], -coeff);
+            }
+        }
+
+        ++row;
+    }
+
+    SpMat A(num_constraints, num_dofs);
+    A.setFromTriplets(A_triplets.begin(), A_triplets.end());
+
+    // Build KKT system:
+    // [Q   A^T] [x]   [-c]
+    // [A    0 ] [mu] = [ 0]
+
+    Index kkt_size = num_dofs + num_constraints;
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(Q.nonZeros() + 2 * A.nonZeros());
+
+    // Add Q block
+    for (int k = 0; k < Q.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(Q, k); it; ++it) {
+            triplets.emplace_back(it.row(), it.col(), it.value());
+        }
+    }
+
+    // Add A block (lower-left)
+    for (int k = 0; k < A.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A, k); it; ++it) {
+            triplets.emplace_back(num_dofs + it.row(), it.col(), it.value());
+        }
+    }
+
+    // Add A^T block (upper-right)
+    for (int k = 0; k < A.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A, k); it; ++it) {
+            triplets.emplace_back(it.col(), num_dofs + it.row(), it.value());
+        }
+    }
+
+    SpMat KKT(kkt_size, kkt_size);
+    KKT.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Add small regularization to the (2,2) block to handle redundant constraints
+    // This is augmented Lagrangian: [Q A^T; A -εI][x; μ] = [-c; 0]
+    // With ε small, this minimizes constraint violation when constraints are redundant
+    Real constraint_reg = 1e-10;
+    for (Index i = num_dofs; i < kkt_size; ++i) {
+        KKT.coeffRef(i, i) -= constraint_reg;
+    }
+
+    // RHS
+    VecX rhs(kkt_size);
+    rhs.head(num_dofs) = -c;
+    rhs.tail(num_constraints).setZero();
+
+    // Solve KKT system
+    Eigen::SparseLU<SpMat> solver;
+    solver.compute(KKT);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: KKT SparseLU decomposition failed");
+    }
+
+    VecX sol = solver.solve(rhs);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: KKT SparseLU solve failed");
+    }
+
+    // Extract primal solution
+    solution_ = sol.head(num_dofs);
+
+    // Project onto constraint manifold to enforce exact constraint satisfaction
+    // This corrects small violations introduced by the KKT regularization
+    // Formula: x = x - Aᵀ(AAᵀ)⁻¹(Ax - b), with b=0
+    if (num_constraints > 0) {
+        VecX Ax = A * solution_;  // Constraint violation
+
+        // Compute (AAᵀ)⁻¹ * Ax
+        SpMat AAt = A * A.transpose();
+
+        // Add small regularization to handle potential rank deficiency
+        for (Index i = 0; i < num_constraints; ++i) {
+            AAt.coeffRef(i, i) += 1e-14;
+        }
+
+        Eigen::SparseLU<SpMat> projector;
+        projector.compute(AAt);
+
+        if (projector.info() == Eigen::Success) {
+            VecX lambda = projector.solve(Ax);
+            if (projector.info() == Eigen::Success) {
+                VecX correction = A.transpose() * lambda;
+                solution_ -= correction;
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Evaluation
+// =============================================================================
+
+Index CGBezierBathymetrySmoother::find_element(Real x, Real y) const {
+    for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
+        const auto& bounds = quadtree_->element_bounds(elem);
+        if (x >= bounds.xmin && x <= bounds.xmax &&
+            y >= bounds.ymin && y <= bounds.ymax) {
+            return elem;
+        }
+    }
+    return -1;  // Point outside domain
+}
+
+Real CGBezierBathymetrySmoother::evaluate_in_element(Index elem, Real x,
+                                                      Real y) const {
+    const auto& bounds = quadtree_->element_bounds(elem);
+
+    // Map to parameter space [0, 1]^2
+    Real u = (x - bounds.xmin) / (bounds.xmax - bounds.xmin);
+    Real v = (y - bounds.ymin) / (bounds.ymax - bounds.ymin);
+
+    // Clamp to [0, 1]
+    u = std::clamp(u, 0.0, 1.0);
+    v = std::clamp(v, 0.0, 1.0);
+
+    // Get coefficients for this element
+    VecX coeffs = element_coefficients(elem);
+
+    // Evaluate using de Casteljau
+    return basis_->evaluate_scalar(coeffs, u, v);
+}
+
+Real CGBezierBathymetrySmoother::evaluate(Real x, Real y) const {
+    if (!solved_) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: must call solve() before evaluate()");
+    }
+
+    Index elem = find_element(x, y);
+    if (elem < 0) {
+        // Extrapolate from nearest element boundary (simple approach)
+        // Find closest element center
+        Real min_dist = std::numeric_limits<Real>::max();
+        Index closest = 0;
+        for (Index e = 0; e < quadtree_->num_elements(); ++e) {
+            const auto& b = quadtree_->element_bounds(e);
+            Real cx = 0.5 * (b.xmin + b.xmax);
+            Real cy = 0.5 * (b.ymin + b.ymax);
+            Real dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            if (dist < min_dist) {
+                min_dist = dist;
+                closest = e;
+            }
+        }
+        return evaluate_in_element(closest, x, y);
+    }
+
+    return evaluate_in_element(elem, x, y);
+}
+
+Vec2 CGBezierBathymetrySmoother::evaluate_gradient_in_element(Index elem, Real x,
+                                                               Real y) const {
+    const auto& bounds = quadtree_->element_bounds(elem);
+    Real dx = bounds.xmax - bounds.xmin;
+    Real dy = bounds.ymax - bounds.ymin;
+
+    // Map to parameter space
+    Real u = (x - bounds.xmin) / dx;
+    Real v = (y - bounds.ymin) / dy;
+    u = std::clamp(u, 0.0, 1.0);
+    v = std::clamp(v, 0.0, 1.0);
+
+    // Get coefficients
+    VecX coeffs = element_coefficients(elem);
+
+    // Evaluate derivatives in parameter space
+    VecX du = basis_->evaluate_du(u, v);
+    VecX dv = basis_->evaluate_dv(u, v);
+
+    Real dz_du = coeffs.dot(du);
+    Real dz_dv = coeffs.dot(dv);
+
+    // Transform to physical coordinates
+    return Vec2(dz_du / dx, dz_dv / dy);
+}
+
+Vec2 CGBezierBathymetrySmoother::evaluate_gradient(Real x, Real y) const {
+    if (!solved_) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: must call solve() before "
+            "evaluate_gradient()");
+    }
+
+    Index elem = find_element(x, y);
+    if (elem < 0) {
+        // Find closest element
+        Real min_dist = std::numeric_limits<Real>::max();
+        Index closest = 0;
+        for (Index e = 0; e < quadtree_->num_elements(); ++e) {
+            const auto& b = quadtree_->element_bounds(e);
+            Real cx = 0.5 * (b.xmin + b.xmax);
+            Real cy = 0.5 * (b.ymin + b.ymax);
+            Real dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            if (dist < min_dist) {
+                min_dist = dist;
+                closest = e;
+            }
+        }
+        return evaluate_gradient_in_element(closest, x, y);
+    }
+
+    return evaluate_gradient_in_element(elem, x, y);
+}
+
+VecX CGBezierBathymetrySmoother::element_coefficients(Index elem) const {
+    const auto& global_dofs = dof_manager_->element_dofs(elem);
+    VecX coeffs(BezierBasis2D::NDOF);
+    for (int i = 0; i < BezierBasis2D::NDOF; ++i) {
+        coeffs(i) = solution_(global_dofs[i]);
+    }
+    return coeffs;
+}
+
+// =============================================================================
+// Transfer and output
+// =============================================================================
+
+void CGBezierBathymetrySmoother::transfer_to_seabed(SeabedSurface& seabed) const {
+    if (!solved_) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: must call solve() before "
+            "transfer_to_seabed()");
+    }
+
+    // Transfer Bezier coefficients to seabed surface
+    for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
+        VecX coeffs = element_coefficients(elem);
+        seabed.set_element_coefficients(elem, coeffs);
+    }
+}
+
+void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
+                                            int resolution) const {
+    if (!solved_) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: must call solve() before write_vtk()");
+    }
+
+    std::ofstream file(filename);
+    if (!file) {
+        throw std::runtime_error("CGBezierBathymetrySmoother: cannot open " +
+                                 filename);
+    }
+
+    // Use LGL nodes for high-order accurate interpolation
+    // The resolution parameter is now the number of LGL points per direction
+    int n_lgl = resolution > 0 ? resolution : 11;
+    VecX lgl_nodes, lgl_weights;
+    compute_gauss_lobatto_nodes(n_lgl, lgl_nodes, lgl_weights);
+
+    // Map LGL nodes from [-1, 1] to [0, 1] for Bezier parameter space
+    VecX param_nodes = (lgl_nodes.array() + 1.0) * 0.5;
+
+    Index num_elements = quadtree_->num_elements();
+    int pts_per_elem = n_lgl * n_lgl;
+    int cells_per_elem = (n_lgl - 1) * (n_lgl - 1);
+    Index total_points = num_elements * pts_per_elem;
+    Index total_cells = num_elements * cells_per_elem;
+
+    // VTK header
+    file << "# vtk DataFile Version 3.0\n";
+    file << "CG Bezier Bathymetry\n";
+    file << "ASCII\n";
+    file << "DATASET UNSTRUCTURED_GRID\n";
+
+    // Points - evaluate at LGL nodes
+    file << "POINTS " << total_points << " double\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const auto& bounds = quadtree_->element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        VecX coeffs = element_coefficients(elem);
+
+        for (int j = 0; j < n_lgl; ++j) {
+            Real v = param_nodes(j);
+            Real y = bounds.ymin + v * dy;
+            for (int i = 0; i < n_lgl; ++i) {
+                Real u = param_nodes(i);
+                Real x = bounds.xmin + u * dx;
+                Real z = basis_->evaluate_scalar(coeffs, u, v);
+                file << x << " " << y << " " << z << "\n";
+            }
+        }
+    }
+
+    // Cells (quads connecting LGL points)
+    file << "CELLS " << total_cells << " " << (5 * total_cells) << "\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        Index base = elem * pts_per_elem;
+        for (int j = 0; j < n_lgl - 1; ++j) {
+            for (int i = 0; i < n_lgl - 1; ++i) {
+                Index p0 = base + j * n_lgl + i;
+                Index p1 = p0 + 1;
+                Index p2 = p0 + n_lgl + 1;
+                Index p3 = p0 + n_lgl;
+                file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3
+                     << "\n";
+            }
+        }
+    }
+
+    // Cell types (all quads = type 9)
+    file << "CELL_TYPES " << total_cells << "\n";
+    for (Index i = 0; i < total_cells; ++i) {
+        file << "9\n";
+    }
+
+    // Point data: elevation
+    file << "POINT_DATA " << total_points << "\n";
+    file << "SCALARS elevation double 1\n";
+    file << "LOOKUP_TABLE default\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        VecX coeffs = element_coefficients(elem);
+
+        for (int j = 0; j < n_lgl; ++j) {
+            Real v = param_nodes(j);
+            for (int i = 0; i < n_lgl; ++i) {
+                Real u = param_nodes(i);
+                Real z = basis_->evaluate_scalar(coeffs, u, v);
+                file << z << "\n";
+            }
+        }
+    }
+
+    // Cell data: element ID
+    file << "CELL_DATA " << total_cells << "\n";
+    file << "SCALARS element_id int 1\n";
+    file << "LOOKUP_TABLE default\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        for (int c = 0; c < cells_per_elem; ++c) {
+            file << elem << "\n";
+        }
+    }
+
+    file.close();
+}
+
+void CGBezierBathymetrySmoother::write_control_points_vtk(
+    const std::string& filename) const {
+    if (!solved_) {
+        throw std::runtime_error(
+            "CGBezierBathymetrySmoother: must call solve() before "
+            "write_control_points_vtk()");
+    }
+
+    std::ofstream file(filename);
+    if (!file) {
+        throw std::runtime_error("CGBezierBathymetrySmoother: cannot open " +
+                                 filename);
+    }
+
+    Index num_elements = quadtree_->num_elements();
+    int pts_per_elem = BezierBasis2D::NDOF;  // 36
+    int cells_per_elem = 25;  // 5×5 quads connecting 6×6 control points
+    Index total_points = num_elements * pts_per_elem;
+    Index total_cells = num_elements * cells_per_elem;
+
+    file << "# vtk DataFile Version 3.0\n";
+    file << "CG Bezier Control Points\n";
+    file << "ASCII\n";
+    file << "DATASET UNSTRUCTURED_GRID\n";
+
+    // Points (control point positions)
+    file << "POINTS " << total_points << " double\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const auto& bounds = quadtree_->element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        VecX coeffs = element_coefficients(elem);
+
+        for (int j = 0; j < 6; ++j) {
+            Real v = static_cast<Real>(j) / 5;
+            Real y = bounds.ymin + v * dy;
+            for (int i = 0; i < 6; ++i) {
+                Real u = static_cast<Real>(i) / 5;
+                Real x = bounds.xmin + u * dx;
+                int dof = i + 6 * j;
+                Real z = coeffs(dof);
+                file << x << " " << y << " " << z << "\n";
+            }
+        }
+    }
+
+    // Cells (quads connecting control points)
+    file << "CELLS " << total_cells << " " << (5 * total_cells) << "\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        Index base = elem * pts_per_elem;
+        for (int j = 0; j < 5; ++j) {
+            for (int i = 0; i < 5; ++i) {
+                Index p0 = base + j * 6 + i;
+                Index p1 = p0 + 1;
+                Index p2 = p0 + 6 + 1;
+                Index p3 = p0 + 6;
+                file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3
+                     << "\n";
+            }
+        }
+    }
+
+    file << "CELL_TYPES " << total_cells << "\n";
+    for (Index i = 0; i < total_cells; ++i) {
+        file << "9\n";
+    }
+
+    file << "POINT_DATA " << total_points << "\n";
+    file << "SCALARS elevation double 1\n";
+    file << "LOOKUP_TABLE default\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        VecX coeffs = element_coefficients(elem);
+        for (int dof = 0; dof < BezierBasis2D::NDOF; ++dof) {
+            file << coeffs(dof) << "\n";
+        }
+    }
+
+    file.close();
+}
+
+// =============================================================================
+// Diagnostics
+// =============================================================================
+
+Real CGBezierBathymetrySmoother::data_residual() const {
+    if (!solved_) return 0.0;
+    // ||B*x - d||^2_W = x^T * B^T W B * x - 2 * x^T * B^T W d + d^T W d
+    return solution_.dot(BtWB_global_ * solution_) -
+           2.0 * solution_.dot(BtWd_global_) + dTWd_global_;
+}
+
+Real CGBezierBathymetrySmoother::regularization_energy() const {
+    if (!solved_) return 0.0;
+    return solution_.dot(H_global_ * solution_);
+}
+
+Real CGBezierBathymetrySmoother::objective_value() const {
+    if (!solved_) return 0.0;
+    Real norm_BtWB = BtWB_global_.norm();
+    Real norm_H = H_global_.norm();
+    Real alpha = (norm_H > 1e-14) ? norm_BtWB / norm_H : 1.0;
+
+    return alpha * regularization_energy() + config_.lambda * data_residual();
+}
+
+Real CGBezierBathymetrySmoother::constraint_violation() const {
+    Index num_hanging = dof_manager_->num_constraints();
+    Index num_vertex = dof_manager_->num_vertex_derivative_constraints();
+    Index num_edge = dof_manager_->num_edge_derivative_constraints();
+    Index num_constraints = num_hanging + num_vertex + num_edge;
+
+    if (!solved_ || num_constraints == 0) return 0.0;
+
+    // Build full constraint matrix (same as in solve_with_constraints)
+    Index num_dofs = dof_manager_->num_global_dofs();
+    std::vector<Eigen::Triplet<Real>> A_triplets;
+    Index row = 0;
+
+    // Hanging node constraints
+    for (const auto& hc : dof_manager_->constraints()) {
+        A_triplets.emplace_back(row, hc.slave_dof, 1.0);
+        for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
+            A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
+        }
+        ++row;
+    }
+
+    // Vertex derivative constraints
+    for (const auto& vc : dof_manager_->vertex_derivative_constraints()) {
+        const auto& global_dofs1 = dof_manager_->element_dofs(vc.elem1);
+        const auto& global_dofs2 = dof_manager_->element_dofs(vc.elem2);
+
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = vc.coeffs1(k) / vc.scale1;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs1[k], coeff);
+            }
+        }
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = vc.coeffs2(k) / vc.scale2;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs2[k], -coeff);
+            }
+        }
+        ++row;
+    }
+
+    // Edge derivative constraints
+    for (const auto& ec : dof_manager_->edge_derivative_constraints()) {
+        const auto& global_dofs1 = dof_manager_->element_dofs(ec.elem1);
+        const auto& global_dofs2 = dof_manager_->element_dofs(ec.elem2);
+
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = ec.coeffs1(k) / ec.scale1;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs1[k], coeff);
+            }
+        }
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            Real coeff = ec.coeffs2(k) / ec.scale2;
+            if (std::abs(coeff) > 1e-14) {
+                A_triplets.emplace_back(row, global_dofs2[k], -coeff);
+            }
+        }
+        ++row;
+    }
+
+    SpMat A(num_constraints, num_dofs);
+    A.setFromTriplets(A_triplets.begin(), A_triplets.end());
+
+    VecX violation = A * solution_;
+    return violation.norm();
+}
+
+}  // namespace drifter

@@ -364,6 +364,16 @@ int BezierBasis2D::corner_dof(int corner_id) const {
     }
 }
 
+int BezierBasis2D::dof_to_corner(int dof) const {
+    // Inverse of corner_dof: given a DOF index, return corner ID or -1 if not a corner
+    // Corner DOFs: 0 (corner 0), 5 (corner 2), 30 (corner 1), 35 (corner 3)
+    if (dof == dof_index(0, 0)) return 0;           // (0, 0)
+    if (dof == dof_index(DEGREE, 0)) return 1;      // (1, 0)
+    if (dof == dof_index(0, DEGREE)) return 2;      // (0, 1)
+    if (dof == dof_index(DEGREE, DEGREE)) return 3; // (1, 1)
+    return -1;  // Not a corner DOF
+}
+
 Vec2 BezierBasis2D::corner_param(int corner_id) const {
     switch (corner_id) {
         case 0: return Vec2(0.0, 0.0);

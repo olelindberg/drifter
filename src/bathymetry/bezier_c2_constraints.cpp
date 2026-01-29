@@ -3,6 +3,7 @@
 #include <map>
 #include <omp.h>
 #include <set>
+#include <iostream>
 
 namespace drifter {
 
@@ -17,6 +18,7 @@ void BezierC2ConstraintBuilder::find_all_constraints() const {
 
     vertex_constraints_.clear();
     hanging_node_constraints_.clear();
+    t_junction_vertex_constraints_.clear();
     edge_constraints_.clear();
 
     // Tolerance for matching positions
@@ -120,6 +122,76 @@ void BezierC2ConstraintBuilder::find_all_constraints() const {
         }
     }
 
+    // Detect T-junction vertices where two fine elements meet
+    // Group hanging node constraints by their T-junction position (coarse element + edge + midpoint)
+    // Key: (coarse_elem, coarse_edge) -> list of hanging node infos that share the T-junction
+    std::map<std::pair<Index, int>, std::vector<const HangingNodeConstraintInfo*>> t_junction_map;
+
+    for (const auto& info : hanging_node_constraints_) {
+        // All fine elements on the same coarse edge share T-junction at t=0.5
+        auto key = std::make_pair(info.coarse_elem, info.coarse_edge);
+        t_junction_map[key].push_back(&info);
+    }
+
+    // For each T-junction with multiple fine elements, add fine-to-fine constraints
+    for (const auto& [key, fine_infos] : t_junction_map) {
+        if (fine_infos.size() < 2) continue;
+
+        // Reference: first fine element
+        const auto* ref = fine_infos[0];
+        const QuadBounds& ref_bounds = mesh_.element_bounds(ref->fine_elem);
+        Real ref_dx = ref_bounds.xmax - ref_bounds.xmin;
+        Real ref_dy = ref_bounds.ymax - ref_bounds.ymin;
+
+        // Determine which corner of ref fine element is at the T-junction
+        auto ref_edge_dofs = basis_->edge_dofs(ref->fine_edge);
+        int ref_t_junction_dof = (ref->t_coarse < 0.5) ? ref_edge_dofs.back() : ref_edge_dofs.front();
+        int ref_corner = basis_->dof_to_corner(ref_t_junction_dof);
+
+        // Constrain all other fine elements to the reference
+        for (size_t i = 1; i < fine_infos.size(); ++i) {
+            const auto* other = fine_infos[i];
+            const QuadBounds& other_bounds = mesh_.element_bounds(other->fine_elem);
+            Real other_dx = other_bounds.xmax - other_bounds.xmin;
+            Real other_dy = other_bounds.ymax - other_bounds.ymin;
+
+            auto other_edge_dofs = basis_->edge_dofs(other->fine_edge);
+            int other_t_junction_dof = (other->t_coarse < 0.5) ? other_edge_dofs.back() : other_edge_dofs.front();
+            int other_corner = basis_->dof_to_corner(other_t_junction_dof);
+
+            TJunctionVertexInfo tj_info;
+            tj_info.fine_elem1 = ref->fine_elem;
+            tj_info.fine_elem2 = other->fine_elem;
+            tj_info.corner1 = ref_corner;
+            tj_info.corner2 = other_corner;
+            tj_info.dx1 = ref_dx;
+            tj_info.dy1 = ref_dy;
+            tj_info.dx2 = other_dx;
+            tj_info.dy2 = other_dy;
+
+            t_junction_vertex_constraints_.push_back(tj_info);
+        }
+    }
+
+    // Debug output for T-junction constraint verification
+    std::cerr << "[DEBUG] BezierC2ConstraintBuilder::find_all_constraints() summary:\n"
+              << "  Vertex constraints: " << vertex_constraints_.size() << "\n"
+              << "  Hanging node constraints: " << hanging_node_constraints_.size() << "\n"
+              << "  Edge constraints: " << edge_constraints_.size() << "\n"
+              << "  T-junction vertex constraints: " << t_junction_vertex_constraints_.size() << "\n";
+
+    for (const auto& tj : t_junction_vertex_constraints_) {
+        const QuadBounds& b1 = mesh_.element_bounds(tj.fine_elem1);
+        const QuadBounds& b2 = mesh_.element_bounds(tj.fine_elem2);
+        Vec2 pos1 = get_corner_position(tj.fine_elem1, tj.corner1);
+        Vec2 pos2 = get_corner_position(tj.fine_elem2, tj.corner2);
+        std::cerr << "  T-junction: elem " << tj.fine_elem1 << " corner " << tj.corner1
+                  << " @ (" << pos1(0) << ", " << pos1(1) << ")"
+                  << " <-> elem " << tj.fine_elem2 << " corner " << tj.corner2
+                  << " @ (" << pos2(0) << ", " << pos2(1) << ")"
+                  << ", pos_diff = " << (pos1 - pos2).norm() << "\n";
+    }
+
     constraints_built_ = true;
 }
 
@@ -145,6 +217,9 @@ Index BezierC2ConstraintBuilder::num_constraints() const {
         (void)info;  // Suppress unused warning
         num += BezierBasis2D::N1D - 2;  // 6 - 2 = 4 interior DOFs
     }
+
+    // Each T-junction vertex constraint adds 9 C² constraints between fine elements
+    num += 9 * static_cast<Index>(t_junction_vertex_constraints_.size());
 
     return num;
 }
@@ -187,6 +262,15 @@ SpMat BezierC2ConstraintBuilder::build_constraint_matrix() const {
         add_conforming_edge_constraints(edge_constraints_[i], edge_triplets[i], local_idx);
     }
 
+    // T-junction vertex constraints (fine-to-fine)
+    std::vector<std::vector<Eigen::Triplet<Real>>> tj_triplets(t_junction_vertex_constraints_.size());
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < t_junction_vertex_constraints_.size(); ++i) {
+        Index local_idx = 0;
+        add_tjunction_vertex_constraints(t_junction_vertex_constraints_[i], tj_triplets[i], local_idx);
+    }
+
     // Combine all triplets sequentially with correct constraint indexing
     Index constraint_idx = 0;
 
@@ -218,6 +302,16 @@ SpMat BezierC2ConstraintBuilder::build_constraint_matrix() const {
         }
         constraint_idx += edge_triplets[i].empty() ? 0 :
                           (edge_triplets[i].back().row() + 1);
+    }
+
+    // Add T-junction vertex constraint triplets with proper row offset
+    for (size_t i = 0; i < t_junction_vertex_constraints_.size(); ++i) {
+        Index offset = constraint_idx;
+        for (auto& triplet : tj_triplets[i]) {
+            triplets.emplace_back(offset + triplet.row(), triplet.col(), triplet.value());
+        }
+        constraint_idx += tj_triplets[i].empty() ? 0 :
+                          (tj_triplets[i].back().row() + 1);
     }
 
     SpMat A(nrows, ncols);
@@ -547,6 +641,57 @@ void BezierC2ConstraintBuilder::add_conforming_edge_constraints(
         // Constraint: c1[dof1] - c2[dof2] = 0
         triplets.emplace_back(constraint_idx, col1, 1.0);
         triplets.emplace_back(constraint_idx, col2, -1.0);
+
+        ++constraint_idx;
+    }
+}
+
+void BezierC2ConstraintBuilder::add_tjunction_vertex_constraints(
+    const TJunctionVertexInfo& info,
+    std::vector<Eigen::Triplet<Real>>& triplets,
+    Index& constraint_idx) const
+{
+    // C² constraints between two fine elements at a T-junction vertex.
+    // This ensures continuity between adjacent fine elements, not just between
+    // each fine element and the coarse element.
+
+    // Get corner parameters
+    Vec2 uv1 = get_corner_param(info.corner1);
+    Vec2 uv2 = get_corner_param(info.corner2);
+
+    // The 9 C² derivative conditions
+    const std::vector<std::pair<int, int>> deriv_orders = {
+        {0, 0},  // z
+        {1, 0},  // z_u
+        {0, 1},  // z_v
+        {2, 0},  // z_uu
+        {1, 1},  // z_uv
+        {0, 2},  // z_vv
+        {2, 1},  // z_uuv
+        {1, 2},  // z_uvv
+        {2, 2}   // z_uuvv
+    };
+
+    for (const auto& [nu, nv] : deriv_orders) {
+        // Scaling factors for physical derivatives
+        Real scale1 = std::pow(info.dx1, nu) * std::pow(info.dy1, nv);
+        Real scale2 = std::pow(info.dx2, nu) * std::pow(info.dy2, nv);
+
+        // Evaluate basis derivatives at the T-junction corner
+        VecX phi1 = basis_->evaluate_derivative(uv1(0), uv1(1), nu, nv);
+        VecX phi2 = basis_->evaluate_derivative(uv2(0), uv2(1), nu, nv);
+
+        // Constraint: deriv1/scale1 - deriv2/scale2 = 0
+        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+            if (std::abs(phi1(k) / scale1) > 1e-14) {
+                Index col1 = global_dof(info.fine_elem1, k);
+                triplets.emplace_back(constraint_idx, col1, phi1(k) / scale1);
+            }
+            if (std::abs(phi2(k) / scale2) > 1e-14) {
+                Index col2 = global_dof(info.fine_elem2, k);
+                triplets.emplace_back(constraint_idx, col2, -phi2(k) / scale2);
+            }
+        }
 
         ++constraint_idx;
     }
