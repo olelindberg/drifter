@@ -416,4 +416,56 @@ std::vector<int> BezierBasis2D::edge_dofs(int edge_id) const {
     return dofs;
 }
 
+// =============================================================================
+// Non-conforming interface support (Bezier subdivision)
+// =============================================================================
+
+MatX BezierBasis2D::compute_1d_extraction_matrix(Real t0, Real t1) const {
+    const int n = DEGREE;  // 5 for quintic
+    MatX S = MatX::Zero(N1D, N1D);
+
+    // For the common case of [0, 0.5] and [0.5, 1], use precomputed formulas
+    // based on de Casteljau subdivision.
+    //
+    // Left half [0, 0.5] subdivision matrix:
+    //   Row k gives coefficients for control point Q_k of the left sub-curve.
+    //   Q_k = sum_{j=0}^{k} C(k,j) / 2^k * P_j
+    //
+    // Right half [0.5, 1] subdivision matrix:
+    //   Row k gives coefficients for control point Q_k of the right sub-curve.
+    //   Q_k = sum_{j=k}^{n} C(n-k,j-k) / 2^(n-k) * P_j
+
+    if (std::abs(t0) < 1e-14 && std::abs(t1 - 0.5) < 1e-14) {
+        // Left half subdivision matrix
+        // Q_k = sum_{j=0}^{k} C(k,j) * (1/2)^k * P_j
+        for (int k = 0; k <= n; ++k) {
+            Real denom = std::pow(2.0, k);
+            for (int j = 0; j <= k; ++j) {
+                S(k, j) = binom(k, j) / denom;
+            }
+        }
+    } else if (std::abs(t0 - 0.5) < 1e-14 && std::abs(t1 - 1.0) < 1e-14) {
+        // Right half subdivision matrix
+        // Q_k = sum_{j=k}^{n} C(n-k,j-k) * (1/2)^(n-k) * P_j
+        for (int k = 0; k <= n; ++k) {
+            Real denom = std::pow(2.0, n - k);
+            for (int j = k; j <= n; ++j) {
+                S(k, j) = binom(n - k, j - k) / denom;
+            }
+        }
+    } else {
+        // General case: for interval [t0, t1], use composition of subdivision
+        // First subdivide at t1 to get left part [0, t1], then at t0/t1 to get right part
+        // This can be computed as matrix product of two subdivision matrices.
+        //
+        // For 2:1 refinement, we only need [0, 0.5] and [0.5, 1], so this branch
+        // is not implemented. Throw an error for now.
+        throw std::runtime_error(
+            "BezierBasis2D::compute_1d_extraction_matrix: "
+            "General intervals not yet supported. Only [0, 0.5] and [0.5, 1] are implemented.");
+    }
+
+    return S;
+}
+
 }  // namespace drifter

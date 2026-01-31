@@ -30,6 +30,9 @@ CGBezierDofManager::CGBezierDofManager(const QuadtreeAdapter& mesh)
     assign_edge_dofs();
     assign_interior_dofs();
 
+    // Fix DOF sharing at non-conforming edges using index-based logic
+    assign_edge_dofs_nonconforming();
+
     // Identify boundary DOFs
     identify_boundary_dofs();
 
@@ -244,6 +247,101 @@ void CGBezierDofManager::assign_interior_dofs() {
     }
 }
 
+void CGBezierDofManager::assign_edge_dofs_nonconforming() {
+    // For non-conforming (FineToCoarse) edges, only CORNER DOFs should be shared
+    // with the coarse element.
+    //
+    // IMPORTANT: Unlike conforming edges where DOFs at the same physical position
+    // can be shared, at non-conforming edges only the curve ENDPOINTS are guaranteed
+    // to match. Interior edge DOFs (Bezier control points) do NOT lie on the curve
+    // and have values that depend on the curve shape, not just physical position.
+    //
+    // assign_edge_dofs() may have incorrectly shared interior DOFs based on physical
+    // position matching. We must UNDO this by assigning NEW global DOF indices to
+    // interior fine edge DOFs that were incorrectly shared with the coarse element.
+    //
+    // For 2:1 refinement with quintic Bezier (6 DOFs per edge):
+    // - subedge_index=0 (left/lower half): k=0 shares with coarse m=0
+    // - subedge_index=1 (right/upper half): k=5 shares with coarse m=5
+    // - T-junction (k=5 for subedge=0, k=0 for subedge=1): shares with adjacent fine element
+    //
+    // All other fine edge DOFs get NEW indices and are then constrained via
+    // build_hanging_node_constraints() using the Bezier extraction matrix.
+
+    // First pass: identify which coarse DOFs should NOT be shared with fine elements
+    // (all interior DOFs on the coarse side of non-conforming edges)
+    std::set<Index> coarse_interior_dofs;
+
+    for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
+        for (int edge = 0; edge < 4; ++edge) {
+            EdgeNeighborInfo info = mesh_.get_neighbor(elem, edge);
+            if (info.type != EdgeNeighborInfo::Type::FineToCoarse) {
+                continue;
+            }
+
+            Index coarse_elem = info.neighbor_elements[0];
+            int coarse_edge = info.neighbor_edges[0];
+            std::vector<int> coarse_dofs = basis_.edge_dofs(coarse_edge);
+
+            // Mark coarse interior DOFs (m=1,2,3,4) as not to be shared
+            for (int m = 1; m <= 4; ++m) {
+                int coarse_local = coarse_dofs[m];
+                Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
+                coarse_interior_dofs.insert(coarse_global);
+            }
+        }
+    }
+
+    // Second pass: fix fine element DOF assignments
+    for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
+        for (int edge = 0; edge < 4; ++edge) {
+            EdgeNeighborInfo info = mesh_.get_neighbor(elem, edge);
+            if (info.type != EdgeNeighborInfo::Type::FineToCoarse) {
+                continue;
+            }
+
+            Index coarse_elem = info.neighbor_elements[0];
+            int coarse_edge = info.neighbor_edges[0];
+
+            std::vector<int> fine_dofs = basis_.edge_dofs(edge);
+            std::vector<int> coarse_dofs = basis_.edge_dofs(coarse_edge);
+
+            // Determine which corner is shared with coarse
+            int shared_k = (info.subedge_index == 0) ? 0 : 5;
+            int shared_m = (info.subedge_index == 0) ? 0 : 5;
+
+            // Determine which DOF is the T-junction (shared with adjacent fine element)
+            int tjunction_k = (info.subedge_index == 0) ? 5 : 0;
+
+            // Process all fine edge DOFs
+            for (int k = 0; k < static_cast<int>(fine_dofs.size()); ++k) {
+                int fine_local = fine_dofs[k];
+                Index current_global = elem_to_global_[elem][fine_local];
+
+                if (k == shared_k) {
+                    // This corner DOF should share with the coarse corner
+                    int coarse_local = coarse_dofs[shared_m];
+                    elem_to_global_[elem][fine_local] =
+                        elem_to_global_[coarse_elem][coarse_local];
+                } else if (k == tjunction_k) {
+                    // T-junction: keep the position-based sharing with adjacent fine element
+                    // (assign_edge_dofs already handled this via position matching)
+                    // Don't change this DOF
+                } else {
+                    // Interior DOF: check if it was incorrectly shared with a coarse DOF
+                    if (coarse_interior_dofs.count(current_global) > 0) {
+                        // This DOF was incorrectly shared with a coarse interior DOF
+                        // Assign a NEW global DOF index
+                        elem_to_global_[elem][fine_local] = num_global_dofs_++;
+                    }
+                    // If it wasn't shared with coarse, it might be shared with another
+                    // fine element (conforming edge), which is correct - leave it alone
+                }
+            }
+        }
+    }
+}
+
 void CGBezierDofManager::identify_boundary_dofs() {
     boundary_dofs_.clear();
     boundary_dof_set_.clear();
@@ -272,93 +370,98 @@ void CGBezierDofManager::build_hanging_node_constraints() {
     constraints_.clear();
     constrained_dofs_.clear();
 
-    // Iterate over interior edges to find non-conforming interfaces
-    mesh_.for_each_interior_edge([this](Index elem, int edge,
-                                        const EdgeNeighborInfo& info) {
-        if (info.type != EdgeNeighborInfo::Type::FineToCoarse) {
-            return;  // Only process fine-to-coarse edges
-        }
+    // Iterate over ALL elements and edges directly.
+    // NOTE: We do NOT use for_each_interior_edge() because its "lower index owns"
+    // filtering causes FineToCoarse edges to be skipped when the coarse element
+    // has a lower index than the fine element (common after AMR refinement).
+    for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
+        for (int edge = 0; edge < 4; ++edge) {
+            EdgeNeighborInfo info = mesh_.get_neighbor(elem, edge);
 
-        // This element is the finer one - its edge DOFs may be hanging
-        Index coarse_elem = info.neighbor_elements[0];
-        int coarse_edge = info.neighbor_edges[0];
+            if (info.type != EdgeNeighborInfo::Type::FineToCoarse) {
+                continue;  // Only process fine-to-coarse edges
+            }
 
-        // Get fine and coarse edge DOFs
-        std::vector<int> fine_dofs = basis_.edge_dofs(edge);
-        std::vector<int> coarse_dofs = basis_.edge_dofs(coarse_edge);
+            // This element is the finer one - its edge DOFs may be hanging
+            Index coarse_elem = info.neighbor_elements[0];
+            int coarse_edge = info.neighbor_edges[0];
 
-        // Get physical bounds
-        const auto& fine_bounds = mesh_.element_bounds(elem);
-        const auto& coarse_bounds = mesh_.element_bounds(coarse_elem);
+            // Get fine and coarse edge DOFs
+            std::vector<int> fine_dofs = basis_.edge_dofs(edge);
+            std::vector<int> coarse_dofs = basis_.edge_dofs(coarse_edge);
 
-        // Determine the parameter range on the coarse edge that corresponds to this fine edge
-        // For a 2:1 refinement, the fine edge spans half of the coarse edge
-        Real t_start, t_end;
-        if (info.subedge_index == 0) {
-            t_start = 0.0;
-            t_end = 0.5;
-        } else {
-            t_start = 0.5;
-            t_end = 1.0;
-        }
+            // Determine the parameter range on the coarse edge
+            Real t_start, t_end;
+            if (info.subedge_index == 0) {
+                t_start = 0.0;
+                t_end = 0.5;
+            } else {
+                t_start = 0.5;
+                t_end = 1.0;
+            }
 
-        // For each fine edge DOF, create a constraint if it's a hanging node
-        for (size_t k = 0; k < fine_dofs.size(); ++k) {
-            int fine_local = fine_dofs[k];
-            Index fine_global = elem_to_global_[elem][fine_local];
+            // Compute the Bezier extraction matrix for this sub-interval.
+            // Row k of S gives the weights for fine control point k.
+            MatX S = basis_.compute_1d_extraction_matrix(t_start, t_end);
 
-            // Get the parameter position of this DOF on the fine edge
-            // fine edge DOFs are at t = k/5 along the edge
-            Real t_fine = static_cast<Real>(k) / (BezierBasis2D::N1D - 1);
+            // For each fine edge DOF, create a constraint if it's a hanging node
+            for (int k = 0; k < static_cast<int>(fine_dofs.size()); ++k) {
+                int fine_local = fine_dofs[k];
+                Index fine_global = elem_to_global_[elem][fine_local];
 
-            // Map to coarse edge parameter
-            Real t_coarse = t_start + t_fine * (t_end - t_start);
+                // Only CORNER DOFs are shared (curve endpoints where values must match).
+                // All other fine edge DOFs must be CONSTRAINED using the extraction matrix.
+                // This is because Bezier control points don't lie on the curve (except at
+                // endpoints), so sharing control points at the same physical position
+                // does NOT ensure C⁰ continuity of the curve.
+                //
+                // For 2:1 refinement with quintic (6 DOFs per edge):
+                // - subedge_index=0: only k=0 is shared (corner at start)
+                // - subedge_index=1: only k=5 is shared (corner at end)
+                bool is_shared = false;
+                if (info.subedge_index == 0) {
+                    // Lower half: only k=0 is the shared corner
+                    is_shared = (k == 0);
+                } else {
+                    // Upper half: only k=5 is the shared corner
+                    is_shared = (k == 5);
+                }
 
-            // Check if this DOF position matches a coarse DOF position
-            // Coarse DOFs are at t = 0, 0.2, 0.4, 0.6, 0.8, 1.0
-            bool is_shared = false;
-            for (size_t m = 0; m < coarse_dofs.size(); ++m) {
-                Real t_coarse_dof = static_cast<Real>(m) / (BezierBasis2D::N1D - 1);
-                if (std::abs(t_coarse - t_coarse_dof) < 1e-10) {
-                    is_shared = true;
-                    break;
+                if (is_shared) {
+                    // This DOF is shared (handled by assign_edge_dofs_nonconforming)
+                    continue;
+                }
+
+                // Skip if this DOF is already constrained (avoid duplicate constraints
+                // at T-junctions where multiple fine elements meet the same coarse edge)
+                if (constrained_dofs_.count(fine_global) > 0) {
+                    continue;
+                }
+
+                // This is a hanging node - constrain it using de Casteljau subdivision weights
+                HangingNodeConstraint constraint;
+                constraint.slave_dof = fine_global;
+
+                // Use row k of the extraction matrix as the constraint weights.
+                VecX weights = S.row(k);
+
+                for (size_t m = 0; m < coarse_dofs.size(); ++m) {
+                    int coarse_local = coarse_dofs[m];
+                    Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
+
+                    if (std::abs(weights(static_cast<int>(m))) > 1e-14) {
+                        constraint.master_dofs.push_back(coarse_global);
+                        constraint.weights.push_back(weights(static_cast<int>(m)));
+                    }
+                }
+
+                if (!constraint.master_dofs.empty()) {
+                    constraints_.push_back(constraint);
+                    constrained_dofs_.insert(fine_global);
                 }
             }
-
-            if (is_shared) {
-                // This DOF is shared (already handled by position-based sharing)
-                continue;
-            }
-
-            // Skip if this DOF is already constrained (avoid duplicate constraints
-            // at T-junctions where multiple fine elements meet the same coarse edge)
-            if (constrained_dofs_.count(fine_global) > 0) {
-                continue;
-            }
-
-            // This is a hanging node - constrain it to interpolate from coarse
-            HangingNodeConstraint constraint;
-            constraint.slave_dof = fine_global;
-
-            // Evaluate 1D Bezier basis at t_coarse to get interpolation weights
-            VecX B = basis_.evaluate_bernstein_1d(BezierBasis2D::DEGREE, t_coarse);
-
-            for (size_t m = 0; m < coarse_dofs.size(); ++m) {
-                int coarse_local = coarse_dofs[m];
-                Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
-
-                if (std::abs(B(m)) > 1e-14) {
-                    constraint.master_dofs.push_back(coarse_global);
-                    constraint.weights.push_back(B(m));
-                }
-            }
-
-            if (!constraint.master_dofs.empty()) {
-                constraints_.push_back(constraint);
-                constrained_dofs_.insert(fine_global);
-            }
         }
-    });
+    }
 }
 
 void CGBezierDofManager::build_dof_mappings() {
@@ -453,6 +556,97 @@ void CGBezierDofManager::build_vertex_derivative_constraints() {
                 c.coeffs2 = basis_.evaluate_derivative(other_param(0), other_param(1), nu, nv);
 
                 // Scale factors: dx^nu * dy^nv to convert parameter derivatives to physical
+                c.scale1 = std::pow(ref_dx, nu) * std::pow(ref_dy, nv);
+                c.scale2 = std::pow(other_dx, nu) * std::pow(other_dy, nv);
+
+                vertex_derivative_constraints_.push_back(c);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // T-junction vertex derivative constraints
+    // -------------------------------------------------------------------------
+    // At non-conforming interfaces, fine elements share a corner at the coarse
+    // edge midpoint (T-junction). This position doesn't match any coarse corner,
+    // so the vertex_map above doesn't create constraints between the fine elements.
+    // We need to add derivative constraints at T-junction vertices explicitly.
+
+    // Group fine elements by T-junction position: (coarse_elem, coarse_edge)
+    std::map<std::pair<Index, int>, std::vector<std::pair<Index, int>>> tjunction_map;
+
+    mesh_.for_each_interior_edge([&](Index fine_elem, int fine_edge,
+                                     const EdgeNeighborInfo& info) {
+        if (info.type != EdgeNeighborInfo::Type::FineToCoarse) {
+            return;  // Only process fine-to-coarse edges
+        }
+
+        // Determine which corner of fine element is at T-junction
+        // T-junction is at interior end of fine edge (t=0.5 on coarse edge)
+        // subedge_index=0: fine occupies [0, 0.5], T-junction at end (t=1 in fine coords)
+        // subedge_index=1: fine occupies [0.5, 1], T-junction at start (t=0 in fine coords)
+        int tjunction_corner;
+        bool at_end = (info.subedge_index == 0);  // T-junction at end of fine edge
+        switch (fine_edge) {
+            case 0:  // Left edge (u=0): corners 0 (v=0) and 2 (v=1)
+                tjunction_corner = at_end ? 2 : 0;
+                break;
+            case 1:  // Right edge (u=1): corners 1 (v=0) and 3 (v=1)
+                tjunction_corner = at_end ? 3 : 1;
+                break;
+            case 2:  // Bottom edge (v=0): corners 0 (u=0) and 1 (u=1)
+                tjunction_corner = at_end ? 1 : 0;
+                break;
+            case 3:  // Top edge (v=1): corners 2 (u=0) and 3 (u=1)
+                tjunction_corner = at_end ? 3 : 2;
+                break;
+            default:
+                return;
+        }
+
+        // Key is (coarse_elem, coarse_edge) to group fine elements at same T-junction
+        auto key = std::make_pair(info.neighbor_elements[0], info.neighbor_edges[0]);
+        tjunction_map[key].push_back({fine_elem, tjunction_corner});
+    });
+
+    // For each T-junction with 2+ fine elements, create derivative constraints
+    for (const auto& [key, fine_corners] : tjunction_map) {
+        if (fine_corners.size() < 2) {
+            continue;  // Need at least 2 fine elements to constrain
+        }
+
+        // Reference element (first in the list)
+        Index ref_elem = fine_corners[0].first;
+        int ref_corner = fine_corners[0].second;
+
+        const auto& ref_bounds = mesh_.element_bounds(ref_elem);
+        Real ref_dx = ref_bounds.xmax - ref_bounds.xmin;
+        Real ref_dy = ref_bounds.ymax - ref_bounds.ymin;
+        Vec2 ref_param = basis_.corner_param(ref_corner);
+
+        // Constrain other fine elements to reference
+        for (size_t i = 1; i < fine_corners.size(); ++i) {
+            Index other_elem = fine_corners[i].first;
+            int other_corner = fine_corners[i].second;
+
+            const auto& other_bounds = mesh_.element_bounds(other_elem);
+            Real other_dx = other_bounds.xmax - other_bounds.xmin;
+            Real other_dy = other_bounds.ymax - other_bounds.ymin;
+            Vec2 other_param = basis_.corner_param(other_corner);
+
+            // Add 8 derivative constraints (skip z value - already shared via DOFs)
+            for (const auto& [nu, nv] : deriv_orders) {
+                VertexDerivativeConstraint c;
+                c.elem1 = ref_elem;
+                c.elem2 = other_elem;
+                c.corner1 = ref_corner;
+                c.corner2 = other_corner;
+                c.nu = nu;
+                c.nv = nv;
+
+                c.coeffs1 = basis_.evaluate_derivative(ref_param(0), ref_param(1), nu, nv);
+                c.coeffs2 = basis_.evaluate_derivative(other_param(0), other_param(1), nu, nv);
+
                 c.scale1 = std::pow(ref_dx, nu) * std::pow(ref_dy, nv);
                 c.scale2 = std::pow(other_dx, nu) * std::pow(other_dy, nv);
 
@@ -611,6 +805,12 @@ void CGBezierDofManager::build_edge_derivative_constraints(int ngauss) {
             }
         }
     }
+
+    // Note: Non-conforming edges (FineToCoarse) are handled by hanging node
+    // constraints via de Casteljau subdivision, which properly relates fine
+    // edge control points to coarse control points. Edge derivative constraints
+    // for non-conforming interfaces are not used as they would rely on
+    // interior Gauss point extrapolation.
 }
 
 }  // namespace drifter

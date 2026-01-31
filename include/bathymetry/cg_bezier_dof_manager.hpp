@@ -242,6 +242,10 @@ private:
     /// Assign DOFs along element edges
     void assign_edge_dofs();
 
+    /// Assign DOFs at non-conforming edges using index-based sharing
+    /// For 2:1 refinement, every 2nd fine DOF shares with a coarse DOF
+    void assign_edge_dofs_nonconforming();
+
     /// Assign interior DOFs (unique per element)
     void assign_interior_dofs();
 

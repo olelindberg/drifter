@@ -373,4 +373,150 @@ TEST_F(BezierBasis2DTest, CoordinateConversion) {
     EXPECT_NEAR(uv_center(1), 0.5, TOLERANCE);
 }
 
+// =============================================================================
+// Bezier extraction matrix tests (for non-conforming interfaces)
+// =============================================================================
+
+TEST_F(BezierBasis2DTest, ExtractionMatrixLeftHalf) {
+    // Test the left half [0, 0.5] extraction matrix
+    MatX S = basis.compute_1d_extraction_matrix(0.0, 0.5);
+
+    // Should be a 6x6 matrix (N1D = 6 for quintic)
+    EXPECT_EQ(S.rows(), 6);
+    EXPECT_EQ(S.cols(), 6);
+
+    // Verify known values based on de Casteljau subdivision
+    // Q0 = P0 (first control point unchanged)
+    EXPECT_NEAR(S(0, 0), 1.0, TOLERANCE);
+    for (int j = 1; j < 6; ++j) {
+        EXPECT_NEAR(S(0, j), 0.0, TOLERANCE);
+    }
+
+    // Q1 = (P0 + P1) / 2
+    EXPECT_NEAR(S(1, 0), 0.5, TOLERANCE);
+    EXPECT_NEAR(S(1, 1), 0.5, TOLERANCE);
+    for (int j = 2; j < 6; ++j) {
+        EXPECT_NEAR(S(1, j), 0.0, TOLERANCE);
+    }
+
+    // Q2 = (P0 + 2*P1 + P2) / 4
+    EXPECT_NEAR(S(2, 0), 0.25, TOLERANCE);
+    EXPECT_NEAR(S(2, 1), 0.5, TOLERANCE);
+    EXPECT_NEAR(S(2, 2), 0.25, TOLERANCE);
+    for (int j = 3; j < 6; ++j) {
+        EXPECT_NEAR(S(2, j), 0.0, TOLERANCE);
+    }
+
+    // Q5 = (P0 + 5*P1 + 10*P2 + 10*P3 + 5*P4 + P5) / 32 (midpoint)
+    EXPECT_NEAR(S(5, 0), 1.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(5, 1), 5.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(5, 2), 10.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(5, 3), 10.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(5, 4), 5.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(5, 5), 1.0/32.0, TOLERANCE);
+
+    // Rows should sum to 1 (partition of unity property)
+    for (int k = 0; k < 6; ++k) {
+        Real row_sum = S.row(k).sum();
+        EXPECT_NEAR(row_sum, 1.0, TOLERANCE);
+    }
+}
+
+TEST_F(BezierBasis2DTest, ExtractionMatrixRightHalf) {
+    // Test the right half [0.5, 1] extraction matrix
+    MatX S = basis.compute_1d_extraction_matrix(0.5, 1.0);
+
+    // Should be a 6x6 matrix
+    EXPECT_EQ(S.rows(), 6);
+    EXPECT_EQ(S.cols(), 6);
+
+    // Q0 of right half = Q5 of left half (the midpoint)
+    EXPECT_NEAR(S(0, 0), 1.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(0, 1), 5.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(0, 2), 10.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(0, 3), 10.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(0, 4), 5.0/32.0, TOLERANCE);
+    EXPECT_NEAR(S(0, 5), 1.0/32.0, TOLERANCE);
+
+    // Q5 = P5 (last control point unchanged)
+    for (int j = 0; j < 5; ++j) {
+        EXPECT_NEAR(S(5, j), 0.0, TOLERANCE);
+    }
+    EXPECT_NEAR(S(5, 5), 1.0, TOLERANCE);
+
+    // Rows should sum to 1
+    for (int k = 0; k < 6; ++k) {
+        Real row_sum = S.row(k).sum();
+        EXPECT_NEAR(row_sum, 1.0, TOLERANCE);
+    }
+}
+
+TEST_F(BezierBasis2DTest, ExtractionMatrixPreservesCoarseCurve) {
+    // The extraction matrix should give control points that produce
+    // a curve IDENTICAL to the original on the sub-interval.
+    //
+    // Test: for random coarse control points P, compute fine control points Q = S * P,
+    // then verify that evaluating the fine curve at t in [0,1] gives the same value
+    // as evaluating the coarse curve at t_coarse = t_start + t * (t_end - t_start)
+
+    // Random control points for a quintic curve
+    VecX P(6);
+    P << 1.0, 3.0, 2.0, 5.0, 4.0, 6.0;
+
+    // Left half [0, 0.5]
+    {
+        MatX S = basis.compute_1d_extraction_matrix(0.0, 0.5);
+        VecX Q = S * P;
+
+        // Verify at multiple parameter values
+        for (Real t_fine = 0.0; t_fine <= 1.0; t_fine += 0.1) {
+            Real t_coarse = 0.0 + t_fine * 0.5;  // Map to [0, 0.5]
+
+            // Evaluate fine curve at t_fine
+            VecX B_fine = basis.evaluate_bernstein_1d(5, t_fine);
+            Real fine_val = B_fine.dot(Q);
+
+            // Evaluate coarse curve at t_coarse
+            VecX B_coarse = basis.evaluate_bernstein_1d(5, t_coarse);
+            Real coarse_val = B_coarse.dot(P);
+
+            EXPECT_NEAR(fine_val, coarse_val, TOLERANCE)
+                << "Mismatch at t_fine=" << t_fine << ", t_coarse=" << t_coarse;
+        }
+    }
+
+    // Right half [0.5, 1]
+    {
+        MatX S = basis.compute_1d_extraction_matrix(0.5, 1.0);
+        VecX Q = S * P;
+
+        for (Real t_fine = 0.0; t_fine <= 1.0; t_fine += 0.1) {
+            Real t_coarse = 0.5 + t_fine * 0.5;  // Map to [0.5, 1]
+
+            VecX B_fine = basis.evaluate_bernstein_1d(5, t_fine);
+            Real fine_val = B_fine.dot(Q);
+
+            VecX B_coarse = basis.evaluate_bernstein_1d(5, t_coarse);
+            Real coarse_val = B_coarse.dot(P);
+
+            EXPECT_NEAR(fine_val, coarse_val, TOLERANCE)
+                << "Mismatch at t_fine=" << t_fine << ", t_coarse=" << t_coarse;
+        }
+    }
+}
+
+TEST_F(BezierBasis2DTest, ExtractionMatrixSharedEndpoint) {
+    // The endpoint of left half should equal the startpoint of right half
+    // This is the T-junction point at t=0.5
+
+    MatX S_left = basis.compute_1d_extraction_matrix(0.0, 0.5);
+    MatX S_right = basis.compute_1d_extraction_matrix(0.5, 1.0);
+
+    // Q5 of left half should equal Q0 of right half
+    for (int j = 0; j < 6; ++j) {
+        EXPECT_NEAR(S_left(5, j), S_right(0, j), TOLERANCE)
+            << "Mismatch at column " << j;
+    }
+}
+
 }  // namespace

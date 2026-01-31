@@ -189,6 +189,25 @@ public:
     /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1)
     Vec2 corner_param(int corner_id) const;
 
+    // =========================================================================
+    // Non-conforming interface support (Bezier subdivision)
+    // =========================================================================
+
+    /// @brief Compute Bezier extraction matrix for a sub-interval
+    ///
+    /// For a degree-n Bezier curve on [0,1], this computes the (n+1)×(n+1) matrix S
+    /// such that new_ctrl_pts = S * original_ctrl_pts gives the control points
+    /// for the Bezier curve restricted to [t0, t1].
+    ///
+    /// Uses the de Casteljau subdivision algorithm. For the common 2:1 refinement case:
+    /// - [0, 0.5]: Left half subdivision (binomial coefficients / 2^k)
+    /// - [0.5, 1]: Right half subdivision
+    ///
+    /// @param t0 Start of sub-interval (0 ≤ t0 < t1)
+    /// @param t1 End of sub-interval (t0 < t1 ≤ 1)
+    /// @return (N1D × N1D) matrix S where new_ctrl_pts = S * original_ctrl_pts
+    MatX compute_1d_extraction_matrix(Real t0, Real t1) const;
+
 private:
     /// Precomputed binomial coefficients C(n,k) for n <= 2*DEGREE
     std::array<std::array<Real, 2*DEGREE+1>, 2*DEGREE+1> binomial_;

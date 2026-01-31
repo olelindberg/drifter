@@ -5,6 +5,7 @@
 #include <Eigen/SparseLU>
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <stdexcept>
 
 namespace drifter {
@@ -655,14 +656,14 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
             "CGBezierBathymetrySmoother: must call solve() before write_vtk()");
     }
 
-    std::ofstream file(filename);
+    // Always use .vtu extension for VTK XML format
+    std::ofstream file(filename + ".vtu");
     if (!file) {
         throw std::runtime_error("CGBezierBathymetrySmoother: cannot open " +
-                                 filename);
+                                 filename + ".vtu");
     }
 
     // Use LGL nodes for high-order accurate interpolation
-    // The resolution parameter is now the number of LGL points per direction
     int n_lgl = resolution > 0 ? resolution : 11;
     VecX lgl_nodes, lgl_weights;
     compute_gauss_lobatto_nodes(n_lgl, lgl_nodes, lgl_weights);
@@ -676,14 +677,15 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
     Index total_points = num_elements * pts_per_elem;
     Index total_cells = num_elements * cells_per_elem;
 
-    // VTK header
-    file << "# vtk DataFile Version 3.0\n";
-    file << "CG Bezier Bathymetry\n";
-    file << "ASCII\n";
-    file << "DATASET UNSTRUCTURED_GRID\n";
+    // VTU XML header
+    file << "<?xml version=\"1.0\"?>\n";
+    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+    file << "<UnstructuredGrid>\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells << "\">\n";
 
     // Points - evaluate at LGL nodes
-    file << "POINTS " << total_points << " double\n";
+    file << "<Points>\n";
+    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
     for (Index elem = 0; elem < num_elements; ++elem) {
         const auto& bounds = quadtree_->element_bounds(elem);
         Real dx = bounds.xmax - bounds.xmin;
@@ -697,13 +699,16 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
                 Real u = param_nodes(i);
                 Real x = bounds.xmin + u * dx;
                 Real z = basis_->evaluate_scalar(coeffs, u, v);
-                file << x << " " << y << " " << z << "\n";
+                file << std::setprecision(12) << x << " " << y << " " << z << "\n";
             }
         }
     }
+    file << "</DataArray>\n";
+    file << "</Points>\n";
 
     // Cells (quads connecting LGL points)
-    file << "CELLS " << total_cells << " " << (5 * total_cells) << "\n";
+    file << "<Cells>\n";
+    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
     for (Index elem = 0; elem < num_elements; ++elem) {
         Index base = elem * pts_per_elem;
         for (int j = 0; j < n_lgl - 1; ++j) {
@@ -712,22 +717,28 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
                 Index p1 = p0 + 1;
                 Index p2 = p0 + n_lgl + 1;
                 Index p3 = p0 + n_lgl;
-                file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3
-                     << "\n";
+                file << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
             }
         }
     }
+    file << "</DataArray>\n";
 
-    // Cell types (all quads = type 9)
-    file << "CELL_TYPES " << total_cells << "\n";
-    for (Index i = 0; i < total_cells; ++i) {
-        file << "9\n";
+    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+    for (Index i = 1; i <= total_cells; ++i) {
+        file << (i * 4) << "\n";
     }
+    file << "</DataArray>\n";
+
+    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+    for (Index i = 0; i < total_cells; ++i) {
+        file << "9\n";  // VTK_QUAD
+    }
+    file << "</DataArray>\n";
+    file << "</Cells>\n";
 
     // Point data: elevation
-    file << "POINT_DATA " << total_points << "\n";
-    file << "SCALARS elevation double 1\n";
-    file << "LOOKUP_TABLE default\n";
+    file << "<PointData Scalars=\"elevation\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"elevation\" format=\"ascii\">\n";
     for (Index elem = 0; elem < num_elements; ++elem) {
         VecX coeffs = element_coefficients(elem);
 
@@ -736,20 +747,28 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
             for (int i = 0; i < n_lgl; ++i) {
                 Real u = param_nodes(i);
                 Real z = basis_->evaluate_scalar(coeffs, u, v);
-                file << z << "\n";
+                file << std::setprecision(12) << z << "\n";
             }
         }
     }
+    file << "</DataArray>\n";
+    file << "</PointData>\n";
 
     // Cell data: element ID
-    file << "CELL_DATA " << total_cells << "\n";
-    file << "SCALARS element_id int 1\n";
-    file << "LOOKUP_TABLE default\n";
+    file << "<CellData Scalars=\"element_id\">\n";
+    file << "<DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
     for (Index elem = 0; elem < num_elements; ++elem) {
         for (int c = 0; c < cells_per_elem; ++c) {
             file << elem << "\n";
         }
     }
+    file << "</DataArray>\n";
+    file << "</CellData>\n";
+
+    // VTU footer
+    file << "</Piece>\n";
+    file << "</UnstructuredGrid>\n";
+    file << "</VTKFile>\n";
 
     file.close();
 }

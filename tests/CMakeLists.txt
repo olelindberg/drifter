@@ -49,6 +49,7 @@ set(INTEGRATION_TESTS
     integration/test_hierarchical_solver.cpp
     integration/test_adaptive_bezier_smoother.cpp
     integration/test_cg_bezier_bathymetry_smoother.cpp
+    integration/test_adaptive_cg_bezier_smoother.cpp
 )
 
 # Create unit test executable

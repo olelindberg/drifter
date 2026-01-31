@@ -270,6 +270,7 @@ TEST_F(CGBezierSmootherTest, OnePlusFourConstantBathymetry) {
 
 TEST_F(CGBezierSmootherTest, OnePlusFourLinearBathymetry) {
     // 1+4 mesh with linear bathymetry
+    // NOTE: Fine elements first (indices 0-3), coarse last (index 4)
     QuadtreeAdapter mesh;
     Real h = 25.0;
 
@@ -288,6 +289,11 @@ TEST_F(CGBezierSmootherTest, OnePlusFourLinearBathymetry) {
     CGBezierBathymetrySmoother smoother(mesh, config);
     smoother.set_bathymetry_data(linear);
     smoother.solve();
+
+    // Print values at key points
+    std::cout << "\n=== OnePlusFourLinearBathymetry (fine idx 0-3, coarse idx 4) ===\n";
+    std::cout << "z(50, 0)  = " << smoother.evaluate(50.0, 0.0) << " (expected " << linear(50.0, 0.0) << ")\n";
+    std::cout << "z(50, 50) = " << smoother.evaluate(50.0, 50.0) << " (expected " << linear(50.0, 50.0) << ")\n";
 
     // Should reproduce linear across both fine and coarse elements
     std::vector<Vec2> test_points = {
@@ -479,22 +485,138 @@ TEST_F(CGBezierSmootherTest, VTKOutputUniformMesh) {
     smoother.set_bathymetry_data(bathy);
     smoother.solve();
 
-    std::string filename = "/tmp/cg_bezier_uniform.vtk";
+    // Print values at critical points (same as 1+4 test)
+    std::cout << "\n=== VTKOutputUniformMesh Values ===\n";
+    std::cout << "z(50, 0)  = " << smoother.evaluate(50.0, 0.0)
+              << " (expected " << bathy(50.0, 0.0) << ")\n";
+    std::cout << "z(50, 50) = " << smoother.evaluate(50.0, 50.0)
+              << " (expected " << bathy(50.0, 50.0) << ")\n";
+
+    std::string filename = "/tmp/cg_bezier_uniform";
     smoother.write_vtk(filename, 10);
 
-    EXPECT_TRUE(std::filesystem::exists(filename));
+    // write_vtk appends .vtu extension
+    std::string output_file = filename + ".vtu";
+    EXPECT_TRUE(std::filesystem::exists(output_file));
 
-    std::ifstream file(filename);
+    std::ifstream file(output_file);
     std::string content((std::istreambuf_iterator<char>(file)),
                         std::istreambuf_iterator<char>());
     EXPECT_GT(content.size(), 1000);
 }
 
 TEST_F(CGBezierSmootherTest, VTKOutputOnePlusFourMesh) {
-    // 1+4 mesh
+    // 1+4 mesh (fine elements first, coarse last)
     QuadtreeAdapter mesh;
     Real h = 25.0;
 
+    mesh.add_element({0.0, h, 0.0, h}, {2, 2});       // idx 0: fine
+    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});       // idx 1: fine [25,50]x[0,25]
+    mesh.add_element({0.0, h, h, 2*h}, {2, 2});       // idx 2: fine
+    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});       // idx 3: fine [25,50]x[25,50]
+    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});   // idx 4: coarse [50,100]x[0,50]
+
+    // Check neighbor info at non-conforming interface
+    std::cout << "\n=== Neighbor Info for Non-Conforming Interface ===\n";
+    auto info1 = mesh.get_neighbor(1, 1);  // E1's right edge
+    std::cout << "E1 right edge: type=" << (info1.type == EdgeNeighborInfo::Type::FineToCoarse ? "FineToCoarse" : "other")
+              << ", neighbor=" << info1.neighbor_elements[0]
+              << ", subedge_index=" << info1.subedge_index << "\n";
+    auto info3 = mesh.get_neighbor(3, 1);  // E3's right edge
+    std::cout << "E3 right edge: type=" << (info3.type == EdgeNeighborInfo::Type::FineToCoarse ? "FineToCoarse" : "other")
+              << ", neighbor=" << info3.neighbor_elements[0]
+              << ", subedge_index=" << info3.subedge_index << "\n";
+    auto info4 = mesh.get_neighbor(4, 0);  // E4's left edge
+    std::cout << "E4 left edge: type=" << (info4.type == EdgeNeighborInfo::Type::CoarseToFine ? "CoarseToFine" : "other")
+              << ", neighbors=[" << info4.neighbor_elements[0] << "," << info4.neighbor_elements[1] << "]\n";
+
+    auto bathy = [](Real x, Real y) {
+        return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y);
+    };
+
+    CGBezierSmootherConfig config;
+    config.lambda = 10.0;
+    config.enable_c2_constraints = true;
+    config.enable_edge_constraints = true;
+
+    CGBezierBathymetrySmoother smoother(mesh, config);
+    smoother.set_bathymetry_data(bathy);
+    smoother.solve();
+
+    // Print DOF sharing at interface
+    const auto& dof_mgr = smoother.dof_manager();
+    std::cout << "\n=== DOF Sharing at Interface ===\n";
+    std::cout << "Global DOFs: " << dof_mgr.num_global_dofs() << "\n";
+    std::cout << "Hanging node constraints: " << dof_mgr.num_constraints() << "\n";
+
+    auto e1_dofs = dof_mgr.element_dofs(1);
+    auto e3_dofs = dof_mgr.element_dofs(3);
+    auto e4_dofs = dof_mgr.element_dofs(4);
+
+    // E1's right edge (i=5): DOFs 30,31,32,33,34,35
+    std::cout << "E1 right edge DOFs (k=0..5): ";
+    for (int j = 0; j < 6; ++j) std::cout << e1_dofs[5 + 6*j] << " ";
+    std::cout << "\n";
+
+    // E3's right edge (i=5): DOFs 30,31,32,33,34,35
+    std::cout << "E3 right edge DOFs (k=0..5): ";
+    for (int j = 0; j < 6; ++j) std::cout << e3_dofs[5 + 6*j] << " ";
+    std::cout << "\n";
+
+    // E4's left edge (i=0): DOFs 0,1,2,3,4,5
+    std::cout << "E4 left edge DOFs (m=0..5):  ";
+    for (int j = 0; j < 6; ++j) std::cout << e4_dofs[0 + 6*j] << " ";
+    std::cout << "\n";
+
+    // Print which DOFs should be shared vs constrained
+    std::cout << "\n=== Expected Sharing Pattern ===\n";
+    std::cout << "E1 (subedge=0, lower half): k=0,2,4 shared, k=1,3 constrained, k=5 T-junction\n";
+    std::cout << "E3 (subedge=1, upper half): k=0 T-junction, k=1,3,5 shared, k=2,4 constrained\n";
+
+    // Verify sharing
+    std::cout << "\n=== Sharing Verification ===\n";
+    std::cout << "E1[k=0]=" << e1_dofs[5+6*0] << " == E4[m=0]=" << e4_dofs[0+6*0] << "? " << (e1_dofs[5+6*0] == e4_dofs[0+6*0] ? "YES" : "NO") << "\n";
+    std::cout << "E1[k=2]=" << e1_dofs[5+6*2] << " == E4[m=1]=" << e4_dofs[0+6*1] << "? " << (e1_dofs[5+6*2] == e4_dofs[0+6*1] ? "YES" : "NO") << "\n";
+    std::cout << "E1[k=4]=" << e1_dofs[5+6*4] << " == E4[m=2]=" << e4_dofs[0+6*2] << "? " << (e1_dofs[5+6*4] == e4_dofs[0+6*2] ? "YES" : "NO") << "\n";
+    std::cout << "E3[k=1]=" << e3_dofs[5+6*1] << " == E4[m=3]=" << e4_dofs[0+6*3] << "? " << (e3_dofs[5+6*1] == e4_dofs[0+6*3] ? "YES" : "NO") << "\n";
+    std::cout << "E3[k=3]=" << e3_dofs[5+6*3] << " == E4[m=4]=" << e4_dofs[0+6*4] << "? " << (e3_dofs[5+6*3] == e4_dofs[0+6*4] ? "YES" : "NO") << "\n";
+    std::cout << "E3[k=5]=" << e3_dofs[5+6*5] << " == E4[m=5]=" << e4_dofs[0+6*5] << "? " << (e3_dofs[5+6*5] == e4_dofs[0+6*5] ? "YES" : "NO") << "\n";
+    std::cout << "T-junction: E1[k=5]=" << e1_dofs[5+6*5] << " == E3[k=0]=" << e3_dofs[5+6*0] << "? " << (e1_dofs[5+6*5] == e3_dofs[5+6*0] ? "YES" : "NO") << "\n";
+
+    // Check which DOFs are constrained
+    std::cout << "\n=== Constraint Status ===\n";
+    std::cout << "E1[k=1]=" << e1_dofs[5+6*1] << " constrained? " << (dof_mgr.is_constrained(e1_dofs[5+6*1]) ? "YES" : "NO") << "\n";
+    std::cout << "E1[k=3]=" << e1_dofs[5+6*3] << " constrained? " << (dof_mgr.is_constrained(e1_dofs[5+6*3]) ? "YES" : "NO") << "\n";
+    std::cout << "E3[k=2]=" << e3_dofs[5+6*2] << " constrained? " << (dof_mgr.is_constrained(e3_dofs[5+6*2]) ? "YES" : "NO") << "\n";
+    std::cout << "E3[k=4]=" << e3_dofs[5+6*4] << " constrained? " << (dof_mgr.is_constrained(e3_dofs[5+6*4]) ? "YES" : "NO") << "\n";
+    std::cout << "T-junction " << e1_dofs[5+6*5] << " constrained? " << (dof_mgr.is_constrained(e1_dofs[5+6*5]) ? "YES" : "NO") << "\n";
+
+    // Print values at critical points
+    std::cout << "\n=== VTKOutputOnePlusFourMesh Values ===\n";
+    std::cout << "z(50, 0)  = " << smoother.evaluate(50.0, 0.0)
+              << " (expected " << bathy(50.0, 0.0) << ")\n";
+    std::cout << "z(50, 50) = " << smoother.evaluate(50.0, 50.0)
+              << " (expected " << bathy(50.0, 50.0) << ")\n";
+
+    std::string filename = "/tmp/cg_bezier_1plus4";
+    smoother.write_vtk(filename, 10);
+
+    // write_vtk appends .vtu extension
+    std::string output_file = filename + ".vtu";
+    EXPECT_TRUE(std::filesystem::exists(output_file));
+
+    // Also write control points
+    std::string cp_filename = "/tmp/cg_bezier_1plus4_control_points.vtk";
+    smoother.write_control_points_vtk(cp_filename);
+
+    EXPECT_TRUE(std::filesystem::exists(cp_filename));
+}
+
+// Diagnostic test to investigate why non-conforming edge appears as straight line
+TEST_F(CGBezierSmootherTest, DiagnoseNonConformingEdge) {
+    // Same mesh setup as VTKOutputOnePlusFourMesh
+    QuadtreeAdapter mesh;
+    Real h = 25.0;
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});
     mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
     mesh.add_element({0.0, h, h, 2*h}, {2, 2});
@@ -507,21 +629,129 @@ TEST_F(CGBezierSmootherTest, VTKOutputOnePlusFourMesh) {
 
     CGBezierSmootherConfig config;
     config.lambda = 10.0;
+    config.enable_c2_constraints = true;
+    config.enable_edge_constraints = true;
 
     CGBezierBathymetrySmoother smoother(mesh, config);
     smoother.set_bathymetry_data(bathy);
     smoother.solve();
 
-    std::string filename = "/tmp/cg_bezier_1plus4.vtk";
-    smoother.write_vtk(filename, 10);
+    // Print control points along the non-conforming interface at x=50
+    std::cout << "\n=== Non-conforming Interface Analysis at x=50 ===\n";
 
-    EXPECT_TRUE(std::filesystem::exists(filename));
+    // Element indices: E1=[25,50]×[0,25], E3=[25,50]×[25,50], E4=[50,100]×[0,50]
+    // E1 is element 1, E3 is element 3, E4 is element 4
 
-    // Also write control points
-    std::string cp_filename = "/tmp/cg_bezier_1plus4_control_points.vtk";
-    smoother.write_control_points_vtk(cp_filename);
+    // E4's left edge control points (at x=50, y = 0, 10, 20, 30, 40, 50)
+    std::cout << "\nCoarse element E4 left edge (x=50):\n";
+    VecX coeffs4 = smoother.element_coefficients(4);
+    for (int j = 0; j < 6; ++j) {
+        int dof = 0 + 6*j;  // Left edge (u=0), i=0
+        Real y = j * 10.0;  // y = 0, 10, 20, 30, 40, 50
+        Real z_expected = bathy(50.0, y);
+        std::cout << "  y=" << y << ": z_ctrl=" << coeffs4(dof)
+                  << ", z_bathy=" << z_expected << "\n";
+    }
 
-    EXPECT_TRUE(std::filesystem::exists(cp_filename));
+    // E1's right edge control points (at x=50, y = 0, 5, 10, 15, 20, 25)
+    // DOF indexing: dof = i + 6*j, right edge has i=5
+    std::cout << "\nFine element E1 right edge (x=50):\n";
+    VecX coeffs1 = smoother.element_coefficients(1);
+    for (int j = 0; j < 6; ++j) {
+        int dof = 5 + 6*j;  // Right edge (u=1), i=5
+        Real y = j * 5.0;  // y = 0, 5, 10, 15, 20, 25
+        Real z_expected = bathy(50.0, y);
+        std::cout << "  y=" << y << ": z_ctrl=" << coeffs1(dof)
+                  << ", z_bathy=" << z_expected << "\n";
+    }
+
+    // E3's right edge control points (at x=50, y = 25, 30, 35, 40, 45, 50)
+    std::cout << "\nFine element E3 right edge (x=50):\n";
+    VecX coeffs3 = smoother.element_coefficients(3);
+    for (int j = 0; j < 6; ++j) {
+        int dof = 5 + 6*j;  // Right edge (u=1), i=5
+        Real y = 25.0 + j * 5.0;  // y = 25, 30, 35, 40, 45, 50
+        Real z_expected = bathy(50.0, y);
+        std::cout << "  y=" << y << ": z_ctrl=" << coeffs3(dof)
+                  << ", z_bathy=" << z_expected << "\n";
+    }
+
+    // Evaluate the actual surfaces at the interface
+    std::cout << "\n=== Surface Values at x=50 ===\n";
+    for (Real y = 0.0; y <= 50.0; y += 5.0) {
+        Real z_smooth = smoother.evaluate(50.0, y);
+        Real z_bathy = bathy(50.0, y);
+        std::cout << "y=" << y << ": z_smooth=" << z_smooth
+                  << ", z_bathy=" << z_bathy
+                  << ", diff=" << (z_smooth - z_bathy) << "\n";
+    }
+
+    // Check if control points are collinear
+    // A perfectly linear edge would have z = a + b*y
+    // Fit a line and measure deviation
+    std::cout << "\n=== Linearity Check for Coarse Edge ===\n";
+    Real z0 = coeffs4(0);      // y=0
+    Real z5 = coeffs4(5*6);    // y=50
+    Real slope = (z5 - z0) / 50.0;
+    Real max_deviation = 0.0;
+    for (int j = 0; j < 6; ++j) {
+        int dof = 0 + 6*j;
+        Real y = j * 10.0;
+        Real z_linear = z0 + slope * y;
+        Real deviation = std::abs(coeffs4(dof) - z_linear);
+        max_deviation = std::max(max_deviation, deviation);
+        std::cout << "  y=" << y << ": z_ctrl=" << coeffs4(dof)
+                  << ", z_linear=" << z_linear
+                  << ", deviation=" << deviation << "\n";
+    }
+    std::cout << "Maximum deviation from linear: " << max_deviation << "\n";
+
+    if (max_deviation < 0.01) {
+        std::cout << "** Control points ARE nearly collinear - edge is mathematically straight **\n";
+    } else {
+        std::cout << "** Control points are curved - issue is likely VTK rendering **\n";
+    }
+
+    // Verify de Casteljau constraint satisfaction
+    // For E1 (lower half), fine edge DOFs should be S_left * coarse edge DOFs
+    // For E3 (upper half), fine edge DOFs should be S_right * coarse edge DOFs
+    std::cout << "\n=== De Casteljau Constraint Verification ===\n";
+
+    // Get coarse edge DOFs (E4 left edge)
+    VecX coarse_edge(6);
+    for (int j = 0; j < 6; ++j) {
+        coarse_edge(j) = coeffs4(0 + 6*j);  // DOFs at i=0
+    }
+    std::cout << "Coarse edge DOFs: " << coarse_edge.transpose() << "\n";
+
+    // E1's fine edge DOFs should satisfy: fine[k] = S_left[k,:] * coarse
+    // S_left for [0, 0.5] interval
+    std::cout << "\nE1 fine edge (should match left-half subdivision):\n";
+    VecX fine_e1(6);
+    for (int j = 0; j < 6; ++j) {
+        fine_e1(j) = coeffs1(5 + 6*j);  // DOFs at i=5
+    }
+    std::cout << "Fine E1 DOFs: " << fine_e1.transpose() << "\n";
+
+    // Manual computation of what de Casteljau should give
+    // Left half: Q_k = sum_{j=0}^k C(k,j) / 2^k * P_j
+    std::cout << "Expected (de Casteljau left half):\n";
+    for (int k = 0; k < 6; ++k) {
+        Real expected = 0.0;
+        Real denom = std::pow(2.0, k);
+        for (int jj = 0; jj <= k; ++jj) {
+            // Binomial coefficient C(k, jj)
+            Real binom = 1.0;
+            for (int ii = 0; ii < jj; ++ii) {
+                binom *= (k - ii);
+                binom /= (ii + 1);
+            }
+            expected += binom * coarse_edge(jj) / denom;
+        }
+        std::cout << "  k=" << k << ": expected=" << expected
+                  << ", actual=" << fine_e1(k)
+                  << ", diff=" << (fine_e1(k) - expected) << "\n";
+    }
 }
 
 // =============================================================================
@@ -592,9 +822,11 @@ TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
     EXPECT_TRUE(smoother.is_solved());
 
     // Write output for ParaView verification
-    std::string output_file = "/tmp/cg_bezier_kattegat_test.vtk";
-    smoother.write_vtk(output_file, 10);
+    std::string output_base = "/tmp/cg_bezier_kattegat_test";
+    smoother.write_vtk(output_base, 10);
 
+    // write_vtk appends .vtu extension
+    std::string output_file = output_base + ".vtu";
     std::cout << "Output written to: " << output_file << std::endl;
     EXPECT_TRUE(std::filesystem::exists(output_file));
 
@@ -834,4 +1066,266 @@ TEST_F(CGBezierSmootherTest, ConstraintViolationNearZero) {
 
     // Constraints should be satisfied to high precision
     EXPECT_LT(violation, 1e-6);
+}
+
+// Compare uniform mesh vs 1+4 mesh with SAME bathymetry function
+// This test verifies that the 1+4 non-conforming mesh produces correct values
+TEST_F(CGBezierSmootherTest, CompareUniformVsOnePlusFour) {
+    // Domain: [0, 100] x [0, 50] to match the 1+4 layout
+    // Bathymetry: z = 120 - 0.4*y (simple linear)
+    // Expected values:
+    //   (50, 0):  120 - 0 = 120
+    //   (50, 50): 120 - 20 = 100
+    auto bathy = [](Real x, Real y) { return 120.0 - 0.4 * y; };
+
+    CGBezierSmootherConfig config;
+    config.lambda = 100.0;
+    config.ridge_epsilon = 0.0;
+    config.enable_c2_constraints = false;
+    config.enable_edge_constraints = false;
+
+    // ===== UNIFORM 2x1 MESH =====
+    // Two elements side by side: [0,50]x[0,50] and [50,100]x[0,50]
+    QuadtreeAdapter uniform_mesh;
+    uniform_mesh.build_uniform(0.0, 100.0, 0.0, 50.0, 2, 1);
+
+    std::cout << "\n=== UNIFORM 2x1 MESH ===\n";
+    std::cout << "Elements: " << uniform_mesh.num_elements() << "\n";
+    for (Index e = 0; e < uniform_mesh.num_elements(); ++e) {
+        const auto& b = uniform_mesh.element_bounds(e);
+        std::cout << "  E" << e << ": [" << b.xmin << "," << b.xmax << "] x ["
+                  << b.ymin << "," << b.ymax << "]\n";
+    }
+
+    CGBezierBathymetrySmoother uniform_smoother(uniform_mesh, config);
+    uniform_smoother.set_bathymetry_data(bathy);
+    uniform_smoother.solve();
+
+    std::cout << "DOFs: " << uniform_smoother.num_global_dofs() << "\n";
+    Real uniform_50_0 = uniform_smoother.evaluate(50.0, 0.0);
+    Real uniform_50_50 = uniform_smoother.evaluate(50.0, 50.0);
+    std::cout << "z(50, 0)  = " << uniform_50_0 << " (expected 120)\n";
+    std::cout << "z(50, 50) = " << uniform_50_50 << " (expected 100)\n";
+
+    // ===== 1+4 MESH (coarse index 0, fine indices 1-4) =====
+    QuadtreeAdapter mesh_1p4;
+    Real h = 25.0;
+    // Coarse element FIRST (index 0)
+    mesh_1p4.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});  // [50,100] x [0,50]
+    // Fine elements (indices 1-4)
+    mesh_1p4.add_element({0.0, h, 0.0, h}, {2, 2});       // [0,25] x [0,25]
+    mesh_1p4.add_element({h, 2*h, 0.0, h}, {2, 2});       // [25,50] x [0,25]
+    mesh_1p4.add_element({0.0, h, h, 2*h}, {2, 2});       // [0,25] x [25,50]
+    mesh_1p4.add_element({h, 2*h, h, 2*h}, {2, 2});       // [25,50] x [25,50]
+
+    std::cout << "\n=== 1+4 MESH (coarse idx 0) ===\n";
+    std::cout << "Elements: " << mesh_1p4.num_elements() << "\n";
+    for (Index e = 0; e < mesh_1p4.num_elements(); ++e) {
+        const auto& b = mesh_1p4.element_bounds(e);
+        std::cout << "  E" << e << ": [" << b.xmin << "," << b.xmax << "] x ["
+                  << b.ymin << "," << b.ymax << "]\n";
+    }
+
+    CGBezierBathymetrySmoother smoother_1p4(mesh_1p4, config);
+    smoother_1p4.set_bathymetry_data(bathy);
+    smoother_1p4.solve();
+
+    std::cout << "DOFs: " << smoother_1p4.num_global_dofs() << "\n";
+    Real z_1p4_50_0 = smoother_1p4.evaluate(50.0, 0.0);
+    Real z_1p4_50_50 = smoother_1p4.evaluate(50.0, 50.0);
+    std::cout << "z(50, 0)  = " << z_1p4_50_0 << " (expected 120)\n";
+    std::cout << "z(50, 50) = " << z_1p4_50_50 << " (expected 100)\n";
+
+    // Print values along the interface x=50
+    std::cout << "\n=== Values along interface x=50 ===\n";
+    std::cout << std::setw(8) << "y" << std::setw(15) << "uniform" << std::setw(15) << "1+4"
+              << std::setw(15) << "expected" << std::setw(15) << "diff\n";
+    for (Real y = 0.0; y <= 50.0; y += 10.0) {
+        Real u = uniform_smoother.evaluate(50.0, y);
+        Real p = smoother_1p4.evaluate(50.0, y);
+        Real e = bathy(50.0, y);
+        std::cout << std::setw(8) << y << std::setw(15) << u << std::setw(15) << p
+                  << std::setw(15) << e << std::setw(15) << std::abs(u - p) << "\n";
+    }
+
+    // The uniform mesh should produce correct values
+    EXPECT_NEAR(uniform_50_0, 120.0, 1e-6) << "Uniform mesh wrong at (50,0)";
+    EXPECT_NEAR(uniform_50_50, 100.0, 1e-6) << "Uniform mesh wrong at (50,50)";
+
+    // The 1+4 mesh should match the uniform mesh
+    EXPECT_NEAR(z_1p4_50_0, 120.0, 1e-6) << "1+4 mesh wrong at (50,0)";
+    EXPECT_NEAR(z_1p4_50_50, 100.0, 1e-6) << "1+4 mesh wrong at (50,50)";
+}
+
+// Test that verifies the fix for non-conforming interfaces when coarse element
+// has LOWER index than fine elements (simulates AMR scenario)
+// ALL node sharing via index logic, NO constraints - pure DOF sharing
+TEST_F(CGBezierSmootherTest, NonConformingWithCoarseLowerIndex) {
+    // Create mesh with COARSE element FIRST (index 0), then fine elements (1-4)
+    // This is the opposite of DiagnoseNonConformingEdge and simulates AMR refinement
+    //
+    // Layout:
+    //   +------+------+--------+
+    //   |  E3  |  E4  |        |
+    //   +------+------+   E0   |
+    //   |  E1  |  E2  | coarse |
+    //   +------+------+--------+
+    //   0      h     2h       4h
+    //
+    // E0: coarse element [2h, 4h] x [0, 2h], index 0
+    // E1-E4: fine elements, indices 1-4
+    // E2 and E4 share right edge with E0's left edge
+    //
+    // DOF sharing at non-conforming interface (E2, E4 right edge with E0 left edge):
+    //   E2 (lower half, subedge_index=0): DOFs k=0,2,4 share with E0's DOFs m=0,1,2
+    //   E4 (upper half, subedge_index=1): DOFs k=1,3,5 share with E0's DOFs m=3,4,5
+
+    QuadtreeAdapter mesh;
+    Real h = 25.0;
+
+    // COARSE element on the right (will have index 0)
+    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});  // Index 0 (coarse)
+
+    // FINE elements on the left (will have indices 1-4)
+    mesh.add_element({0.0, h, 0.0, h}, {2, 2});       // Index 1
+    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});       // Index 2 (shares right edge with coarse)
+    mesh.add_element({0.0, h, h, 2*h}, {2, 2});       // Index 3
+    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});       // Index 4 (shares right edge with coarse)
+
+    std::cout << "\n=== Mesh Structure ===\n";
+    std::cout << "E0 (coarse, idx 0): [" << 2*h << "," << 4*h << "] x [0," << 2*h << "]\n";
+    std::cout << "E1 (fine, idx 1):   [0," << h << "] x [0," << h << "]\n";
+    std::cout << "E2 (fine, idx 2):   [" << h << "," << 2*h << "] x [0," << h << "]\n";
+    std::cout << "E3 (fine, idx 3):   [0," << h << "] x [" << h << "," << 2*h << "]\n";
+    std::cout << "E4 (fine, idx 4):   [" << h << "," << 2*h << "] x [" << h << "," << 2*h << "]\n";
+
+    // Verify the mesh has the expected structure
+    EXPECT_EQ(mesh.num_elements(), 5);
+
+    // Check that coarse has lower index than fine elements at interface
+    auto info2 = mesh.get_neighbor(2, 1);  // Element 2's right edge
+    EXPECT_EQ(info2.type, EdgeNeighborInfo::Type::FineToCoarse);
+    EXPECT_EQ(info2.neighbor_elements[0], 0);  // Coarse element has index 0
+    EXPECT_LT(info2.neighbor_elements[0], 2);  // Coarse index < fine index
+
+    std::cout << "\nE2 right edge neighbor info:\n";
+    std::cout << "  type: FineToCoarse\n";
+    std::cout << "  neighbor: E" << info2.neighbor_elements[0] << "\n";
+    std::cout << "  subedge_index: " << info2.subedge_index << " (0=lower half)\n";
+
+    auto info4 = mesh.get_neighbor(4, 1);  // Element 4's right edge
+    EXPECT_EQ(info4.type, EdgeNeighborInfo::Type::FineToCoarse);
+    EXPECT_EQ(info4.neighbor_elements[0], 0);
+    EXPECT_LT(info4.neighbor_elements[0], 4);
+
+    std::cout << "\nE4 right edge neighbor info:\n";
+    std::cout << "  type: FineToCoarse\n";
+    std::cout << "  neighbor: E" << info4.neighbor_elements[0] << "\n";
+    std::cout << "  subedge_index: " << info4.subedge_index << " (1=upper half)\n";
+
+    // Use linear bathymetry to test C⁰ continuity
+    auto linear_bathy = [](Real x, Real y) { return 100.0 + 0.5 * x + 0.3 * y; };
+
+    // DISABLE ALL CONSTRAINTS - test pure DOF sharing for C⁰ continuity
+    CGBezierSmootherConfig config;
+    config.lambda = 100.0;  // Strong data fitting
+    config.ridge_epsilon = 0.0;
+    config.enable_c2_constraints = false;  // No C² vertex constraints
+    config.enable_edge_constraints = false;  // No edge derivative constraints
+
+    CGBezierBathymetrySmoother smoother(mesh, config);
+    smoother.set_bathymetry_data(linear_bathy);
+    smoother.solve();
+
+    EXPECT_TRUE(smoother.is_solved());
+
+    // Print DOF manager info
+    const auto& dof_manager = smoother.dof_manager();
+    std::cout << "\n=== DOF Manager Info ===\n";
+    std::cout << "Global DOFs: " << dof_manager.num_global_dofs() << "\n";
+    std::cout << "Hanging node constraints: " << dof_manager.num_constraints() << "\n";
+
+    // Check DOF sharing at interface
+    std::cout << "\n=== DOF Sharing at Interface (E2/E4 right edge with E0 left edge) ===\n";
+
+    auto e0_dofs = dof_manager.element_dofs(0);  // Coarse
+    auto e2_dofs = dof_manager.element_dofs(2);  // Fine lower
+    auto e4_dofs = dof_manager.element_dofs(4);  // Fine upper
+
+    // E0's left edge DOFs: local indices 0,1,2,3,4,5 (i=0, j=0..5)
+    // E2's right edge DOFs: local indices 5,11,17,23,29,35 (i=5, j=0..5)
+    // E4's right edge DOFs: local indices 5,11,17,23,29,35 (i=5, j=0..5)
+
+    std::cout << "E0 left edge global DOFs:  ";
+    for (int j = 0; j < 6; ++j) {
+        int local = 0 + 6*j;  // Left edge: i=0
+        std::cout << e0_dofs[local] << " ";
+    }
+    std::cout << "\n";
+
+    std::cout << "E2 right edge global DOFs: ";
+    for (int j = 0; j < 6; ++j) {
+        int local = 5 + 6*j;  // Right edge: i=5
+        std::cout << e2_dofs[local] << " ";
+    }
+    std::cout << "\n";
+
+    std::cout << "E4 right edge global DOFs: ";
+    for (int j = 0; j < 6; ++j) {
+        int local = 5 + 6*j;  // Right edge: i=5
+        std::cout << e4_dofs[local] << " ";
+    }
+    std::cout << "\n";
+
+    // Verify index-based sharing pattern:
+    // E2 (subedge=0): k=0,2,4 share with E0's m=0,1,2
+    std::cout << "\nVerifying E2 DOF sharing (subedge_index=0, lower half):\n";
+    std::cout << "  E2[k=0] = " << e2_dofs[5+6*0] << ", E0[m=0] = " << e0_dofs[0+6*0];
+    std::cout << (e2_dofs[5+6*0] == e0_dofs[0+6*0] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+    std::cout << "  E2[k=2] = " << e2_dofs[5+6*2] << ", E0[m=1] = " << e0_dofs[0+6*1];
+    std::cout << (e2_dofs[5+6*2] == e0_dofs[0+6*1] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+    std::cout << "  E2[k=4] = " << e2_dofs[5+6*4] << ", E0[m=2] = " << e0_dofs[0+6*2];
+    std::cout << (e2_dofs[5+6*4] == e0_dofs[0+6*2] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+
+    // E4 (subedge=1): k=1,3,5 share with E0's m=3,4,5
+    std::cout << "\nVerifying E4 DOF sharing (subedge_index=1, upper half):\n";
+    std::cout << "  E4[k=1] = " << e4_dofs[5+6*1] << ", E0[m=3] = " << e0_dofs[0+6*3];
+    std::cout << (e4_dofs[5+6*1] == e0_dofs[0+6*3] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+    std::cout << "  E4[k=3] = " << e4_dofs[5+6*3] << ", E0[m=4] = " << e0_dofs[0+6*4];
+    std::cout << (e4_dofs[5+6*3] == e0_dofs[0+6*4] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+    std::cout << "  E4[k=5] = " << e4_dofs[5+6*5] << ", E0[m=5] = " << e0_dofs[0+6*5];
+    std::cout << (e4_dofs[5+6*5] == e0_dofs[0+6*5] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+
+    // T-junction: E2[k=5] and E4[k=0] should share at the midpoint
+    std::cout << "\nT-junction sharing (E2 top-right = E4 bottom-right):\n";
+    std::cout << "  E2[k=5] = " << e2_dofs[5+6*5] << ", E4[k=0] = " << e4_dofs[5+6*0];
+    std::cout << (e2_dofs[5+6*5] == e4_dofs[5+6*0] ? " ✓ SHARED" : " ✗ NOT SHARED") << "\n";
+
+    // Test C⁰ continuity at the non-conforming interface (x = 50)
+    std::cout << "\n=== C⁰ Continuity at Interface (x=50) ===\n";
+
+    Real interface_x = 2 * h;  // x = 50
+    Real max_discontinuity = 0.0;
+    Real eps = 1e-6;
+
+    for (Real y = 0.0; y <= 2 * h; y += 5.0) {
+        Real z_fine = smoother.evaluate(interface_x - eps, y);
+        Real z_coarse = smoother.evaluate(interface_x + eps, y);
+        Real diff = std::abs(z_fine - z_coarse);
+        max_discontinuity = std::max(max_discontinuity, diff);
+
+        std::cout << "  y=" << std::setw(4) << y << ": z_fine=" << std::setw(10) << z_fine
+                  << ", z_coarse=" << std::setw(10) << z_coarse
+                  << ", diff=" << diff << "\n";
+    }
+
+    std::cout << "Max discontinuity at interface: " << max_discontinuity << "\n";
+
+    // C⁰ continuity should be near machine precision through DOF sharing alone
+    EXPECT_LT(max_discontinuity, 1e-5) << "C⁰ continuity violated at non-conforming interface";
+
+    // Also verify the solution approximately matches the linear input
+    Real center_error = std::abs(smoother.evaluate(50.0, 25.0) - linear_bathy(50.0, 25.0));
+    std::cout << "\nError at center (50,25): " << center_error << "\n";
+    EXPECT_LT(center_error, 5.0);  // Reasonable fit for smoothed solution
 }

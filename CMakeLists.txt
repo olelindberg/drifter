@@ -149,6 +149,7 @@ set(BATHYMETRY_SOURCES
     # CG Bezier bathymetry smoother
     src/bathymetry/cg_bezier_dof_manager.cpp
     src/bathymetry/cg_bezier_bathymetry_smoother.cpp
+    src/bathymetry/adaptive_cg_bezier_smoother.cpp
 )
 
 set(DG_SOURCES
