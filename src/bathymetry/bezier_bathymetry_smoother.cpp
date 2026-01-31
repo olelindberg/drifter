@@ -38,6 +38,11 @@ void BezierBathymetrySmoother::init_components() {
     hessian_ = std::make_unique<ThinPlateHessian>(config_.ngauss_energy, config_.gradient_weight);
     constraint_builder_ = std::make_unique<BezierC2ConstraintBuilder>(*quadtree_);
     data_assembler_ = std::make_unique<BezierDataFittingAssembler>(*quadtree_);
+
+    // Configure edge derivative constraints if enabled
+    if (config_.enable_edge_derivative_constraints) {
+        constraint_builder_->set_edge_derivative_constraints(true, config_.edge_ngauss);
+    }
 }
 
 void BezierBathymetrySmoother::set_bathymetry_data(const BathymetrySource& source) {
@@ -316,10 +321,13 @@ void BezierBathymetrySmoother::solve_kkt() {
     }
 
     // Build constraint matrix
-    // If natural BCs are enabled, use C² + natural BC constraints
-    // Otherwise, just C² constraints
+    // Priority: edge derivative constraints > natural BCs > just C²
+    // Edge derivative constraints include C² + natural BC + edge derivatives
     SpMat A_constraints;
-    if (config_.enable_natural_bc) {
+    if (config_.enable_edge_derivative_constraints) {
+        // Use all constraints including edge derivative constraints
+        A_constraints = constraint_builder_->build_all_constraints_matrix();
+    } else if (config_.enable_natural_bc) {
         A_constraints = constraint_builder_->build_c2_and_natural_bc_matrix();
     } else {
         A_constraints = constraint_builder_->build_constraint_matrix();
@@ -981,10 +989,18 @@ Real BezierBathymetrySmoother::objective_value() const {
 Real BezierBathymetrySmoother::constraint_violation() const {
     if (!solved_) return 0.0;
 
-    // C² constraint violation
-    SpMat A_c2 = constraint_builder_->build_constraint_matrix();
-    VecX c2_violation = A_c2 * solution_;
-    Real total_sq = c2_violation.squaredNorm();
+    // Build constraint matrix matching what was used in solve()
+    SpMat A_constraints;
+    if (config_.enable_edge_derivative_constraints) {
+        A_constraints = constraint_builder_->build_all_constraints_matrix();
+    } else if (config_.enable_natural_bc) {
+        A_constraints = constraint_builder_->build_c2_and_natural_bc_matrix();
+    } else {
+        A_constraints = constraint_builder_->build_constraint_matrix();
+    }
+
+    VecX constraint_violation_vec = A_constraints * solution_;
+    Real total_sq = constraint_violation_vec.squaredNorm();
 
     // Dirichlet constraint violation: solution(dof) should equal depth
     if (config_.enable_boundary_dirichlet && data_assembler_->has_bathymetry_function()) {

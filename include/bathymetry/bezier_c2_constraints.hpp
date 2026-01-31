@@ -81,6 +81,25 @@ struct EdgeConstraintInfo {
     int edge2;            ///< Edge ID (0-3) on elem2
 };
 
+/// @brief Edge derivative constraint at a Gauss quadrature point
+///
+/// Enforces normal derivative continuity (z_n, z_nn) at Gauss points along
+/// shared conforming edges. This eliminates ridges at element boundaries
+/// that can occur when only vertex C² constraints are used.
+struct EdgeDerivativeConstraintInfo {
+    Index elem1;          ///< First element sharing the edge
+    Index elem2;          ///< Second element sharing the edge
+    int edge1;            ///< Edge ID (0=left, 1=right, 2=bottom, 3=top) on elem1
+    int edge2;            ///< Edge ID on elem2
+    Real t;               ///< Parameter position along edge [0, 1]
+    int nu;               ///< Derivative order in u direction
+    int nv;               ///< Derivative order in v direction
+    Vec2 param1;          ///< Parameter coords (u,v) on elem1
+    Vec2 param2;          ///< Parameter coords (u,v) on elem2
+    Real scale1;          ///< Physical scale factor for elem1 (dx^nu * dy^nv)
+    Real scale2;          ///< Physical scale factor for elem2 (dx^nu * dy^nv)
+};
+
 /// @brief Constraint info for natural boundary condition (z_nn = 0)
 ///
 /// Natural boundary conditions enforce zero normal curvature at boundary DOFs.
@@ -234,6 +253,52 @@ public:
         return num_constraints() + num_natural_bc_constraints();
     }
 
+    // =========================================================================
+    // Edge derivative constraint support (z_n, z_nn at Gauss points)
+    // =========================================================================
+
+    /// @brief Enable/disable edge derivative constraints
+    /// @param enable Whether to enable edge derivative constraints
+    /// @param ngauss Number of Gauss points per edge (2, 3, or 4)
+    void set_edge_derivative_constraints(bool enable, int ngauss = 4);
+
+    /// @brief Build edge derivative constraints at Gauss points along conforming edges
+    ///
+    /// For each conforming interior edge (same-size elements), creates constraints
+    /// at Gauss quadrature points enforcing:
+    ///   - Horizontal edges (v=const): z_v and z_vv continuity
+    ///   - Vertical edges (u=const): z_u and z_uu continuity
+    void build_edge_derivative_constraints() const;
+
+    /// @brief Get all edge derivative constraints
+    const std::vector<EdgeDerivativeConstraintInfo>& edge_derivative_constraints() const {
+        if (enable_edge_derivative_constraints_ && !edge_derivative_built_) {
+            build_edge_derivative_constraints();
+        }
+        return edge_derivative_constraints_;
+    }
+
+    /// @brief Get number of edge derivative constraints
+    Index num_edge_derivative_constraints() const {
+        if (enable_edge_derivative_constraints_ && !edge_derivative_built_) {
+            build_edge_derivative_constraints();
+        }
+        return static_cast<Index>(edge_derivative_constraints_.size());
+    }
+
+    /// @brief Build constraint matrix for edge derivatives only
+    /// @return Sparse matrix (num_edge_derivative_constraints x total_dofs)
+    SpMat build_edge_derivative_matrix() const;
+
+    /// @brief Build combined matrix: C² + natural BC + edge derivative constraints
+    /// @return Sparse matrix with all constraint types
+    SpMat build_all_constraints_matrix() const;
+
+    /// @brief Get total number of all constraints
+    Index num_all_constraints() const {
+        return num_c2_and_natural_bc_constraints() + num_edge_derivative_constraints();
+    }
+
 private:
     const QuadtreeAdapter& mesh_;
     std::unique_ptr<BezierBasis2D> basis_;
@@ -252,6 +317,12 @@ private:
     /// Cached natural BC constraints
     mutable std::vector<NaturalBCConstraintInfo> natural_bc_constraints_;
     mutable bool natural_bc_built_ = false;
+
+    /// Edge derivative constraints configuration and cache
+    bool enable_edge_derivative_constraints_ = false;
+    int edge_ngauss_ = 4;
+    mutable std::vector<EdgeDerivativeConstraintInfo> edge_derivative_constraints_;
+    mutable bool edge_derivative_built_ = false;
 
     /// Find all shared vertices and hanging nodes
     void find_all_constraints() const;
@@ -336,6 +407,21 @@ private:
     /// @param edge Edge ID (0=left, 1=right, 2=bottom, 3=top)
     /// @return Vector of local DOF indices (6 DOFs for quintic Bezier)
     std::vector<int> edge_dofs(int edge) const;
+
+    /// Get parameter coordinates for a point on an edge
+    /// @param edge Edge ID (0=left, 1=right, 2=bottom, 3=top)
+    /// @param t Parameter position along edge [0, 1]
+    /// @return Parameter coordinates (u, v) in [0,1]²
+    Vec2 get_edge_param(int edge, Real t) const;
+
+    /// Add edge derivative constraints to triplets
+    /// @param info Edge derivative constraint info
+    /// @param triplets Output triplets for sparse matrix
+    /// @param constraint_idx Current constraint row index (updated)
+    void add_edge_derivative_constraint(
+        const EdgeDerivativeConstraintInfo& info,
+        std::vector<Eigen::Triplet<Real>>& triplets,
+        Index& constraint_idx) const;
 };
 
 }  // namespace drifter

@@ -1105,4 +1105,239 @@ SpMat BezierC2ConstraintBuilder::build_c2_and_natural_bc_matrix() const {
     return A_combined;
 }
 
+// =============================================================================
+// Edge derivative constraint implementation
+// =============================================================================
+
+void BezierC2ConstraintBuilder::set_edge_derivative_constraints(bool enable, int ngauss) {
+    enable_edge_derivative_constraints_ = enable;
+    edge_ngauss_ = ngauss;
+    edge_derivative_built_ = false;  // Force rebuild
+    edge_derivative_constraints_.clear();
+}
+
+Vec2 BezierC2ConstraintBuilder::get_edge_param(int edge, Real t) const {
+    // Map parameter t in [0, 1] to (u, v) coordinates on the edge
+    // Edge 0: left (u=0),   v varies from 0 to 1
+    // Edge 1: right (u=1),  v varies from 0 to 1
+    // Edge 2: bottom (v=0), u varies from 0 to 1
+    // Edge 3: top (v=1),    u varies from 0 to 1
+    switch (edge) {
+        case 0:  // Left edge
+            return Vec2(0.0, t);
+        case 1:  // Right edge
+            return Vec2(1.0, t);
+        case 2:  // Bottom edge
+            return Vec2(t, 0.0);
+        case 3:  // Top edge
+            return Vec2(t, 1.0);
+        default:
+            return Vec2(0.5, 0.5);
+    }
+}
+
+void BezierC2ConstraintBuilder::build_edge_derivative_constraints() const {
+    if (edge_derivative_built_) return;
+
+    edge_derivative_constraints_.clear();
+
+    // Build a map from edge midpoints to (element, edge_id) pairs
+    // This identifies which elements share each edge
+    const Real scale = 1e8;
+    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<Index, int>>> edge_map;
+
+    for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
+        for (int edge = 0; edge < 4; ++edge) {
+            const auto& bounds = mesh_.element_bounds(elem);
+            Vec2 midpoint;
+            switch (edge) {
+                case 0:  // Left edge (u=0)
+                    midpoint = Vec2(bounds.xmin, 0.5 * (bounds.ymin + bounds.ymax));
+                    break;
+                case 1:  // Right edge (u=1)
+                    midpoint = Vec2(bounds.xmax, 0.5 * (bounds.ymin + bounds.ymax));
+                    break;
+                case 2:  // Bottom edge (v=0)
+                    midpoint = Vec2(0.5 * (bounds.xmin + bounds.xmax), bounds.ymin);
+                    break;
+                case 3:  // Top edge (v=1)
+                    midpoint = Vec2(0.5 * (bounds.xmin + bounds.xmax), bounds.ymax);
+                    break;
+            }
+            int64_t qx = static_cast<int64_t>(std::round(midpoint(0) * scale));
+            int64_t qy = static_cast<int64_t>(std::round(midpoint(1) * scale));
+            edge_map[{qx, qy}].push_back({elem, edge});
+        }
+    }
+
+    // Gauss-Legendre points on [0, 1]
+    std::vector<Real> gauss_pts(edge_ngauss_);
+    if (edge_ngauss_ == 2) {
+        gauss_pts[0] = 0.5 - 0.5 / std::sqrt(3.0);
+        gauss_pts[1] = 0.5 + 0.5 / std::sqrt(3.0);
+    } else if (edge_ngauss_ == 3) {
+        gauss_pts[0] = 0.5 - 0.5 * std::sqrt(0.6);
+        gauss_pts[1] = 0.5;
+        gauss_pts[2] = 0.5 + 0.5 * std::sqrt(0.6);
+    } else {
+        // Default to 4 points
+        Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        gauss_pts.resize(4);
+        gauss_pts[0] = 0.5 * (1.0 - b);
+        gauss_pts[1] = 0.5 * (1.0 - a);
+        gauss_pts[2] = 0.5 * (1.0 + a);
+        gauss_pts[3] = 0.5 * (1.0 + b);
+    }
+
+    // For each shared edge (exactly 2 elements = conforming), create constraints
+    for (const auto& [key, elem_edges] : edge_map) {
+        if (elem_edges.size() != 2) {
+            continue;  // Skip boundary edges (1) and non-conforming (>2)
+        }
+
+        Index elem1 = elem_edges[0].first;
+        int edge1 = elem_edges[0].second;
+        Index elem2 = elem_edges[1].first;
+        int edge2 = elem_edges[1].second;
+
+        // Get element sizes
+        const auto& bounds1 = mesh_.element_bounds(elem1);
+        const auto& bounds2 = mesh_.element_bounds(elem2);
+        Real dx1 = bounds1.xmax - bounds1.xmin;
+        Real dy1 = bounds1.ymax - bounds1.ymin;
+        Real dx2 = bounds2.xmax - bounds2.xmin;
+        Real dy2 = bounds2.ymax - bounds2.ymin;
+
+        // Skip non-conforming edges (different sizes)
+        bool is_horizontal = (edge1 == 2 || edge1 == 3);
+        if (is_horizontal) {
+            if (std::abs(dx1 - dx2) > 1e-10 * std::max(dx1, dx2)) {
+                continue;
+            }
+        } else {
+            if (std::abs(dy1 - dy2) > 1e-10 * std::max(dy1, dy2)) {
+                continue;
+            }
+        }
+
+        // Derivative orders to constrain
+        // For horizontal edges: z_v, z_vv (normal derivatives)
+        // For vertical edges: z_u, z_uu (normal derivatives)
+        std::vector<std::pair<int, int>> deriv_orders;
+        if (is_horizontal) {
+            deriv_orders = {{0, 1}, {0, 2}};  // z_v, z_vv
+        } else {
+            deriv_orders = {{1, 0}, {2, 0}};  // z_u, z_uu
+        }
+
+        // Add constraints at each Gauss point
+        for (Real t : gauss_pts) {
+            Vec2 param1 = get_edge_param(edge1, t);
+            Vec2 param2 = get_edge_param(edge2, t);
+
+            for (const auto& [nu, nv] : deriv_orders) {
+                EdgeDerivativeConstraintInfo info;
+                info.elem1 = elem1;
+                info.elem2 = elem2;
+                info.edge1 = edge1;
+                info.edge2 = edge2;
+                info.t = t;
+                info.nu = nu;
+                info.nv = nv;
+                info.param1 = param1;
+                info.param2 = param2;
+                info.scale1 = std::pow(dx1, nu) * std::pow(dy1, nv);
+                info.scale2 = std::pow(dx2, nu) * std::pow(dy2, nv);
+
+                edge_derivative_constraints_.push_back(info);
+            }
+        }
+    }
+
+    edge_derivative_built_ = true;
+}
+
+void BezierC2ConstraintBuilder::add_edge_derivative_constraint(
+    const EdgeDerivativeConstraintInfo& info,
+    std::vector<Eigen::Triplet<Real>>& triplets,
+    Index& constraint_idx) const
+{
+    // Evaluate basis derivatives at the Gauss points on each element's edge
+    VecX phi1 = basis_->evaluate_derivative(info.param1(0), info.param1(1), info.nu, info.nv);
+    VecX phi2 = basis_->evaluate_derivative(info.param2(0), info.param2(1), info.nu, info.nv);
+
+    // Constraint: (1/scale1) * sum_k c1[k] * phi1[k] - (1/scale2) * sum_k c2[k] * phi2[k] = 0
+    for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
+        Real val1 = phi1(k) / info.scale1;
+        if (std::abs(val1) > 1e-14) {
+            triplets.emplace_back(constraint_idx, global_dof(info.elem1, k), val1);
+        }
+
+        Real val2 = phi2(k) / info.scale2;
+        if (std::abs(val2) > 1e-14) {
+            triplets.emplace_back(constraint_idx, global_dof(info.elem2, k), -val2);
+        }
+    }
+
+    ++constraint_idx;
+}
+
+SpMat BezierC2ConstraintBuilder::build_edge_derivative_matrix() const {
+    if (enable_edge_derivative_constraints_ && !edge_derivative_built_) {
+        build_edge_derivative_constraints();
+    }
+
+    Index nrows = num_edge_derivative_constraints();
+    Index ncols = total_dofs();
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(nrows * 2 * BezierBasis2D::NDOF);
+
+    Index constraint_idx = 0;
+    for (const auto& info : edge_derivative_constraints_) {
+        add_edge_derivative_constraint(info, triplets, constraint_idx);
+    }
+
+    SpMat A(nrows, ncols);
+    A.setFromTriplets(triplets.begin(), triplets.end());
+
+    return A;
+}
+
+SpMat BezierC2ConstraintBuilder::build_all_constraints_matrix() const {
+    // Build C² + natural BC constraints
+    SpMat A_c2_nat = build_c2_and_natural_bc_matrix();
+
+    // Build edge derivative constraints
+    SpMat A_edge = build_edge_derivative_matrix();
+
+    Index n_c2_nat = A_c2_nat.rows();
+    Index n_edge = A_edge.rows();
+    Index ncols = total_dofs();
+
+    // Stack them vertically: [A_c2_nat; A_edge]
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(A_c2_nat.nonZeros() + A_edge.nonZeros());
+
+    // Copy C² + natural BC constraint entries
+    for (int k = 0; k < A_c2_nat.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A_c2_nat, k); it; ++it) {
+            triplets.emplace_back(it.row(), it.col(), it.value());
+        }
+    }
+
+    // Copy edge derivative constraint entries, offset by n_c2_nat rows
+    for (int k = 0; k < A_edge.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A_edge, k); it; ++it) {
+            triplets.emplace_back(n_c2_nat + it.row(), it.col(), it.value());
+        }
+    }
+
+    SpMat A_combined(n_c2_nat + n_edge, ncols);
+    A_combined.setFromTriplets(triplets.begin(), triplets.end());
+
+    return A_combined;
+}
+
 }  // namespace drifter

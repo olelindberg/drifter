@@ -312,6 +312,9 @@ TEST_F(AdaptiveBezierSmootherTest, AdaptiveGeoTiffRefinement) {
   config.max_iterations = 10;
   config.max_elements = 500;
   config.verbose = true;
+  config.smoother_config.lambda = 1.0;  // Higher data fitting weight
+  config.smoother_config.enable_edge_derivative_constraints = true;  // Eliminate ridges
+  config.smoother_config.edge_ngauss = 4;
 
   AdaptiveBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
 

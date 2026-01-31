@@ -58,6 +58,14 @@ struct BezierSmootherConfig {
   /// This is the standard "natural spline" boundary condition.
   bool enable_natural_bc = true;
 
+  /// Enable edge derivative constraints at Gauss points along shared edges.
+  /// Enforces normal derivative continuity (z_n, z_nn) to eliminate ridges
+  /// at element boundaries that can occur when only vertex C² constraints are used.
+  bool enable_edge_derivative_constraints = false;
+
+  /// Number of Gauss points per edge for edge derivative constraints (2, 3, or 4)
+  int edge_ngauss = 4;
+
   /// Use multigrid solver instead of direct SparseLU
   /// When enabled, uses geometric multigrid V-cycle for large systems
   /// Significantly faster for deep AMR meshes (thousands of elements)
