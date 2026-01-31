@@ -4,10 +4,12 @@
 #include "mesh/octree_adapter.hpp"
 #include "mesh/seabed_surface.hpp"
 #include "test_integration_fixtures.hpp"
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <filesystem>
+#include <sstream>
 
 #ifdef DRIFTER_HAS_GDAL
 #include "mesh/geotiff_reader.hpp"
@@ -1329,3 +1331,258 @@ TEST_F(CGBezierSmootherTest, NonConformingWithCoarseLowerIndex) {
     std::cout << "\nError at center (50,25): " << center_error << "\n";
     EXPECT_LT(center_error, 5.0);  // Reasonable fit for smoothed solution
 }
+
+// =============================================================================
+// Uniform Grid Evaluation: Compare constraint modes and lambda values
+// =============================================================================
+
+#ifdef DRIFTER_HAS_GDAL
+TEST_F(CGBezierSmootherTest, UniformGridEvaluation) {
+  // Skip if GeoTIFF not available
+  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+
+  if (!GeoTiffReader::is_available()) {
+    GTEST_SKIP() << "GDAL not available";
+  }
+
+  if (!std::filesystem::exists(geotiff_path)) {
+    GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
+  }
+
+  GeoTiffReader reader;
+  BathymetryData bathy = reader.load(geotiff_path);
+  if (!bathy.is_valid()) {
+    GTEST_SKIP() << "Could not load GeoTIFF file: " << reader.last_error();
+  }
+
+  // Define domain
+  Real center_x = 4095238.0;  // EPSG:3034
+  Real center_y = 3344695.0;  // EPSG:3034
+  Real domain_size = 30000.0; // 30 km in meters
+  Real half_size = domain_size / 2.0;
+
+  Real xmin = center_x - half_size;
+  Real xmax = center_x + half_size;
+  Real ymin = center_y - half_size;
+  Real ymax = center_y + half_size;
+
+  auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
+  BathymetrySurface surface(bathy_ptr);
+
+  auto depth_func = [&surface](Real x, Real y) -> Real {
+    return -surface.depth(x, y);  // depth returns positive down, we want elevation
+  };
+
+  // Gauss quadrature nodes and weights on [0, 1] (6-point)
+  constexpr int ngauss = 6;
+  std::array<Real, ngauss> gauss_nodes = {
+      0.0337652428984240, 0.1693953067668677,
+      0.3806904069584015, 0.6193095930415985,
+      0.8306046932331323, 0.9662347571015760
+  };
+  std::array<Real, ngauss> gauss_weights = {
+      0.0856622461895852, 0.1803807865240693,
+      0.2339569672863455, 0.2339569672863455,
+      0.1803807865240693, 0.0856622461895852
+  };
+
+  // Helper to compute L2 error for an element
+  auto compute_element_l2_error = [&](const CGBezierBathymetrySmoother& smoother,
+                                       const QuadBounds& bounds) -> Real {
+    Real dx = bounds.xmax - bounds.xmin;
+    Real dy = bounds.ymax - bounds.ymin;
+    Real error_sq = 0.0;
+
+    for (int j = 0; j < ngauss; ++j) {
+      for (int i = 0; i < ngauss; ++i) {
+        Real u = gauss_nodes[i];
+        Real v = gauss_nodes[j];
+        Real w = gauss_weights[i] * gauss_weights[j];
+
+        Real x = bounds.xmin + u * dx;
+        Real y = bounds.ymin + v * dy;
+
+        Real z_data = depth_func(x, y);
+        Real z_bezier = smoother.evaluate(x, y);
+        Real diff = z_data - z_bezier;
+        error_sq += w * diff * diff;
+      }
+    }
+    return std::sqrt(error_sq * dx * dy);
+  };
+
+  // Mesh sizes to test
+  std::vector<int> mesh_sizes = {4, 8, 12, 16, 24, 32};
+
+  // Constraint configurations
+  struct ConstraintConfig {
+    std::string name;
+    bool c2_constraints;
+    bool edge_constraints;
+  };
+
+  std::vector<ConstraintConfig> constraint_configs = {
+      {"c2_only", true, false},
+      {"edge_only", false, true},
+      {"c2_and_edge", true, true},
+  };
+
+  // Lambda values to test
+  std::vector<Real> lambda_values = {100.0, 10.0, 1.0, 0.1, 0.01};
+
+  // Results storage
+  struct EvalResult {
+    int mesh_size;
+    std::string config_name;
+    Real lambda;
+    Index num_elements;
+    Index num_dofs;
+    Real max_error;
+    Real mean_error;
+    Real data_residual;
+    Real constraint_violation;
+    Real regularization_energy;
+    double wall_time_ms;
+  };
+
+  std::vector<EvalResult> results;
+
+  std::cout << "\n=== CGBezierBathymetrySmoother Uniform Grid Evaluation ===" << std::endl;
+  std::cout << "Domain: 30km x 30km, ngauss_error=6" << std::endl;
+  std::cout << "Running " << mesh_sizes.size() * constraint_configs.size() * lambda_values.size()
+            << " configurations..." << std::endl;
+
+  for (int mesh_n : mesh_sizes) {
+    for (const auto& cc : constraint_configs) {
+      for (Real lambda : lambda_values) {
+        // Create uniform mesh
+        QuadtreeAdapter mesh;
+        mesh.build_uniform(xmin, xmax, ymin, ymax, mesh_n, mesh_n);
+
+        CGBezierSmootherConfig config;
+        config.lambda = lambda;
+        config.ngauss_data = 6;
+        config.ngauss_energy = 6;
+        config.enable_c2_constraints = cc.c2_constraints;
+        config.enable_edge_constraints = cc.edge_constraints;
+        config.edge_ngauss = 4;
+
+        CGBezierBathymetrySmoother smoother(mesh, config);
+        smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+
+        // Time the solve
+        auto start = std::chrono::high_resolution_clock::now();
+        smoother.solve();
+        auto end = std::chrono::high_resolution_clock::now();
+        double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+        // Compute errors
+        Real max_err = 0.0;
+        Real sum_err = 0.0;
+        Index num_elems = mesh.num_elements();
+
+        for (Index e = 0; e < num_elems; ++e) {
+          const auto& bounds = mesh.element_bounds(e);
+          Real dx = bounds.xmax - bounds.xmin;
+          Real dy = bounds.ymax - bounds.ymin;
+          Real area = dx * dy;
+
+          Real l2_err = compute_element_l2_error(smoother, bounds);
+          Real normalized_err = l2_err / std::sqrt(area);
+
+          max_err = std::max(max_err, normalized_err);
+          sum_err += normalized_err;
+        }
+
+        Real mean_err = sum_err / static_cast<Real>(num_elems);
+
+        // Collect metrics
+        EvalResult er;
+        er.mesh_size = mesh_n;
+        er.config_name = cc.name;
+        er.lambda = lambda;
+        er.num_elements = num_elems;
+        er.num_dofs = smoother.num_global_dofs();
+        er.max_error = max_err;
+        er.mean_error = mean_err;
+        er.data_residual = smoother.data_residual();
+        er.constraint_violation = smoother.constraint_violation();
+        er.regularization_energy = smoother.regularization_energy();
+        er.wall_time_ms = time_ms;
+
+        results.push_back(er);
+
+        std::cout << "  " << mesh_n << "x" << mesh_n << " " << cc.name
+                  << " lambda=" << lambda << ": "
+                  << "max_err=" << max_err << " m, "
+                  << "time=" << time_ms << " ms" << std::endl;
+
+        EXPECT_TRUE(smoother.is_solved());
+      }
+    }
+  }
+
+  // Write results to markdown file
+  std::string output_path = "/tmp/cg_bezier_uniform_evaluation.md";
+  std::ofstream ofs(output_path);
+
+  // Get current time
+  auto now = std::chrono::system_clock::now();
+  auto time_t = std::chrono::system_clock::to_time_t(now);
+
+  ofs << "# CGBezierBathymetrySmoother Uniform Grid Evaluation\n\n";
+  ofs << "Date: " << std::ctime(&time_t);
+  ofs << "Domain: 30km x 30km centered at (4095238, 3344695) EPSG:3034\n";
+  ofs << "ngauss_error: 6\n";
+  ofs << "ngauss_data: 6\n";
+  ofs << "ngauss_energy: 6\n\n";
+
+  ofs << "## Results\n\n";
+  ofs << "| Mesh | Config | Lambda | Elements | DOFs | Max Err (m) | Mean Err (m) | Data Res | Constr Viol | Reg Energy | Time (ms) |\n";
+  ofs << "|------|--------|--------|----------|------|-------------|--------------|----------|-------------|------------|----------|\n";
+
+  for (const auto& r : results) {
+    // Format lambda appropriately
+    std::ostringstream lambda_ss;
+    if (r.lambda >= 1.0) {
+      lambda_ss << std::fixed << std::setprecision(0) << r.lambda;
+    } else {
+      lambda_ss << std::fixed << std::setprecision(2) << r.lambda;
+    }
+
+    ofs << "| " << r.mesh_size << "x" << r.mesh_size
+        << " | " << r.config_name
+        << " | " << lambda_ss.str()
+        << " | " << r.num_elements
+        << " | " << r.num_dofs
+        << " | " << std::fixed << std::setprecision(3) << r.max_error
+        << " | " << std::fixed << std::setprecision(3) << r.mean_error
+        << " | " << std::scientific << std::setprecision(2) << r.data_residual
+        << " | " << std::scientific << std::setprecision(2) << r.constraint_violation
+        << " | " << std::scientific << std::setprecision(2) << r.regularization_energy
+        << " | " << std::fixed << std::setprecision(1) << r.wall_time_ms
+        << " |\n";
+  }
+
+  ofs << "\n## Configuration Legend\n\n";
+  ofs << "- **c2_only**: Vertex derivative constraints (z_u, z_v, z_uu, z_uv, z_vv, z_uuv, z_uvv, z_uuvv)\n";
+  ofs << "- **edge_only**: Edge Gauss point constraints (z_n, z_nn at 4 points per edge)\n";
+  ofs << "- **c2_and_edge**: Both vertex and edge constraints\n\n";
+
+  ofs << "## Metric Definitions\n\n";
+  ofs << "- **Max Err**: Maximum normalized L2 error across all elements (meters)\n";
+  ofs << "- **Mean Err**: Mean normalized L2 error across all elements (meters)\n";
+  ofs << "- **Data Res**: Weighted least-squares residual ||Bx - d||²_W\n";
+  ofs << "- **Constr Viol**: Constraint violation ||Ax - b||\n";
+  ofs << "- **Reg Energy**: Thin plate regularization energy x^T H x\n";
+  ofs << "- **Time**: Wall clock time for solve() in milliseconds\n";
+
+  ofs.close();
+
+  std::cout << "\nResults written to: " << output_path << std::endl;
+
+  // Verify file was created
+  std::ifstream check(output_path);
+  EXPECT_TRUE(check.good()) << "Output file was not created";
+}
+#endif
