@@ -175,31 +175,6 @@ private:
     std::vector<std::pair<std::function<bool(Real, Real)>, Real>> coastline_criteria_;
 };
 
-/// @brief Multi-resolution wavelet-based indicator
-class WaveletIndicator : public ErrorEstimator {
-public:
-    explicit WaveletIndicator(Real threshold = 1.0e-3);
-
-    Real estimate(const Element& elem) const override;
-
-    void estimate(const std::vector<VecX>& solution,
-                   const OctreeAdapter& mesh,
-                   std::vector<ErrorIndicator>& indicators) const override {
-        // Default implementation
-        indicators.resize(mesh.num_elements());
-    }
-
-    ErrorIndicator estimate_element(const VecX& solution,
-                                      const OctreeNode& node) const override {
-        return ErrorIndicator();
-    }
-
-    VecX compute_wavelets(const Element& elem) const;
-
-private:
-    Real threshold_;
-};
-
 /// @brief Solution projection during refinement/coarsening
 class SolutionProjection {
 public:

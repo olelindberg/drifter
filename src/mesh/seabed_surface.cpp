@@ -1,5 +1,4 @@
 #include "mesh/seabed_surface.hpp"
-#include "bathymetry/adaptive_bathymetry.hpp"
 #include "dg/bernstein_basis.hpp"
 #include "dg/nonconforming_projection.hpp"
 #include <algorithm>
@@ -218,27 +217,6 @@ void SeabedSurface::set_from_bathymetry_smoothed(const BathymetryData& bathy,
     apply_nonconforming_projection();
 
     // Update coordinates to match projected coefficients
-    update_coordinates_from_coefficients();
-}
-
-void SeabedSurface::set_from_adaptive_bathymetry(const AdaptiveBathymetry& adaptive) {
-    const int n1d = order_ + 1;
-
-    const auto& elements = mesh_->elements();
-
-    // Project bathymetry onto each bottom element using WENO5 + L2 projection
-    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
-        Index mesh_idx = bottom_elements_[s];
-        const auto& bounds = elements[mesh_idx]->bounds;
-
-        // Use adaptive projection (WENO5 sampling + L2 projection to Bernstein)
-        depth_coeffs_[s] = adaptive.project_element(bounds, order_);
-    }
-
-    // Apply Bernstein-aware non-conforming projection for interface continuity
-    apply_bernstein_nonconforming_projection();
-
-    // Update coordinates AFTER projection to ensure consistency
     update_coordinates_from_coefficients();
 }
 

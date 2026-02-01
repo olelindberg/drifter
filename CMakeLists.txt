@@ -120,9 +120,6 @@ set(MESH_SOURCES
 )
 
 set(BATHYMETRY_SOURCES
-    src/bathymetry/wavelet_pyramid.cpp
-    src/bathymetry/weno_sampler.cpp
-    src/bathymetry/adaptive_bathymetry.cpp
     src/bathymetry/quintic_basis_2d.cpp
     src/bathymetry/lagrange_basis_2d.cpp
     src/bathymetry/quadtree_adapter.cpp
@@ -137,15 +134,6 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/bezier_multigrid_solver.cpp
     src/bathymetry/bezier_hierarchical_solver.cpp
     src/bathymetry/adaptive_bezier_smoother.cpp
-    # THB-spline bathymetry
-    src/bathymetry/thb_spline/bspline_basis_1d.cpp
-    src/bathymetry/thb_spline/bspline_knot_vector.cpp
-    src/bathymetry/thb_spline/bspline_basis_2d.cpp
-    src/bathymetry/thb_spline/thb_hierarchy.cpp
-    src/bathymetry/thb_spline/thb_refinement_mask.cpp
-    src/bathymetry/thb_spline/thb_truncation.cpp
-    src/bathymetry/thb_spline/thb_data_fitting.cpp
-    src/bathymetry/thb_spline/thb_surface.cpp
     # CG Bezier bathymetry smoother (quintic)
     src/bathymetry/cg_bezier_dof_manager.cpp
     src/bathymetry/cg_bezier_bathymetry_smoother.cpp

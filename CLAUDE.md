@@ -81,6 +81,15 @@ The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home
 - `SeabedVTKWriter` - High-resolution seabed surface visualization
 - `ZarrWriter` - Zarr v3 output (optional, requires zarrs_ffi)
 
+**amr/** - Adaptive mesh refinement
+- `Refinement` - Error estimation, element marking, solution projection
+- Directional (anisotropic) refinement following octree structure
+- L2 projection for solution transfer during refinement/coarsening
+
+**flux/** - Numerical fluxes for DG
+- `NumericalFlux` - Interface flux computations (Lax-Friedrichs, HLLC, Roe, Central)
+- Provides upwinding and stability at element interfaces
+
 ### Key Patterns
 
 1. **Element data storage**: Per-element `VecX` vectors containing all DOFs
@@ -950,6 +959,32 @@ For 8×8 uniform mesh:
   - CG: 1681 DOFs (27% fewer due to sharing)
 ```
 
+### CG Cubic Bezier Bathymetry Smoother (`bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp`)
+
+Continuous Galerkin variant using cubic (degree 3) Bezier with C¹ continuity. Lower DOF count than quintic, suitable when C² continuity is not required.
+
+**Key Properties:**
+- Cubic Bezier: 4×4 = 16 DOFs per element (vs 36 for quintic)
+- C¹ continuity via vertex derivative constraints (z, z_u, z_v, z_uv)
+- Shared DOFs at element boundaries (CG assembly)
+
+**Configuration (`CGCubicBezierSmootherConfig`):**
+- `lambda` - Data fitting weight
+- `gradient_weight` - First derivative penalty
+- `enable_c1_constraints` - Enable C¹ vertex constraints (default: true)
+- `enable_edge_constraints` - Enable edge normal derivative constraints
+
+**Usage:**
+```cpp
+CGCubicBezierSmootherConfig config;
+config.lambda = 1.0;
+config.enable_c1_constraints = true;
+
+CGCubicBezierBathymetrySmoother smoother(quadtree, config);
+smoother.set_bathymetry_data(source);
+smoother.solve();
+```
+
 ### Bezier Multigrid Solver (`bathymetry/bezier_multigrid_solver.hpp`)
 
 Geometric multigrid solver for large KKT systems arising from Bezier bathymetry smoothing. Enables efficient solving of deep AMR meshes with thousands of elements.
@@ -1041,31 +1076,6 @@ config.smoother_config.use_multigrid = true;
 AdaptiveBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
 smoother.set_bathymetry_data(geotiff_source);
 auto result = smoother.solve_adaptive();
-```
-
-### THB-Spline Surface (`bathymetry/thb_spline/thb_surface.hpp`)
-
-Truncated Hierarchical B-spline surface for adaptive multiresolution bathymetry. Alternative to Bezier approach with automatic C² continuity via B-spline basis (no constraint system needed).
-
-**Key Properties:**
-- Single coherent C² surface (bicubic B-splines are analytically C²)
-- Resolution naturally matches octree/quadtree element sizes
-- Partition of unity maintained by truncation mechanism
-- Coarse regions naturally suppress high-frequency content
-
-**Components:**
-- `BSplineBasis1D` / `BSplineBasis2D` - Tensor-product B-spline evaluation
-- `THBHierarchy` - Multi-level spline hierarchy
-- `THBRefinementMask` - Marks active/passive basis functions per level
-- `THBTruncation` - Computes truncated basis coefficients
-- `THBDataFitting` - Least-squares fitting with truncated basis
-
-**Usage:**
-```cpp
-THBSurface surface(octree);
-surface.set_bathymetry_data(source);
-surface.solve();
-Real depth = surface.evaluate(x, y);
 ```
 
 ## Testing

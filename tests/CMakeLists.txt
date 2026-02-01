@@ -21,16 +21,12 @@ set(UNIT_TESTS
     unit/test_io.cpp
     unit/test_amr.cpp
     unit/test_seabed_surface.cpp
-    unit/test_wavelet_pyramid.cpp
-    unit/test_weno_sampler.cpp
-    unit/test_adaptive_bathymetry.cpp
     unit/test_quintic_basis_2d.cpp
     unit/test_quadtree_adapter.cpp
     unit/test_cg_dof_manager.cpp
     unit/test_biharmonic_assembler.cpp
     unit/test_bezier_basis_2d.cpp
     unit/test_thin_plate_hessian.cpp
-    unit/test_bspline_basis.cpp
     unit/test_hierarchical_solver.cpp
 )
 
@@ -45,7 +41,6 @@ set(INTEGRATION_TESTS
     integration/test_bathymetry.cpp
     integration/test_cg_bathymetry_smoother.cpp
     integration/test_bezier_bathymetry_smoother.cpp
-    integration/test_thb_surface.cpp
     integration/test_hierarchical_solver.cpp
     integration/test_adaptive_bezier_smoother.cpp
     integration/test_cg_bezier_bathymetry_smoother.cpp

@@ -22,7 +22,9 @@ std::unique_ptr<ErrorEstimator> ErrorEstimator::residual_based() {
 }
 
 std::unique_ptr<ErrorEstimator> ErrorEstimator::spectral_decay() {
-    return std::make_unique<WaveletIndicator>();
+    // Return gradient-based estimator as fallback (wavelet indicator removed)
+    HexahedronBasis basis(2);
+    return std::make_unique<GradientErrorEstimator>(basis);
 }
 
 std::unique_ptr<ErrorEstimator> ErrorEstimator::feature_based(
@@ -197,20 +199,6 @@ void FeatureBasedEstimator::estimate(const std::vector<VecX>& /*solution*/,
 ErrorIndicator FeatureBasedEstimator::estimate_element(const VecX& /*solution*/,
                                                           const OctreeNode& /*node*/) const {
     return ErrorIndicator();
-}
-
-// ----------------------------------------------------------------------------
-// WaveletIndicator
-// ----------------------------------------------------------------------------
-
-WaveletIndicator::WaveletIndicator(Real threshold) : threshold_(threshold) {}
-
-Real WaveletIndicator::estimate(const Element& /*elem*/) const {
-    return 0.0;  // Stub
-}
-
-VecX WaveletIndicator::compute_wavelets(const Element& /*elem*/) const {
-    return VecX();  // Stub
 }
 
 // ----------------------------------------------------------------------------
