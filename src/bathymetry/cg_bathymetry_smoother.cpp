@@ -1,4 +1,5 @@
 #include "bathymetry/cg_bathymetry_smoother.hpp"
+#include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <stdexcept>
 #include <iostream>
@@ -309,148 +310,13 @@ void CGBathymetrySmoother::write_vtk(const std::string& filename, int resolution
         throw std::runtime_error("CGBathymetrySmoother::write_vtk: not solved");
     }
 
-    // Generate high-resolution surface mesh by sampling CG solution
-    // Each quadtree element is subdivided into resolution x resolution quads
-
-    Index num_elements = quadtree_->num_elements();
-    Index points_per_elem = (resolution + 1) * (resolution + 1);
-    Index quads_per_elem = resolution * resolution;
-
-    Index total_points = num_elements * points_per_elem;
-    Index total_quads = num_elements * quads_per_elem;
-
-    // Collect points and depths
-    std::vector<Vec3> points;
-    std::vector<Real> depths;
-    std::vector<Real> raw_depths;
-    std::vector<Index> element_ids;
-
-    points.reserve(total_points);
-    depths.reserve(total_points);
-    raw_depths.reserve(total_points);
-
-    for (Index e = 0; e < num_elements; ++e) {
-        const auto& bounds = quadtree_->element_bounds(e);
-        Real hx = bounds.xmax - bounds.xmin;
-        Real hy = bounds.ymax - bounds.ymin;
-
-        for (int j = 0; j <= resolution; ++j) {
-            for (int i = 0; i <= resolution; ++i) {
-                // Reference coordinates
-                Real xi = -1.0 + 2.0 * i / resolution;
-                Real eta = -1.0 + 2.0 * j / resolution;
-
-                // Physical coordinates
-                Real x = bounds.xmin + 0.5 * (xi + 1.0) * hx;
-                Real y = bounds.ymin + 0.5 * (eta + 1.0) * hy;
-
-                // Evaluate CG solution using basis
-                Real depth = evaluate_in_element(e, x, y);
-
-                // Raw bathymetry for comparison
-                Real raw = bathy_ ? bathy_->evaluate(x, y) : 0.0;
-
-                points.emplace_back(x, y, -depth);  // z = -depth for visualization
-                depths.push_back(depth);
-                raw_depths.push_back(raw);
-            }
-        }
-    }
-
-    // Write VTU file
-    std::string vtk_path = filename + ".vtu";
-    std::ofstream file(vtk_path);
-
-    file << "<?xml version=\"1.0\"?>\n";
-    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
-    file << "  <UnstructuredGrid>\n";
-    file << "    <Piece NumberOfPoints=\"" << total_points
-         << "\" NumberOfCells=\"" << total_quads << "\">\n";
-
-    // Points
-    file << "      <Points>\n";
-    file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-    file << std::setprecision(12);
-    for (const auto& p : points) {
-        file << "          " << p.x() << " " << p.y() << " " << p.z() << "\n";
-    }
-    file << "        </DataArray>\n";
-    file << "      </Points>\n";
-
-    // Cells (quads)
-    file << "      <Cells>\n";
-    file << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (Index e = 0; e < num_elements; ++e) {
-        Index base = e * points_per_elem;
-        int n1d = resolution + 1;
-
-        for (int j = 0; j < resolution; ++j) {
-            for (int i = 0; i < resolution; ++i) {
-                Index p0 = base + i + j * n1d;
-                Index p1 = base + (i + 1) + j * n1d;
-                Index p2 = base + (i + 1) + (j + 1) * n1d;
-                Index p3 = base + i + (j + 1) * n1d;
-                file << "          " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
-            }
-        }
-    }
-    file << "        </DataArray>\n";
-
-    file << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (Index i = 1; i <= total_quads; ++i) {
-        file << "          " << (i * 4) << "\n";
-    }
-    file << "        </DataArray>\n";
-
-    file << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (Index i = 0; i < total_quads; ++i) {
-        file << "          9\n";  // VTK_QUAD = 9
-    }
-    file << "        </DataArray>\n";
-    file << "      </Cells>\n";
-
-    // Point data
-    file << "      <PointData Scalars=\"depth\">\n";
-
-    // Smoothed depth
-    file << "        <DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
-    for (Real d : depths) {
-        file << "          " << d << "\n";
-    }
-    file << "        </DataArray>\n";
-
-    // Raw bathymetry
-    file << "        <DataArray type=\"Float64\" Name=\"raw_bathy\" format=\"ascii\">\n";
-    for (Real d : raw_depths) {
-        file << "          " << d << "\n";
-    }
-    file << "        </DataArray>\n";
-
-    // Difference
-    file << "        <DataArray type=\"Float64\" Name=\"difference\" format=\"ascii\">\n";
-    for (size_t i = 0; i < depths.size(); ++i) {
-        file << "          " << (depths[i] - raw_depths[i]) << "\n";
-    }
-    file << "        </DataArray>\n";
-
-    file << "      </PointData>\n";
-
-    // Cell data (element ID)
-    file << "      <CellData>\n";
-    file << "        <DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
-    for (Index e = 0; e < num_elements; ++e) {
-        for (Index q = 0; q < quads_per_elem; ++q) {
-            file << "          " << e << "\n";
-        }
-    }
-    file << "        </DataArray>\n";
-    file << "      </CellData>\n";
-
-    file << "    </Piece>\n";
-    file << "  </UnstructuredGrid>\n";
-    file << "</VTKFile>\n";
-
-    file.close();
+    io::write_lagrange_surface_vtk(
+        filename,
+        *quadtree_,
+        [this](Index e, Real x, Real y) { return evaluate_in_element(e, x, y); },
+        bathy_ ? [this](Real x, Real y) { return bathy_->evaluate(x, y); }
+               : std::function<Real(Real, Real)>(nullptr),
+        resolution);
 }
 
 }  // namespace drifter

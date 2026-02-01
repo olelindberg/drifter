@@ -2,6 +2,7 @@
 #include "bathymetry/bezier_hierarchical_solver.hpp"
 #include "bathymetry/bezier_multigrid_solver.hpp"
 #include "dg/basis_hexahedron.hpp"
+#include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseLU>
@@ -706,249 +707,28 @@ void BezierBathymetrySmoother::write_control_points_vtk(const std::string& filen
         throw std::runtime_error("BezierBathymetrySmoother: solve() not called");
     }
 
-    std::ofstream file(filename + ".vtu");
-    if (!file) {
-        throw std::runtime_error("BezierBathymetrySmoother: cannot open " + filename + ".vtu");
-    }
-
-    // Control points: 6×6 = 36 per element
-    constexpr int N1D = BezierBasis2D::N1D;  // 6
-    constexpr int NDOF = BezierBasis2D::NDOF;  // 36
-
-    Index num_elems = quadtree_->num_elements();
-    Index total_pts = num_elems * NDOF;
-
-    // Cells: connect control points as quads (5×5 = 25 per element)
-    int cells_per_elem = (N1D - 1) * (N1D - 1);
-    Index total_cells = num_elems * cells_per_elem;
-
-    // VTK header
-    file << "<?xml version=\"1.0\"?>\n";
-    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
-    file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_pts << "\" NumberOfCells=\"" << total_cells << "\">\n";
-
-    // Points: control point positions with z from solution
-    file << "<Points>\n";
-    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-
-    for (Index e = 0; e < num_elems; ++e) {
-        const QuadBounds& bounds = quadtree_->element_bounds(e);
-        VecX coeffs = element_coefficients(e);
-
-        for (int dof = 0; dof < NDOF; ++dof) {
-            Vec2 uv = basis_->control_point_position(dof);
-            Real x = bounds.xmin + uv(0) * (bounds.xmax - bounds.xmin);
-            Real y = bounds.ymin + uv(1) * (bounds.ymax - bounds.ymin);
-            Real z = coeffs(dof);
-
-            file << std::setprecision(12) << x << " " << y << " " << z << "\n";
-        }
-    }
-
-    file << "</DataArray>\n";
-    file << "</Points>\n";
-
-    // Cells: quads connecting control points
-    file << "<Cells>\n";
-    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-
-    Index pt_offset = 0;
-    for (Index e = 0; e < num_elems; ++e) {
-        for (int j = 0; j < N1D - 1; ++j) {
-            for (int i = 0; i < N1D - 1; ++i) {
-                // DOF indexing: dof = i + N1D * j
-                Index p0 = pt_offset + i + N1D * j;
-                Index p1 = pt_offset + (i + 1) + N1D * j;
-                Index p2 = pt_offset + (i + 1) + N1D * (j + 1);
-                Index p3 = pt_offset + i + N1D * (j + 1);
-
-                file << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
-            }
-        }
-        pt_offset += NDOF;
-    }
-
-    file << "</DataArray>\n";
-    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-
-    for (Index c = 1; c <= total_cells; ++c) {
-        file << 4 * c << "\n";
-    }
-
-    file << "</DataArray>\n";
-    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-
-    for (Index c = 0; c < total_cells; ++c) {
-        file << "9\n";  // VTK_QUAD
-    }
-
-    file << "</DataArray>\n";
-    file << "</Cells>\n";
-
-    // Point data: control point z-value (depth)
-    file << "<PointData Scalars=\"depth\">\n";
-    file << "<DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
-
-    for (Index e = 0; e < num_elems; ++e) {
-        VecX coeffs = element_coefficients(e);
-        for (int dof = 0; dof < NDOF; ++dof) {
-            file << std::setprecision(12) << coeffs(dof) << "\n";
-        }
-    }
-
-    file << "</DataArray>\n";
-    file << "</PointData>\n";
-
-    // Cell data: element index
-    file << "<CellData Scalars=\"element\">\n";
-    file << "<DataArray type=\"Int64\" Name=\"element\" format=\"ascii\">\n";
-
-    for (Index e = 0; e < num_elems; ++e) {
-        for (int c = 0; c < cells_per_elem; ++c) {
-            file << e << "\n";
-        }
-    }
-
-    file << "</DataArray>\n";
-    file << "</CellData>\n";
-
-    // Footer
-    file << "</Piece>\n";
-    file << "</UnstructuredGrid>\n";
-    file << "</VTKFile>\n";
+    io::write_bezier_control_points_vtk(
+        filename + ".vtu",
+        *quadtree_,
+        [this](Index e) { return element_coefficients(e); },
+        [this](int dof) { return basis_->control_point_position(dof); },
+        BezierBasis2D::N1D);
 }
 
-void BezierBathymetrySmoother::write_vtk(const std::string& filename, [[maybe_unused]] int resolution) const {
+void BezierBathymetrySmoother::write_vtk(const std::string& filename, int resolution) const {
     if (!solved_) {
         throw std::runtime_error("BezierBathymetrySmoother: solve() not called");
     }
 
-    std::ofstream file(filename + ".vtu");
-    if (!file) {
-        throw std::runtime_error("BezierBathymetrySmoother: cannot open " + filename + ".vtu");
-    }
-
-    // Use 11x11 LGL points per element (degree 10 polynomial grid)
-    constexpr int n_lgl = 11;
-    VecX lgl_nodes, lgl_weights;
-    compute_gauss_lobatto_nodes(n_lgl, lgl_nodes, lgl_weights);
-
-    // Map LGL nodes from [-1, 1] to [0, 1] for Bezier parameter space
-    VecX param_nodes = (lgl_nodes.array() + 1.0) * 0.5;
-
-    // Count points and cells
-    Index num_elems = quadtree_->num_elements();
-    int pts_per_elem = n_lgl * n_lgl;
-    int cells_per_elem = (n_lgl - 1) * (n_lgl - 1);
-
-    Index total_pts = num_elems * pts_per_elem;
-    Index total_cells = num_elems * cells_per_elem;
-
-    // VTK header
-    file << "<?xml version=\"1.0\"?>\n";
-    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
-    file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_pts << "\" NumberOfCells=\"" << total_cells << "\">\n";
-
-    // Points
-    file << "<Points>\n";
-    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-
-    for (Index e = 0; e < num_elems; ++e) {
-        const QuadBounds& bounds = quadtree_->element_bounds(e);
-        VecX coeffs = element_coefficients(e);
-
-        for (int j = 0; j < n_lgl; ++j) {
-            for (int i = 0; i < n_lgl; ++i) {
-                Real u = param_nodes(i);
-                Real v = param_nodes(j);
-
-                Real x = bounds.xmin + u * (bounds.xmax - bounds.xmin);
-                Real y = bounds.ymin + v * (bounds.ymax - bounds.ymin);
-                Real z = basis_->evaluate_scalar(coeffs, u, v);
-
-                file << std::setprecision(12) << x << " " << y << " " << z << "\n";
-            }
-        }
-    }
-
-    file << "</DataArray>\n";
-    file << "</Points>\n";
-
-    // Cells (quads)
-    file << "<Cells>\n";
-    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-
-    Index pt_offset = 0;
-    for (Index e = 0; e < num_elems; ++e) {
-        for (int j = 0; j < n_lgl - 1; ++j) {
-            for (int i = 0; i < n_lgl - 1; ++i) {
-                Index p0 = pt_offset + i + n_lgl * j;
-                Index p1 = p0 + 1;
-                Index p2 = p0 + n_lgl + 1;
-                Index p3 = p0 + n_lgl;
-
-                file << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
-            }
-        }
-        pt_offset += pts_per_elem;
-    }
-
-    file << "</DataArray>\n";
-    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-
-    for (Index c = 1; c <= total_cells; ++c) {
-        file << 4 * c << "\n";
-    }
-
-    file << "</DataArray>\n";
-    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-
-    for (Index c = 0; c < total_cells; ++c) {
-        file << "9\n";  // VTK_QUAD
-    }
-
-    file << "</DataArray>\n";
-    file << "</Cells>\n";
-
-    // Point data: depth
-    file << "<PointData Scalars=\"depth\">\n";
-    file << "<DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
-
-    for (Index e = 0; e < num_elems; ++e) {
-        VecX coeffs = element_coefficients(e);
-
-        for (int j = 0; j < n_lgl; ++j) {
-            for (int i = 0; i < n_lgl; ++i) {
-                Real u = param_nodes(i);
-                Real v = param_nodes(j);
-                Real z = basis_->evaluate_scalar(coeffs, u, v);
-                file << std::setprecision(12) << z << "\n";
-            }
-        }
-    }
-
-    file << "</DataArray>\n";
-    file << "</PointData>\n";
-
-    // Cell data: element index
-    file << "<CellData Scalars=\"element\">\n";
-    file << "<DataArray type=\"Int64\" Name=\"element\" format=\"ascii\">\n";
-
-    for (Index e = 0; e < num_elems; ++e) {
-        for (int c = 0; c < cells_per_elem; ++c) {
-            file << e << "\n";
-        }
-    }
-
-    file << "</DataArray>\n";
-    file << "</CellData>\n";
-
-    // Footer
-    file << "</Piece>\n";
-    file << "</UnstructuredGrid>\n";
-    file << "</VTKFile>\n";
+    io::write_bezier_surface_vtk(
+        filename,
+        *quadtree_,
+        [this](Index e) { return element_coefficients(e); },
+        [this](const VecX& coeffs, Real u, Real v) {
+            return basis_->evaluate_scalar(coeffs, u, v);
+        },
+        resolution > 0 ? resolution : 11,
+        "depth");
 }
 
 Real BezierBathymetrySmoother::data_residual() const {

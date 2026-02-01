@@ -1,6 +1,7 @@
 #include "bathymetry/cg_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"  // For BathymetrySource, BathymetryPoint
 #include "dg/basis_hexahedron.hpp"             // For compute_gauss_lobatto_nodes
+#include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
 #include <algorithm>
@@ -656,121 +657,15 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
             "CGBezierBathymetrySmoother: must call solve() before write_vtk()");
     }
 
-    // Always use .vtu extension for VTK XML format
-    std::ofstream file(filename + ".vtu");
-    if (!file) {
-        throw std::runtime_error("CGBezierBathymetrySmoother: cannot open " +
-                                 filename + ".vtu");
-    }
-
-    // Use LGL nodes for high-order accurate interpolation
-    int n_lgl = resolution > 0 ? resolution : 11;
-    VecX lgl_nodes, lgl_weights;
-    compute_gauss_lobatto_nodes(n_lgl, lgl_nodes, lgl_weights);
-
-    // Map LGL nodes from [-1, 1] to [0, 1] for Bezier parameter space
-    VecX param_nodes = (lgl_nodes.array() + 1.0) * 0.5;
-
-    Index num_elements = quadtree_->num_elements();
-    int pts_per_elem = n_lgl * n_lgl;
-    int cells_per_elem = (n_lgl - 1) * (n_lgl - 1);
-    Index total_points = num_elements * pts_per_elem;
-    Index total_cells = num_elements * cells_per_elem;
-
-    // VTU XML header
-    file << "<?xml version=\"1.0\"?>\n";
-    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
-    file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells << "\">\n";
-
-    // Points - evaluate at LGL nodes
-    file << "<Points>\n";
-    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        const auto& bounds = quadtree_->element_bounds(elem);
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-        VecX coeffs = element_coefficients(elem);
-
-        for (int j = 0; j < n_lgl; ++j) {
-            Real v = param_nodes(j);
-            Real y = bounds.ymin + v * dy;
-            for (int i = 0; i < n_lgl; ++i) {
-                Real u = param_nodes(i);
-                Real x = bounds.xmin + u * dx;
-                Real z = basis_->evaluate_scalar(coeffs, u, v);
-                file << std::setprecision(12) << x << " " << y << " " << z << "\n";
-            }
-        }
-    }
-    file << "</DataArray>\n";
-    file << "</Points>\n";
-
-    // Cells (quads connecting LGL points)
-    file << "<Cells>\n";
-    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        Index base = elem * pts_per_elem;
-        for (int j = 0; j < n_lgl - 1; ++j) {
-            for (int i = 0; i < n_lgl - 1; ++i) {
-                Index p0 = base + j * n_lgl + i;
-                Index p1 = p0 + 1;
-                Index p2 = p0 + n_lgl + 1;
-                Index p3 = p0 + n_lgl;
-                file << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
-            }
-        }
-    }
-    file << "</DataArray>\n";
-
-    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (Index i = 1; i <= total_cells; ++i) {
-        file << (i * 4) << "\n";
-    }
-    file << "</DataArray>\n";
-
-    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (Index i = 0; i < total_cells; ++i) {
-        file << "9\n";  // VTK_QUAD
-    }
-    file << "</DataArray>\n";
-    file << "</Cells>\n";
-
-    // Point data: elevation
-    file << "<PointData Scalars=\"elevation\">\n";
-    file << "<DataArray type=\"Float64\" Name=\"elevation\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        VecX coeffs = element_coefficients(elem);
-
-        for (int j = 0; j < n_lgl; ++j) {
-            Real v = param_nodes(j);
-            for (int i = 0; i < n_lgl; ++i) {
-                Real u = param_nodes(i);
-                Real z = basis_->evaluate_scalar(coeffs, u, v);
-                file << std::setprecision(12) << z << "\n";
-            }
-        }
-    }
-    file << "</DataArray>\n";
-    file << "</PointData>\n";
-
-    // Cell data: element ID
-    file << "<CellData Scalars=\"element_id\">\n";
-    file << "<DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        for (int c = 0; c < cells_per_elem; ++c) {
-            file << elem << "\n";
-        }
-    }
-    file << "</DataArray>\n";
-    file << "</CellData>\n";
-
-    // VTU footer
-    file << "</Piece>\n";
-    file << "</UnstructuredGrid>\n";
-    file << "</VTKFile>\n";
-
-    file.close();
+    io::write_bezier_surface_vtk(
+        filename,
+        *quadtree_,
+        [this](Index e) { return element_coefficients(e); },
+        [this](const VecX& coeffs, Real u, Real v) {
+            return basis_->evaluate_scalar(coeffs, u, v);
+        },
+        resolution > 0 ? resolution : 11,
+        "elevation");
 }
 
 void CGBezierBathymetrySmoother::write_control_points_vtk(
@@ -781,76 +676,16 @@ void CGBezierBathymetrySmoother::write_control_points_vtk(
             "write_control_points_vtk()");
     }
 
-    std::ofstream file(filename);
-    if (!file) {
-        throw std::runtime_error("CGBezierBathymetrySmoother: cannot open " +
-                                 filename);
-    }
-
-    Index num_elements = quadtree_->num_elements();
-    int pts_per_elem = BezierBasis2D::NDOF;  // 36
-    int cells_per_elem = 25;  // 5×5 quads connecting 6×6 control points
-    Index total_points = num_elements * pts_per_elem;
-    Index total_cells = num_elements * cells_per_elem;
-
-    file << "# vtk DataFile Version 3.0\n";
-    file << "CG Bezier Control Points\n";
-    file << "ASCII\n";
-    file << "DATASET UNSTRUCTURED_GRID\n";
-
-    // Points (control point positions)
-    file << "POINTS " << total_points << " double\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        const auto& bounds = quadtree_->element_bounds(elem);
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-        VecX coeffs = element_coefficients(elem);
-
-        for (int j = 0; j < 6; ++j) {
-            Real v = static_cast<Real>(j) / 5;
-            Real y = bounds.ymin + v * dy;
-            for (int i = 0; i < 6; ++i) {
-                Real u = static_cast<Real>(i) / 5;
-                Real x = bounds.xmin + u * dx;
-                int dof = i + 6 * j;
-                Real z = coeffs(dof);
-                file << x << " " << y << " " << z << "\n";
-            }
-        }
-    }
-
-    // Cells (quads connecting control points)
-    file << "CELLS " << total_cells << " " << (5 * total_cells) << "\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        Index base = elem * pts_per_elem;
-        for (int j = 0; j < 5; ++j) {
-            for (int i = 0; i < 5; ++i) {
-                Index p0 = base + j * 6 + i;
-                Index p1 = p0 + 1;
-                Index p2 = p0 + 6 + 1;
-                Index p3 = p0 + 6;
-                file << "4 " << p0 << " " << p1 << " " << p2 << " " << p3
-                     << "\n";
-            }
-        }
-    }
-
-    file << "CELL_TYPES " << total_cells << "\n";
-    for (Index i = 0; i < total_cells; ++i) {
-        file << "9\n";
-    }
-
-    file << "POINT_DATA " << total_points << "\n";
-    file << "SCALARS elevation double 1\n";
-    file << "LOOKUP_TABLE default\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        VecX coeffs = element_coefficients(elem);
-        for (int dof = 0; dof < BezierBasis2D::NDOF; ++dof) {
-            file << coeffs(dof) << "\n";
-        }
-    }
-
-    file.close();
+    io::write_bezier_control_points_vtk(
+        filename,
+        *quadtree_,
+        [this](Index e) { return element_coefficients(e); },
+        [](int dof) {
+            int i = dof % 6;
+            int j = dof / 6;
+            return Vec2(static_cast<Real>(i) / 5, static_cast<Real>(j) / 5);
+        },
+        6);
 }
 
 // =============================================================================

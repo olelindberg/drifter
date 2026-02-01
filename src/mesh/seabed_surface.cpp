@@ -1,6 +1,7 @@
 #include "mesh/seabed_surface.hpp"
 #include "dg/bernstein_basis.hpp"
 #include "dg/nonconforming_projection.hpp"
+#include "io/bathymetry_vtk_writer.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -752,103 +753,17 @@ bool SeabedSurface::gradient(Real x, Real y, Real& dh_dx, Real& dh_dy) const {
 }
 
 void SeabedSurface::write_vtk(const std::string& filename, int resolution) const {
-    const auto& elements = mesh_->elements();
-
-    // Generate VTK output directly - write bottom face quads
-    std::ofstream vtk_file(filename + ".vtu");
-
-    // Collect points and cells
-    std::vector<Vec3> all_points;
-    std::vector<Real> all_depths;
-    std::vector<std::array<size_t, 4>> all_quads;
-
     const SeabedInterpolator& interp = get_interpolator();
 
-    for (size_t s = 0; s < bottom_elements_.size(); ++s) {
-        Index mesh_idx = bottom_elements_[s];
-        const auto& bounds = elements[mesh_idx]->bounds;
-
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-
-        size_t base_pt = all_points.size();
-
-        // Generate (resolution+1) x (resolution+1) grid of points
-        for (int j = 0; j <= resolution; ++j) {
-            for (int i = 0; i <= resolution; ++i) {
-                Real xi = -1.0 + 2.0 * i / resolution;
-                Real eta = -1.0 + 2.0 * j / resolution;
-
-                Real x = bounds.xmin + 0.5 * (xi + 1.0) * dx;
-                Real y = bounds.ymin + 0.5 * (eta + 1.0) * dy;
-
-                Real h = interp.evaluate_scalar_2d(depth_coeffs_[s], xi, eta);
-
-                all_points.push_back(Vec3(x, y, -h));
-                all_depths.push_back(h);
-            }
-        }
-
-        // Generate quads
-        for (int j = 0; j < resolution; ++j) {
-            for (int i = 0; i < resolution; ++i) {
-                size_t p00 = base_pt + i + (resolution + 1) * j;
-                size_t p10 = base_pt + (i + 1) + (resolution + 1) * j;
-                size_t p01 = base_pt + i + (resolution + 1) * (j + 1);
-                size_t p11 = base_pt + (i + 1) + (resolution + 1) * (j + 1);
-
-                all_quads.push_back({p00, p10, p11, p01});
-            }
-        }
-    }
-
-    // Write VTU file
-    vtk_file << "<?xml version=\"1.0\"?>\n";
-    vtk_file << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
-    vtk_file << "  <UnstructuredGrid>\n";
-    vtk_file << "    <Piece NumberOfPoints=\"" << all_points.size()
-             << "\" NumberOfCells=\"" << all_quads.size() << "\">\n";
-
-    // Points
-    vtk_file << "      <Points>\n";
-    vtk_file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-    for (const auto& p : all_points) {
-        vtk_file << "          " << p.x() << " " << p.y() << " " << p.z() << "\n";
-    }
-    vtk_file << "        </DataArray>\n";
-    vtk_file << "      </Points>\n";
-
-    // Cells
-    vtk_file << "      <Cells>\n";
-    vtk_file << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (const auto& q : all_quads) {
-        vtk_file << "          " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "\n";
-    }
-    vtk_file << "        </DataArray>\n";
-    vtk_file << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (size_t i = 0; i < all_quads.size(); ++i) {
-        vtk_file << "          " << (i + 1) * 4 << "\n";
-    }
-    vtk_file << "        </DataArray>\n";
-    vtk_file << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (size_t i = 0; i < all_quads.size(); ++i) {
-        vtk_file << "          9\n";  // VTK_QUAD
-    }
-    vtk_file << "        </DataArray>\n";
-    vtk_file << "      </Cells>\n";
-
-    // Point data
-    vtk_file << "      <PointData Scalars=\"depth\">\n";
-    vtk_file << "        <DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
-    for (Real d : all_depths) {
-        vtk_file << "          " << d << "\n";
-    }
-    vtk_file << "        </DataArray>\n";
-    vtk_file << "      </PointData>\n";
-
-    vtk_file << "    </Piece>\n";
-    vtk_file << "  </UnstructuredGrid>\n";
-    vtk_file << "</VTKFile>\n";
+    io::write_seabed_surface_vtk(
+        filename,
+        *mesh_,
+        depth_coeffs_,
+        bottom_elements_,
+        [&interp](const VecX& coeffs, Real xi, Real eta) {
+            return interp.evaluate_scalar_2d(coeffs, xi, eta);
+        },
+        resolution);
 }
 
 // =========================================================================
