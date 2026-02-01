@@ -146,10 +146,16 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/thb_spline/thb_truncation.cpp
     src/bathymetry/thb_spline/thb_data_fitting.cpp
     src/bathymetry/thb_spline/thb_surface.cpp
-    # CG Bezier bathymetry smoother
+    # CG Bezier bathymetry smoother (quintic)
     src/bathymetry/cg_bezier_dof_manager.cpp
     src/bathymetry/cg_bezier_bathymetry_smoother.cpp
     src/bathymetry/adaptive_cg_bezier_smoother.cpp
+    # CG Bezier bathymetry smoother (cubic with C¹ constraints)
+    src/bathymetry/cubic_bezier_basis_2d.cpp
+    src/bathymetry/cubic_thin_plate_hessian.cpp
+    src/bathymetry/cg_cubic_bezier_dof_manager.cpp
+    src/bathymetry/cg_cubic_bezier_bathymetry_smoother.cpp
+    src/bathymetry/adaptive_cg_cubic_bezier_smoother.cpp
 )
 
 set(DG_SOURCES
