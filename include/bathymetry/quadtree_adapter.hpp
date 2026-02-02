@@ -22,9 +22,11 @@
 
 #include "core/types.hpp"
 #include "mesh/octree_adapter.hpp"
+
 #include <array>
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 namespace drifter {
@@ -141,7 +143,14 @@ struct QuadtreeNode {
 /// Used for CG bathymetry smoothing before transfer to DG mesh.
 class QuadtreeAdapter {
 public:
-    QuadtreeAdapter() = default;
+    QuadtreeAdapter();
+    ~QuadtreeAdapter();
+
+    // Move-only (PIMPL requires explicit move operations)
+    QuadtreeAdapter(const QuadtreeAdapter&) = delete;
+    QuadtreeAdapter& operator=(const QuadtreeAdapter&) = delete;
+    QuadtreeAdapter(QuadtreeAdapter&&) noexcept;
+    QuadtreeAdapter& operator=(QuadtreeAdapter&&) noexcept;
 
     /// @brief Construct and sync with octree
     explicit QuadtreeAdapter(const OctreeAdapter& octree);
@@ -272,6 +281,10 @@ private:
     /// Map from bounds to node for neighbor finding
     std::map<std::pair<Real, Real>, std::vector<QuadtreeNode*>> xy_lookup_;
 
+    /// PIMPL for Boost-dependent members (R-tree spatial index)
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
     /// Rebuild leaf list and lookup
     void rebuild_leaf_list();
 
@@ -280,6 +293,9 @@ private:
 
     /// Build spatial lookup
     void build_lookup();
+
+    /// Build R-tree spatial index for fast point location
+    void build_rtree();
 
     /// Find neighbor along an edge
     QuadtreeNode* find_neighbor_at_edge(QuadtreeNode* node, int edge_id) const;

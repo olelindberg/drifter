@@ -418,15 +418,15 @@ TEST_F(SimulationTest, CoastlineAdaptiveOctreeMesh) {
     coastline_reader.remove_small_polygons(min_area);
 
     std::cout << "Loaded " << coastline_reader.num_polygons() << " land polygons\n";
-    auto bbox = coastline_reader.bounding_box();
-    std::cout << "Coastline bounds: x=[" << bg::get<0>(bbox.min_corner()) << ", "
-              << bg::get<0>(bbox.max_corner()) << "], y=["
-              << bg::get<1>(bbox.min_corner()) << ", "
-              << bg::get<1>(bbox.max_corner()) << "]\n";
+    Real bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax;
+    coastline_reader.bounding_box(bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax);
+    std::cout << "Coastline bounds: x=[" << bbox_xmin << ", "
+              << bbox_xmax << "], y=["
+              << bbox_ymin << ", "
+              << bbox_ymax << "]\n";
 
     // Build R-tree index for fast coastline intersection queries
-    auto coastline_index = std::make_shared<CoastlineIndex>();
-    coastline_index->build(coastline_reader.polygons());
+    auto coastline_index = coastline_reader.build_index();
     std::cout << "Built coastline R-tree with " << coastline_index->num_segments() << " segments\n";
 
     // Build adaptive octree using coastline refinement criteria
@@ -819,8 +819,7 @@ TEST_F(SimulationTest, CGBathymetrySmootherWithRealData) {
     coastline_reader.swap_xy();
     coastline_reader.remove_small_polygons(1.0e6);
 
-    auto coastline_index = std::make_shared<CoastlineIndex>();
-    coastline_index->build(coastline_reader.polygons());
+    auto coastline_index = coastline_reader.build_index();
 
     // Build adaptive octree
     OctreeAdapter octree(bathy_ptr->xmin, bathy_ptr->xmax,

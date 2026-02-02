@@ -1,11 +1,39 @@
 #include "bathymetry/quadtree_adapter.hpp"
+
+#include <boost/geometry.hpp>
+#include <boost/geometry/geometries/box.hpp>
+#include <boost/geometry/geometries/point_xy.hpp>
+#include <boost/geometry/index/rtree.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
 namespace drifter {
 
-QuadtreeAdapter::QuadtreeAdapter(const OctreeAdapter& octree) {
+// Boost.Geometry types for spatial indexing (hidden from header)
+namespace bg = boost::geometry;
+namespace bgi = bg::index;
+
+using BGPoint2D = bg::model::point<double, 2, bg::cs::cartesian>;
+using BGBox2D = bg::model::box<BGPoint2D>;
+using ElementRTreeValue = std::pair<BGBox2D, Index>;
+using ElementRTree = bgi::rtree<ElementRTreeValue, bgi::rstar<16>>;
+
+// Implementation struct holding Boost-dependent members
+struct QuadtreeAdapter::Impl {
+    std::unique_ptr<ElementRTree> element_rtree;
+};
+
+QuadtreeAdapter::QuadtreeAdapter() : impl_(std::make_unique<Impl>()) {}
+
+QuadtreeAdapter::~QuadtreeAdapter() = default;
+
+QuadtreeAdapter::QuadtreeAdapter(QuadtreeAdapter&&) noexcept = default;
+QuadtreeAdapter& QuadtreeAdapter::operator=(QuadtreeAdapter&&) noexcept = default;
+
+QuadtreeAdapter::QuadtreeAdapter(const OctreeAdapter& octree)
+    : impl_(std::make_unique<Impl>()) {
     sync_with_octree(octree);
 }
 
@@ -167,13 +195,23 @@ Index QuadtreeAdapter::octree_element(Index elem) const {
 }
 
 Index QuadtreeAdapter::find_element(const Vec2& p) const {
-    const Real tol = 1e-10;
-    for (Index i = 0; i < num_elements(); ++i) {
-        if (leaves_[i]->bounds.contains(p, tol)) {
-            return i;
+    if (!impl_->element_rtree || impl_->element_rtree->empty()) {
+        // Fallback to linear search if R-tree not built
+        const Real tol = 1e-10;
+        for (Index i = 0; i < num_elements(); ++i) {
+            if (leaves_[i]->bounds.contains(p, tol)) {
+                return i;
+            }
         }
+        return -1;
     }
-    return -1;
+
+    // Use R-tree for O(log n) query
+    // Use 'intersects' rather than 'contains' to handle boundary points correctly
+    BGPoint2D query_point(p(0), p(1));
+    std::vector<ElementRTreeValue> result;
+    impl_->element_rtree->query(bgi::intersects(query_point), std::back_inserter(result));
+    return result.empty() ? -1 : result[0].second;
 }
 
 EdgeNeighborInfo QuadtreeAdapter::get_neighbor(Index elem, int edge_id) const {
@@ -378,6 +416,23 @@ void QuadtreeAdapter::build_lookup() {
         );
         xy_lookup_[key].push_back(leaf);
     }
+
+    // Also build R-tree for fast point location
+    build_rtree();
+}
+
+void QuadtreeAdapter::build_rtree() {
+    // Build R-tree spatial index for O(log n) point location
+    std::vector<ElementRTreeValue> values;
+    values.reserve(leaves_.size());
+
+    for (Index i = 0; i < num_elements(); ++i) {
+        const auto& b = leaves_[i]->bounds;
+        BGBox2D box(BGPoint2D(b.xmin, b.ymin), BGPoint2D(b.xmax, b.ymax));
+        values.emplace_back(box, i);
+    }
+
+    impl_->element_rtree = std::make_unique<ElementRTree>(values.begin(), values.end());
 }
 
 Index QuadtreeAdapter::add_element(const QuadBounds& bounds, QuadLevel level) {

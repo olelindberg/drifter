@@ -7,51 +7,26 @@
 #include "core/types.hpp"
 #include "mesh/octree_adapter.hpp"
 
-#ifdef DRIFTER_HAS_GDAL
-#include <gdal_priv.h>
-#include <ogrsf_frmts.h>
-#endif
-
-#include <boost/geometry.hpp>
-#include <boost/geometry/geometries/box.hpp>
-#include <boost/geometry/geometries/multi_polygon.hpp>
-#include <boost/geometry/geometries/point_xy.hpp>
-#include <boost/geometry/geometries/polygon.hpp>
-#include <boost/geometry/geometries/segment.hpp>
-#include <boost/geometry/index/rtree.hpp>
-
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace drifter {
 
-namespace bg = boost::geometry;
-namespace bgi = bg::index;
-
-// Boost Geometry types for coastline representation
-using Point2D = bg::model::point<double, 2, bg::cs::cartesian>;
-using Segment2D = bg::model::segment<Point2D>;
-using Box2D = bg::model::box<Point2D>;
-using Ring2D = bg::model::ring<Point2D>;
-using Polygon2D = bg::model::polygon<Point2D, true>;  // Clockwise
-using MultiPolygon2D = bg::model::multi_polygon<Polygon2D>;
-
-/// Segment metadata for R-tree queries
-struct SegmentInfo {
-    size_t polygon_index;
-    size_t ring_index;    // 0 = outer ring, 1..N = inner rings (holes)
-    size_t segment_index;
-};
-
-using SegmentValue = std::pair<Segment2D, SegmentInfo>;
-using SegmentRTree = bgi::rtree<SegmentValue, bgi::rstar<16>>;
+// Forward declarations for PIMPL
+class CoastlineIndex;
 
 /// @brief Loads land polygons from GeoPackage files
 /// Supports coordinate transformation to target SRS
 class CoastlineReader {
 public:
-    CoastlineReader() = default;
+    CoastlineReader();
+    ~CoastlineReader();
+
+    // Move-only (PIMPL)
+    CoastlineReader(const CoastlineReader&) = delete;
+    CoastlineReader& operator=(const CoastlineReader&) = delete;
+    CoastlineReader(CoastlineReader&&) noexcept;
+    CoastlineReader& operator=(CoastlineReader&&) noexcept;
 
     /// @brief Load land polygons from a GeoPackage file
     /// @param filename Path to the .gpkg file
@@ -62,11 +37,8 @@ public:
               const std::string& layer_name = "",
               const std::string& target_srs = "");
 
-    /// @brief Get the loaded multi-polygon
-    const MultiPolygon2D& polygons() const { return polygons_; }
-
     /// @brief Get the number of polygons
-    size_t num_polygons() const { return polygons_.size(); }
+    size_t num_polygons() const;
 
     /// @brief Swap X and Y coordinates (needed for some coordinate systems)
     void swap_xy();
@@ -75,40 +47,47 @@ public:
     void remove_small_polygons(double min_area);
 
     /// @brief Get bounding box of all polygons
-    Box2D bounding_box() const;
+    /// @param xmin, ymin, xmax, ymax Output parameters for bounds
+    void bounding_box(Real& xmin, Real& ymin, Real& xmax, Real& ymax) const;
+
+    /// @brief Build coastline index from loaded polygons
+    /// @return Shared pointer to the built index
+    std::shared_ptr<CoastlineIndex> build_index() const;
 
     /// @brief Check if GDAL/OGR is available
     static bool is_available();
 
     /// @brief Get last error message
-    const std::string& last_error() const { return error_; }
+    const std::string& last_error() const;
 
 private:
-    MultiPolygon2D polygons_;
-    std::string error_;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 /// @brief R-tree based coastline segment index for fast intersection queries
 class CoastlineIndex {
 public:
-    /// @brief Build index from multi-polygon
-    void build(const MultiPolygon2D& polygons);
+    CoastlineIndex();
+    ~CoastlineIndex();
 
-    /// @brief Check if a box intersects any coastline segment
-    bool intersects(const Box2D& box) const;
+    // Move-only (PIMPL)
+    CoastlineIndex(const CoastlineIndex&) = delete;
+    CoastlineIndex& operator=(const CoastlineIndex&) = delete;
+    CoastlineIndex(CoastlineIndex&&) noexcept;
+    CoastlineIndex& operator=(CoastlineIndex&&) noexcept;
 
     /// @brief Check if a box intersects any coastline segment
     bool intersects(Real xmin, Real ymin, Real xmax, Real ymax) const;
 
-    /// @brief Get all segments intersecting a box
-    std::vector<SegmentValue> query(const Box2D& box) const;
-
     /// @brief Get number of segments in the index
-    size_t num_segments() const { return num_segments_; }
+    size_t num_segments() const;
 
 private:
-    std::shared_ptr<SegmentRTree> rtree_;
-    size_t num_segments_ = 0;
+    friend class CoastlineReader;
+
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 /// @brief Coastline-based refinement criterion for adaptive meshing
@@ -134,19 +113,5 @@ private:
     std::shared_ptr<CoastlineIndex> index_;
     int max_level_;
 };
-
-/// @brief Utility functions for coastline geometry
-namespace coastline_util {
-
-/// @brief Convert OGR polygon to Boost Geometry polygon
-bool ogr_to_boost_polygon(const void* ogr_polygon, Polygon2D& out);
-
-/// @brief Swap X and Y coordinates in a multi-polygon
-void swap_xy(MultiPolygon2D& mp);
-
-/// @brief Remove small polygons from a multi-polygon
-void remove_small_polygons(MultiPolygon2D& mp, double min_area);
-
-}  // namespace coastline_util
 
 }  // namespace drifter
