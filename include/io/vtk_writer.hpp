@@ -57,8 +57,7 @@ enum class VTKEncoding {
 /// @brief VTK output format
 enum class VTKFormat {
     VTU,      // VTK UnstructuredGrid XML
-    PVTU,     // Parallel VTU (one file per rank)
-    Legacy    // Legacy .vtk format
+    PVTU      // Parallel VTU (one file per rank)
 };
 
 /// @brief Field data location
@@ -154,7 +153,6 @@ private:
     void build_mesh_geometry();
     void write_vtu(const std::string& filename, Real time);
     void write_pvtu(const std::string& filename, Real time);
-    void write_legacy(const std::string& filename, Real time);
     void write_pvd();
 
     // Encoding helpers
@@ -332,9 +330,6 @@ private:
 
     // Write using VTU format
     void write_vtu();
-
-    // Write using legacy format (for backward compatibility)
-    void write_legacy();
 };
 
 }  // namespace drifter

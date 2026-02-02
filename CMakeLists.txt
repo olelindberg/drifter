@@ -125,25 +125,27 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/quadtree_adapter.cpp
     src/bathymetry/cg_dof_manager.cpp
     src/bathymetry/biharmonic_assembler.cpp
-    src/bathymetry/cg_bathymetry_smoother.cpp
     src/bathymetry/bezier_basis_2d.cpp
     src/bathymetry/thin_plate_hessian.cpp
-    src/bathymetry/bezier_c2_constraints.cpp
     src/bathymetry/bezier_data_fitting.cpp
-    src/bathymetry/bezier_bathymetry_smoother.cpp
-    src/bathymetry/bezier_multigrid_solver.cpp
-    src/bathymetry/bezier_hierarchical_solver.cpp
-    src/bathymetry/adaptive_bezier_smoother.cpp
-    # CG Bezier bathymetry smoother (quintic)
+    # CG Bezier bathymetry smoother (quintic with C² continuity)
     src/bathymetry/cg_bezier_dof_manager.cpp
     src/bathymetry/cg_bezier_bathymetry_smoother.cpp
     src/bathymetry/adaptive_cg_bezier_smoother.cpp
-    # CG Bezier bathymetry smoother (cubic with C¹ constraints)
+    # CG Bezier bathymetry smoother (cubic with C¹ continuity)
     src/bathymetry/cubic_bezier_basis_2d.cpp
     src/bathymetry/cubic_thin_plate_hessian.cpp
     src/bathymetry/cg_cubic_bezier_dof_manager.cpp
     src/bathymetry/cg_cubic_bezier_bathymetry_smoother.cpp
     src/bathymetry/adaptive_cg_cubic_bezier_smoother.cpp
+    # CG Bezier bathymetry smoother (linear with C⁰ continuity)
+    src/bathymetry/linear_bezier_basis_2d.cpp
+    src/bathymetry/dirichlet_hessian.cpp
+    src/bathymetry/cg_linear_bezier_dof_manager.cpp
+    src/bathymetry/cg_linear_bezier_bathymetry_smoother.cpp
+    # CG Bezier bathymetry smoother (quintic with triharmonic energy)
+    src/bathymetry/triharmonic_hessian.cpp
+    src/bathymetry/cg_triharmonic_bezier_bathymetry_smoother.cpp
 )
 
 set(DG_SOURCES

@@ -103,5 +103,24 @@ void write_seabed_surface_vtk(
     const std::function<Real(const VecX&, Real, Real)>& evaluate_2d,
     int resolution = 10);
 
+/// @brief Write CG Bezier/polynomial surface to VTK format with shared vertices
+///
+/// Unlike write_bezier_surface_vtk() which creates duplicate vertices at element
+/// boundaries (suitable for DG), this function deduplicates vertices at shared
+/// boundaries for CG (Continuous Galerkin) elements. This produces a properly
+/// connected mesh without visual gaps in ParaView.
+///
+/// @param filename Output filename (without extension, .vtu will be added)
+/// @param mesh The quadtree mesh
+/// @param evaluate_at Function evaluating surface z-value at physical (x, y)
+/// @param resolution Number of sample points per direction (default 11)
+/// @param scalar_name Name for the elevation/depth scalar field
+void write_cg_bezier_surface_vtk(
+    const std::string& filename,
+    const QuadtreeAdapter& mesh,
+    const std::function<Real(Real, Real)>& evaluate_at,
+    int resolution = 11,
+    const std::string& scalar_name = "elevation");
+
 }  // namespace io
 }  // namespace drifter

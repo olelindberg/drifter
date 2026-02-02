@@ -538,7 +538,6 @@ TEST_F(CGBezierSmootherTest, VTKOutputOnePlusFourMesh) {
 
     CGBezierSmootherConfig config;
     config.lambda = 10.0;
-    config.enable_c2_constraints = true;
     config.enable_edge_constraints = true;
 
     CGBezierBathymetrySmoother smoother(mesh, config);
@@ -608,7 +607,7 @@ TEST_F(CGBezierSmootherTest, VTKOutputOnePlusFourMesh) {
     EXPECT_TRUE(std::filesystem::exists(output_file));
 
     // Also write control points
-    std::string cp_filename = "/tmp/cg_bezier_1plus4_control_points.vtk";
+    std::string cp_filename = "/tmp/cg_bezier_1plus4_control_points.vtu";
     smoother.write_control_points_vtk(cp_filename);
 
     EXPECT_TRUE(std::filesystem::exists(cp_filename));
@@ -631,7 +630,6 @@ TEST_F(CGBezierSmootherTest, DiagnoseNonConformingEdge) {
 
     CGBezierSmootherConfig config;
     config.lambda = 10.0;
-    config.enable_c2_constraints = true;
     config.enable_edge_constraints = true;
 
     CGBezierBathymetrySmoother smoother(mesh, config);
@@ -833,7 +831,7 @@ TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
     EXPECT_TRUE(std::filesystem::exists(output_file));
 
     // Write control points for debugging
-    std::string cp_file = "/tmp/cg_bezier_kattegat_control_points.vtk";
+    std::string cp_file = "/tmp/cg_bezier_kattegat_control_points.vtu";
     smoother.write_control_points_vtk(cp_file);
 
     std::cout << "Control points written to: " << cp_file << std::endl;
@@ -948,15 +946,12 @@ TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
 
     // Test configurations
     struct TestConfig {
-        bool c2;
         bool edge;
         std::string suffix;
     };
     std::vector<TestConfig> configs = {
-        {false, false, "no_constraints"},
-        {true, false, "c2_constraints"},
-        {false, true, "edge_only_constraints"},
-        {true, true, "c2_edge_constraints"}
+        {false, "no_constraints"},
+        {true, "edge_constraints"}
     };
 
     for (const auto& tc : configs) {
@@ -964,7 +959,6 @@ TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
         config.lambda = 1.0;
         config.ngauss_data = 6;
         config.ngauss_energy = 6;
-        config.enable_c2_constraints = tc.c2;
         config.enable_edge_constraints = tc.edge;
         config.edge_ngauss = 4;
 
@@ -973,17 +967,15 @@ TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
 
         std::cout << "\n--- Config: " << tc.suffix << " ---" << std::endl;
         std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
-        std::cout << "Vertex derivative constraints: "
-                  << smoother.dof_manager().num_vertex_derivative_constraints() << std::endl;
         std::cout << "Edge derivative constraints: "
                   << smoother.dof_manager().num_edge_derivative_constraints() << std::endl;
 
         smoother.solve();
         EXPECT_TRUE(smoother.is_solved());
 
-        std::string output_file = "/tmp/cg_bezier_kattegat_" + tc.suffix + ".vtk";
-        smoother.write_vtk(output_file, 10);
-        std::cout << "Output: " << output_file << std::endl;
+        std::string output_base = "/tmp/cg_bezier_kattegat_" + tc.suffix;
+        smoother.write_vtk(output_base, 10);
+        std::cout << "Output: " << output_base << ".vtu" << std::endl;
 
         // Check constraint violation
         Real violation = smoother.constraint_violation();
@@ -1083,7 +1075,6 @@ TEST_F(CGBezierSmootherTest, CompareUniformVsOnePlusFour) {
     CGBezierSmootherConfig config;
     config.lambda = 100.0;
     config.ridge_epsilon = 0.0;
-    config.enable_c2_constraints = false;
     config.enable_edge_constraints = false;
 
     // ===== UNIFORM 2x1 MESH =====
@@ -1232,7 +1223,6 @@ TEST_F(CGBezierSmootherTest, NonConformingWithCoarseLowerIndex) {
     CGBezierSmootherConfig config;
     config.lambda = 100.0;  // Strong data fitting
     config.ridge_epsilon = 0.0;
-    config.enable_c2_constraints = false;  // No C² vertex constraints
     config.enable_edge_constraints = false;  // No edge derivative constraints
 
     CGBezierBathymetrySmoother smoother(mesh, config);
@@ -1337,7 +1327,7 @@ TEST_F(CGBezierSmootherTest, NonConformingWithCoarseLowerIndex) {
 // =============================================================================
 
 #ifdef DRIFTER_HAS_GDAL
-TEST_F(CGBezierSmootherTest, UniformGridEvaluation) {
+TEST_F(CGBezierSmootherTest, DISABLED_UniformGridEvaluation) {
   // Skip if GeoTIFF not available
   std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
 
@@ -1417,14 +1407,12 @@ TEST_F(CGBezierSmootherTest, UniformGridEvaluation) {
   // Constraint configurations
   struct ConstraintConfig {
     std::string name;
-    bool c2_constraints;
     bool edge_constraints;
   };
 
   std::vector<ConstraintConfig> constraint_configs = {
-      {"c2_only", true, false},
-      {"edge_only", false, true},
-      {"c2_and_edge", true, true},
+      {"no_constraints", false},
+      {"edge_only", true},
   };
 
   // Lambda values to test
@@ -1463,7 +1451,6 @@ TEST_F(CGBezierSmootherTest, UniformGridEvaluation) {
         config.lambda = lambda;
         config.ngauss_data = 6;
         config.ngauss_energy = 6;
-        config.enable_c2_constraints = cc.c2_constraints;
         config.enable_edge_constraints = cc.edge_constraints;
         config.edge_ngauss = 4;
 

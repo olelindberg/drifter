@@ -37,29 +37,6 @@ struct HangingNodeConstraint {
     std::vector<Real> weights;
 };
 
-/// @brief Constraint for derivative continuity at shared vertex
-///
-/// Enforces C¹/C² continuity by constraining derivatives to match at element vertices.
-/// Form: sum(c1*phi1)/scale1 - sum(c2*phi2)/scale2 = 0
-/// Uses the same 9-derivative approach as the DG Bezier smoother.
-struct VertexDerivativeConstraint {
-    /// Adjacent elements sharing the vertex
-    Index elem1, elem2;
-
-    /// Corner indices for each element (0-3)
-    /// Corner 0: (u=0,v=0), 1: (u=1,v=0), 2: (u=0,v=1), 3: (u=1,v=1)
-    int corner1, corner2;
-
-    /// Derivative order in u and v directions
-    int nu, nv;
-
-    /// Basis derivative coefficients for each element (36 values each)
-    VecX coeffs1, coeffs2;
-
-    /// Element size scale factors (dx^nu * dy^nv)
-    Real scale1, scale2;
-};
-
 /// @brief Constraint for derivative continuity along shared edge at Gauss points
 ///
 /// Enforces C¹/C² continuity along shared edges at Gauss quadrature points.
@@ -143,22 +120,6 @@ public:
     /// Number of hanging node constraints
     Index num_constraints() const { return static_cast<Index>(constraints_.size()); }
 
-    /// Get vertex derivative constraints for C² continuity
-    const std::vector<VertexDerivativeConstraint>& vertex_derivative_constraints() const {
-        return vertex_derivative_constraints_;
-    }
-
-    /// Number of vertex derivative constraints
-    Index num_vertex_derivative_constraints() const {
-        return static_cast<Index>(vertex_derivative_constraints_.size());
-    }
-
-    /// Build vertex derivative constraints for C² continuity
-    /// Enforces matching of all derivatives up to order (2,2) at shared vertices:
-    /// z_u, z_v (C¹), z_uu, z_uv, z_vv, z_uuv, z_uvv, z_uuvv (C²)
-    /// Note: z value is already shared via CG DOFs, so not constrained here.
-    void build_vertex_derivative_constraints();
-
     /// Get edge derivative constraints for C² continuity along edges
     const std::vector<EdgeDerivativeConstraint>& edge_derivative_constraints() const {
         return edge_derivative_constraints_;
@@ -216,9 +177,6 @@ private:
 
     /// Hanging node constraints
     std::vector<HangingNodeConstraint> constraints_;
-
-    /// Vertex derivative constraints for C² continuity
-    std::vector<VertexDerivativeConstraint> vertex_derivative_constraints_;
 
     /// Edge derivative constraints for C² continuity along edges
     std::vector<EdgeDerivativeConstraint> edge_derivative_constraints_;

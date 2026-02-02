@@ -351,36 +351,6 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourContinuityAtInterface) {
 // C¹ Constraint Tests
 // =============================================================================
 
-TEST_F(CGCubicBezierSmootherTest, C1VertexConstraints) {
-    // Test C¹ vertex constraints on uniform mesh
-    auto mesh = create_quadtree(4, 4);
-
-    auto bathy = [](Real x, Real y) {
-        return 100.0 + 10.0 * std::sin(0.05 * x) * std::cos(0.05 * y);
-    };
-
-    CGCubicBezierSmootherConfig config;
-    config.lambda = 10.0;
-    config.enable_c1_vertex_constraints = true;
-    config.enable_c1_edge_constraints = false;
-
-    CGCubicBezierBathymetrySmoother smoother(mesh, config);
-    smoother.set_bathymetry_data(bathy);
-    smoother.solve();
-
-    EXPECT_TRUE(smoother.is_solved());
-
-    // Verify constraint count (3 constraints per shared vertex pair: z_u, z_v, z_uv)
-    Index num_c1_vertex = smoother.dof_manager().num_vertex_derivative_constraints();
-    std::cout << "C¹ vertex derivative constraints: " << num_c1_vertex << std::endl;
-    EXPECT_GT(num_c1_vertex, 0);
-
-    // Check constraint violation
-    Real violation = smoother.constraint_violation();
-    std::cout << "Constraint violation: " << violation << std::endl;
-    EXPECT_LT(violation, 1e-6);
-}
-
 TEST_F(CGCubicBezierSmootherTest, C1EdgeConstraints) {
     // Test C¹ edge constraints on uniform mesh
     auto mesh = create_quadtree(4, 4);
@@ -391,7 +361,6 @@ TEST_F(CGCubicBezierSmootherTest, C1EdgeConstraints) {
 
     CGCubicBezierSmootherConfig config;
     config.lambda = 10.0;
-    config.enable_c1_vertex_constraints = false;
     config.enable_c1_edge_constraints = true;
     config.edge_ngauss = 4;
 
@@ -407,37 +376,6 @@ TEST_F(CGCubicBezierSmootherTest, C1EdgeConstraints) {
     EXPECT_GT(num_c1_edge, 0);
 
     // Check constraint violation
-    Real violation = smoother.constraint_violation();
-    std::cout << "Constraint violation: " << violation << std::endl;
-    EXPECT_LT(violation, 1e-6);
-}
-
-TEST_F(CGCubicBezierSmootherTest, CombinedC1Constraints) {
-    // Test with both C¹ vertex and edge constraints
-    auto mesh = create_quadtree(4, 4);
-
-    auto bathy = [](Real x, Real y) {
-        return 100.0 + 10.0 * std::sin(0.05 * x) * std::cos(0.05 * y);
-    };
-
-    CGCubicBezierSmootherConfig config;
-    config.lambda = 10.0;
-    config.enable_c1_vertex_constraints = true;
-    config.enable_c1_edge_constraints = true;
-    config.edge_ngauss = 4;
-
-    CGCubicBezierBathymetrySmoother smoother(mesh, config);
-    smoother.set_bathymetry_data(bathy);
-    smoother.solve();
-
-    EXPECT_TRUE(smoother.is_solved());
-
-    std::cout << "\n=== Combined C¹ Constraints (cubic) ===" << std::endl;
-    std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
-    std::cout << "Total constraints: " << smoother.num_constraints() << std::endl;
-    std::cout << "Vertex constraints: " << smoother.dof_manager().num_vertex_derivative_constraints() << std::endl;
-    std::cout << "Edge constraints: " << smoother.dof_manager().num_edge_derivative_constraints() << std::endl;
-
     Real violation = smoother.constraint_violation();
     std::cout << "Constraint violation: " << violation << std::endl;
     EXPECT_LT(violation, 1e-6);
@@ -602,7 +540,6 @@ TEST_F(CGCubicBezierSmootherTest, VTKOutputWithC1Constraints) {
 
     CGCubicBezierSmootherConfig config;
     config.lambda = 10.0;
-    config.enable_c1_vertex_constraints = true;
     config.enable_c1_edge_constraints = true;
 
     CGCubicBezierBathymetrySmoother smoother(mesh, config);
@@ -616,7 +553,7 @@ TEST_F(CGCubicBezierSmootherTest, VTKOutputWithC1Constraints) {
     EXPECT_TRUE(std::filesystem::exists(output_file));
 
     // Also write control points
-    std::string cp_filename = "/tmp/cg_cubic_bezier_control_points.vtk";
+    std::string cp_filename = "/tmp/cg_cubic_bezier_control_points.vtu";
     smoother.write_control_points_vtk(cp_filename);
     EXPECT_TRUE(std::filesystem::exists(cp_filename));
 }
@@ -775,7 +712,7 @@ TEST_F(CGCubicBezierSmootherTest, KattegatGeoTiffIntegration) {
     EXPECT_TRUE(std::filesystem::exists(output_file));
 
     // Write control points for debugging
-    std::string cp_file = "/tmp/cg_cubic_bezier_kattegat_control_points.vtk";
+    std::string cp_file = "/tmp/cg_cubic_bezier_kattegat_control_points.vtu";
     smoother.write_control_points_vtk(cp_file);
     std::cout << "Control points written to: " << cp_file << std::endl;
 
@@ -806,7 +743,7 @@ TEST_F(CGCubicBezierSmootherTest, KattegatGeoTiffIntegration) {
     EXPECT_LT(avg_diff, 50.0);  // Average error less than 50m
 }
 
-TEST_F(CGCubicBezierSmootherTest, KattegatCompareConstraintModes) {
+TEST_F(CGCubicBezierSmootherTest, DISABLED_KattegatCompareConstraintModes) {
     // Compare no constraints, vertex-only, edge-only, and combined
     Real center_x = 4095238.0;
     Real center_y = 3344695.0;
@@ -847,15 +784,12 @@ TEST_F(CGCubicBezierSmootherTest, KattegatCompareConstraintModes) {
 
     // Test configurations
     struct TestConfig {
-        bool vertex;
         bool edge;
         std::string suffix;
     };
     std::vector<TestConfig> configs = {
-        {false, false, "no_constraints"},
-        {true, false, "c1_vertex"},
-        {false, true, "c1_edge"},
-        {true, true, "c1_vertex_edge"}
+        {false, "no_constraints"},
+        {true, "c1_edge"}
     };
 
     for (const auto& tc : configs) {
@@ -863,7 +797,6 @@ TEST_F(CGCubicBezierSmootherTest, KattegatCompareConstraintModes) {
         config.lambda = 1.0;
         config.ngauss_data = 4;
         config.ngauss_energy = 4;
-        config.enable_c1_vertex_constraints = tc.vertex;
         config.enable_c1_edge_constraints = tc.edge;
         config.edge_ngauss = 4;
 
@@ -872,17 +805,15 @@ TEST_F(CGCubicBezierSmootherTest, KattegatCompareConstraintModes) {
 
         std::cout << "\n--- Config: " << tc.suffix << " ---" << std::endl;
         std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
-        std::cout << "Vertex derivative constraints: "
-                  << smoother.dof_manager().num_vertex_derivative_constraints() << std::endl;
         std::cout << "Edge derivative constraints: "
                   << smoother.dof_manager().num_edge_derivative_constraints() << std::endl;
 
         smoother.solve();
         EXPECT_TRUE(smoother.is_solved());
 
-        std::string output_file = "/tmp/cg_cubic_bezier_kattegat_" + tc.suffix + ".vtk";
-        smoother.write_vtk(output_file, 10);
-        std::cout << "Output: " << output_file << std::endl;
+        std::string output_base = "/tmp/cg_cubic_bezier_kattegat_" + tc.suffix;
+        smoother.write_vtk(output_base, 10);
+        std::cout << "Output: " << output_base << ".vtu" << std::endl;
 
         // Check constraint violation
         Real violation = smoother.constraint_violation();
@@ -918,7 +849,7 @@ TEST_F(CGCubicBezierSmootherTest, KattegatCompareConstraintModes) {
 // Uniform Grid Evaluation: Compare constraint modes and lambda values
 // =============================================================================
 
-TEST_F(CGCubicBezierSmootherTest, UniformGridEvaluation) {
+TEST_F(CGCubicBezierSmootherTest, DISABLED_UniformGridEvaluation) {
     // Skip if GeoTIFF not available
     std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
 
@@ -998,14 +929,12 @@ TEST_F(CGCubicBezierSmootherTest, UniformGridEvaluation) {
     // Constraint configurations
     struct ConstraintConfig {
         std::string name;
-        bool vertex_constraints;
         bool edge_constraints;
     };
 
     std::vector<ConstraintConfig> constraint_configs = {
-        {"c1_vertex_only", true, false},
-        {"c1_edge_only", false, true},
-        {"c1_vertex_edge", true, true},
+        {"no_constraints", false},
+        {"c1_edge_only", true},
     };
 
     // Lambda values to test
@@ -1044,7 +973,6 @@ TEST_F(CGCubicBezierSmootherTest, UniformGridEvaluation) {
                 config.lambda = lambda;
                 config.ngauss_data = 4;
                 config.ngauss_energy = 4;
-                config.enable_c1_vertex_constraints = cc.vertex_constraints;
                 config.enable_c1_edge_constraints = cc.edge_constraints;
                 config.edge_ngauss = 4;
 

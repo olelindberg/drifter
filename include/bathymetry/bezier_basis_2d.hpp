@@ -123,9 +123,11 @@ public:
     /// @return Vector of 36 values
     VecX evaluate_derivative(Real u, Real v, int nu, int nv) const;
 
-    /// Third derivatives needed for C^2 constraints
+    /// Third derivatives needed for C^2 constraints and triharmonic energy
+    VecX evaluate_d3uuu(Real u, Real v) const;   ///< d^3/du^3
     VecX evaluate_d3uuv(Real u, Real v) const;   ///< d^3/du^2 dv
     VecX evaluate_d3uvv(Real u, Real v) const;   ///< d^3/du dv^2
+    VecX evaluate_d3vvv(Real u, Real v) const;   ///< d^3/dv^3
 
     /// Fourth derivative d^4/du^2 dv^2 (needed for full C^2 constraints)
     VecX evaluate_d4uuvv(Real u, Real v) const;

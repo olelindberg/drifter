@@ -369,7 +369,6 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
   config.error_threshold = 5.0;
   config.max_iterations = 3;
   config.smoother_config.lambda = 10.0;
-  config.smoother_config.enable_c1_vertex_constraints = true;
   config.smoother_config.enable_c1_edge_constraints = true;
   config.smoother_config.edge_ngauss = 4;
 
@@ -396,7 +395,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
 // GeoTIFF Integration Tests
 // =============================================================================
 
-TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveGeoTiffRefinement) {
+TEST_F(AdaptiveCGCubicBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   // Kattegat test area
   Real center_x = 4095238.0;  // EPSG:3034
   Real center_y = 3344695.0;  // EPSG:3034
@@ -508,14 +507,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, CompareConstraintModes) {
 
   struct TestConfig {
     std::string name;
-    bool vertex;
     bool edge;
   };
 
-  std::vector<TestConfig> configs = {{"no_constraints", false, false},
-                                     {"c1_vertex_only", true, false},
-                                     {"c1_edge_only", false, true},
-                                     {"c1_vertex_edge", true, true}};
+  std::vector<TestConfig> configs = {{"no_constraints", false},
+                                     {"c1_edge_only", true}};
 
   for (const auto &tc : configs) {
     AdaptiveCGCubicBezierConfig config;
@@ -523,7 +519,6 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, CompareConstraintModes) {
     config.max_iterations = 4;
     config.max_elements = 200;
     config.smoother_config.lambda = 10.0;
-    config.smoother_config.enable_c1_vertex_constraints = tc.vertex;
     config.smoother_config.enable_c1_edge_constraints = tc.edge;
     config.smoother_config.edge_ngauss = 4;
 

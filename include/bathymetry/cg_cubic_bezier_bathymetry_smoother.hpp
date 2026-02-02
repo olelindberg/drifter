@@ -50,10 +50,6 @@ struct CGCubicBezierSmootherConfig {
     /// Tolerance for bound constraint satisfaction
     Real bound_tolerance = 1e-10;
 
-    /// Enable C¹ vertex constraints (z_u, z_v, z_uv matching)
-    /// 3 constraints per shared vertex pair
-    bool enable_c1_vertex_constraints = false;
-
     /// Enable C¹ edge constraints (z_n matching at Gauss points)
     bool enable_c1_edge_constraints = false;
 

@@ -1,22 +1,24 @@
 #pragma once
 
-/// @file cg_bezier_bathymetry_smoother.hpp
-/// @brief CG Bezier bathymetry smoother with natural cross-element coupling
+/// @file cg_triharmonic_bezier_bathymetry_smoother.hpp
+/// @brief CG Bezier bathymetry smoother using triharmonic energy
 ///
 /// Uses Continuous Galerkin assembly where DOFs at element boundaries are shared.
-/// This provides natural cross-element coupling through the energy functional,
-/// eliminating the need for explicit C² continuity constraints at conforming
-/// interfaces. Only hanging node constraints are needed for non-conforming meshes.
+/// Minimizes triharmonic energy (|grad(Laplacian z)|^2) instead of biharmonic
+/// (thin plate) energy, producing surfaces with smoother curvature gradients.
 ///
-/// Advantages over DG Bezier approach:
-///   - Natural smoothing across element boundaries (no ridges)
-///   - Fewer DOFs (shared at boundaries)
-///   - Simpler constraint system (only hanging nodes)
+/// Key differences from biharmonic (thin plate) smoother:
+///   - Uses third derivatives instead of second derivatives
+///   - Minimizes rate of change of curvature, not curvature itself
+///   - Quadratic and cubic functions have zero energy (not just linear)
+///   - Better for bathymetry that requires gradual depth transitions
+///
+/// Edge constraints are used for derivative continuity (not vertex constraints).
 
 #include "bathymetry/bezier_basis_2d.hpp"
 #include "bathymetry/cg_bezier_dof_manager.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
-#include "bathymetry/thin_plate_hessian.hpp"
+#include "bathymetry/triharmonic_hessian.hpp"
 #include "core/types.hpp"
 #include "mesh/seabed_surface.hpp"
 #include <functional>
@@ -30,8 +32,8 @@ class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
 
-/// @brief Configuration for CG Bezier bathymetry smoother
-struct CGBezierSmootherConfig {
+/// @brief Configuration for CG triharmonic Bezier bathymetry smoother
+struct CGTriharmonicBezierSmootherConfig {
     /// Data fitting weight relative to smoothness (lower = smoother)
     /// In the ShipMesh formulation: Q = α·H + λ·(BᵀWB + εI)
     Real lambda = 0.01;
@@ -42,8 +44,8 @@ struct CGBezierSmootherConfig {
     /// Gauss points per direction for data sampling
     int ngauss_data = 6;
 
-    /// Gauss points for energy integration
-    int ngauss_energy = 6;
+    /// Gauss points for energy integration (minimum 4 for triharmonic)
+    int ngauss_energy = 4;
 
     /// Ridge regularization parameter (Tikhonov)
     Real ridge_epsilon = 1e-4;
@@ -59,40 +61,41 @@ struct CGBezierSmootherConfig {
     Real bound_tolerance = 1e-10;
 
     /// Enable edge derivative constraints at Gauss points along shared edges
-    /// When enabled, normal derivatives (z_n and z_nn) are constrained to match
-    /// at Gauss quadrature points along each conforming interior edge.
-    /// This complements vertex constraints by enforcing smoothness along entire edges.
+    /// When enabled, normal derivatives are constrained to match at Gauss
+    /// quadrature points along each conforming interior edge.
     bool enable_edge_constraints = false;
 
     /// Number of Gauss points per edge for edge constraints (2, 3, or 4)
     int edge_ngauss = 4;
 };
 
-/// @brief CG Bezier bathymetry smoother with natural cross-element coupling
+/// @brief CG Bezier bathymetry smoother using triharmonic energy
 ///
 /// Fits quintic Bezier surfaces to bathymetry data using Continuous Galerkin
-/// assembly. Key differences from DG BezierBathymetrySmoother:
+/// assembly with triharmonic regularization. Key features:
 ///   - DOFs at element boundaries are SHARED (not duplicated)
-///   - Thin plate energy assembled globally with cross-element coupling
-///   - No explicit C² constraints needed at conforming interfaces
-///   - Only hanging node constraints for non-conforming (AMR) meshes
+///   - Triharmonic energy minimizes curvature gradient: |grad(Laplacian z)|^2
+///   - Natural smoothing across element boundaries through energy minimization
+///   - Edge constraints for additional derivative continuity (optional)
+///   - Hanging node constraints for non-conforming (AMR) meshes
 ///
-/// This approach naturally eliminates ridges at element boundaries because
-/// shared DOFs contribute to the energy of multiple elements, creating
-/// smooth transitions through energy minimization.
-class CGBezierBathymetrySmoother {
+/// Compared to biharmonic (thin plate) smoother, triharmonic produces surfaces
+/// where the curvature changes more gradually, avoiding rapid curvature transitions.
+class CGTriharmonicBezierBathymetrySmoother {
 public:
     /// @brief Construct smoother for a quadtree mesh
     /// @param mesh 2D quadtree mesh
     /// @param config Configuration parameters
-    explicit CGBezierBathymetrySmoother(const QuadtreeAdapter& mesh,
-                                         const CGBezierSmootherConfig& config = {});
+    explicit CGTriharmonicBezierBathymetrySmoother(
+        const QuadtreeAdapter& mesh,
+        const CGTriharmonicBezierSmootherConfig& config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
     /// @param octree 3D mesh
     /// @param config Configuration parameters
-    explicit CGBezierBathymetrySmoother(const OctreeAdapter& octree,
-                                         const CGBezierSmootherConfig& config = {});
+    explicit CGTriharmonicBezierBathymetrySmoother(
+        const OctreeAdapter& octree,
+        const CGTriharmonicBezierSmootherConfig& config = {});
 
     // =========================================================================
     // Data input
@@ -130,7 +133,7 @@ public:
     }
 
     /// @brief Get configuration
-    const CGBezierSmootherConfig& config() const { return config_; }
+    const CGTriharmonicBezierSmootherConfig& config() const { return config_; }
 
     // =========================================================================
     // Solve
@@ -141,7 +144,7 @@ public:
     /// If the mesh is conforming (no hanging nodes), solves unconstrained:
     ///   minimize: xᵀQx + cᵀx
     ///
-    /// If there are hanging nodes, solves KKT system:
+    /// If there are hanging nodes or edge constraints, solves KKT system:
     ///   [Q   Aᵀ] [x]   [-c]
     ///   [A    0] [μ] = [ 0]
     void solve();
@@ -193,7 +196,7 @@ public:
     /// @brief Get total objective value
     Real objective_value() const;
 
-    /// @brief Get constraint violation (for hanging nodes)
+    /// @brief Get constraint violation (for hanging nodes and edge constraints)
     Real constraint_violation() const;
 
     /// @brief Get number of global DOFs
@@ -202,8 +205,11 @@ public:
     /// @brief Get number of free DOFs (after constraint elimination)
     Index num_free_dofs() const { return dof_manager_->num_free_dofs(); }
 
-    /// @brief Get number of constraints (hanging nodes only)
-    Index num_constraints() const { return dof_manager_->num_constraints(); }
+    /// @brief Get number of constraints (hanging nodes + edge constraints)
+    Index num_constraints() const {
+        return dof_manager_->num_constraints() +
+               dof_manager_->num_edge_derivative_constraints();
+    }
 
     /// @brief Get the mesh
     const QuadtreeAdapter& mesh() const { return *quadtree_; }
@@ -217,11 +223,11 @@ private:
     const QuadtreeAdapter* quadtree_ = nullptr;
 
     /// Configuration
-    CGBezierSmootherConfig config_;
+    CGTriharmonicBezierSmootherConfig config_;
 
     /// Components
     std::unique_ptr<BezierBasis2D> basis_;
-    std::unique_ptr<ThinPlateHessian> thin_plate_hessian_;
+    std::unique_ptr<TriharmonicHessian> triharmonic_hessian_;
     std::unique_ptr<CGBezierDofManager> dof_manager_;
 
     /// Solution (global DOF values)
@@ -230,7 +236,7 @@ private:
     bool data_set_ = false;
 
     /// Assembled matrices (cached)
-    SpMat H_global_;       ///< Global thin plate Hessian
+    SpMat H_global_;       ///< Global triharmonic Hessian
     SpMat BtWB_global_;    ///< Global data fitting normal matrix
     VecX BtWd_global_;     ///< Global data fitting RHS
     Real dTWd_global_ = 0; ///< Data self-product for residual computation
@@ -238,16 +244,16 @@ private:
     /// Initialize components
     void init_components();
 
-    /// Assemble global thin plate Hessian with CG assembly
-    void assemble_thin_plate_hessian();
+    /// Assemble global triharmonic Hessian with CG assembly
+    void assemble_triharmonic_hessian();
 
     /// Assemble data fitting matrices with CG assembly
     void assemble_data_fitting(std::function<Real(Real, Real)> bathy_func);
 
-    /// Solve unconstrained (no hanging nodes)
+    /// Solve unconstrained (no hanging nodes or edge constraints)
     void solve_unconstrained();
 
-    /// Solve with hanging node constraints (KKT system)
+    /// Solve with constraints (KKT system)
     void solve_with_constraints();
 
     /// Find element containing point

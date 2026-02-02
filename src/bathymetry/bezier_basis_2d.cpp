@@ -291,12 +291,20 @@ VecX BezierBasis2D::evaluate_derivative(Real u, Real v, int nu, int nv) const {
     return dphi;
 }
 
+VecX BezierBasis2D::evaluate_d3uuu(Real u, Real v) const {
+    return evaluate_derivative(u, v, 3, 0);
+}
+
 VecX BezierBasis2D::evaluate_d3uuv(Real u, Real v) const {
     return evaluate_derivative(u, v, 2, 1);
 }
 
 VecX BezierBasis2D::evaluate_d3uvv(Real u, Real v) const {
     return evaluate_derivative(u, v, 1, 2);
+}
+
+VecX BezierBasis2D::evaluate_d3vvv(Real u, Real v) const {
+    return evaluate_derivative(u, v, 0, 3);
 }
 
 VecX BezierBasis2D::evaluate_d4uuvv(Real u, Real v) const {

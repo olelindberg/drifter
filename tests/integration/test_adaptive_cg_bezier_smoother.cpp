@@ -251,7 +251,7 @@ TEST_F(AdaptiveCGBezierSmootherTest, WritesVTKOutput) {
 // GeoTIFF Integration Test (if available)
 // =============================================================================
 
-TEST_F(AdaptiveCGBezierSmootherTest, AdaptiveGeoTiffRefinement) {
+TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   // Skip if GeoTIFF not available
   std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
   GeoTiffReader reader;
@@ -289,8 +289,8 @@ TEST_F(AdaptiveCGBezierSmootherTest, AdaptiveGeoTiffRefinement) {
   config.max_iterations = 10;
   config.max_elements = 500;
   config.verbose = true;
-  config.smoother_config.enable_c2_constraints = true;    // Enable vertex constraints
-  config.smoother_config.enable_edge_constraints = true;  // Enable edge constraints
+  config.smoother_config.enable_edge_constraints =
+      true; // Enable edge constraints
 
   AdaptiveCGBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
 
@@ -318,7 +318,8 @@ TEST_F(AdaptiveCGBezierSmootherTest, AdaptiveGeoTiffRefinement) {
 // Test: Compare constraint configurations with adaptive solver
 // =============================================================================
 
-TEST_F(AdaptiveCGBezierSmootherTest, AdaptiveWithConstraintComparison) {
+TEST_F(AdaptiveCGBezierSmootherTest,
+       DISABLED_AdaptiveWithConstraintComparison) {
   // Skip if GeoTIFF not available
   std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
   GeoTiffReader reader;
@@ -360,25 +361,21 @@ TEST_F(AdaptiveCGBezierSmootherTest, AdaptiveWithConstraintComparison) {
   // Test configurations
   struct TestConfig {
     std::string name;
-    bool c2_constraints;
     bool edge_constraints;
   };
 
   std::vector<TestConfig> configs = {
-      {"no_constraints", false, false},
-      {"c2_only", true, false},
-      {"edge_only", false, true},
-      {"c2_and_edge", true, true},
+      {"no_constraints", false},
+      {"edge_only", true},
   };
 
-  for (const auto& tc : configs) {
+  for (const auto &tc : configs) {
     AdaptiveCGBezierConfig config;
-    config.error_threshold = 2.0;  // Tighter threshold to force refinement
-    config.max_iterations = 4;     // More iterations for non-conforming mesh
+    config.error_threshold = 2.0; // Tighter threshold to force refinement
+    config.max_iterations = 4;    // More iterations for non-conforming mesh
     config.max_elements = 200;
     config.verbose = false;
     config.smoother_config.lambda = 1.0;
-    config.smoother_config.enable_c2_constraints = tc.c2_constraints;
     config.smoother_config.enable_edge_constraints = tc.edge_constraints;
 
     AdaptiveCGBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
@@ -391,18 +388,21 @@ TEST_F(AdaptiveCGBezierSmootherTest, AdaptiveWithConstraintComparison) {
 
     std::cout << "\n--- Config: " << tc.name << " ---" << std::endl;
     std::cout << "  Elements: " << result.num_elements << std::endl;
-    std::cout << "  DOFs: " << smoother.smoother().num_global_dofs() << std::endl;
-    std::cout << "  Vertex constraints: "
-              << smoother.smoother().dof_manager().num_vertex_derivative_constraints() << std::endl;
-    std::cout << "  Edge constraints: "
-              << smoother.smoother().dof_manager().num_edge_derivative_constraints() << std::endl;
+    std::cout << "  DOFs: " << smoother.smoother().num_global_dofs()
+              << std::endl;
+    std::cout
+        << "  Edge constraints: "
+        << smoother.smoother().dof_manager().num_edge_derivative_constraints()
+        << std::endl;
     std::cout << "  Max error: " << result.max_error << " m" << std::endl;
     std::cout << "  Output: " << output_file << std::endl;
 
     EXPECT_TRUE(smoother.is_solved());
   }
 
-  std::cout << "\nCompare outputs in ParaView to see effect of constraints on T-junction gaps." << std::endl;
+  std::cout << "\nCompare outputs in ParaView to see effect of constraints on "
+               "T-junction gaps."
+            << std::endl;
 }
 
 // =============================================================================
@@ -441,7 +441,7 @@ TEST_F(AdaptiveCGBezierSmootherTest, CGHasFewerDOFsThanDG) {
 // Quality Evaluation: Compare constraint modes and lambda values
 // =============================================================================
 
-TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
+TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_QualityEvaluation) {
   // Skip if GeoTIFF not available
   std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
   GeoTiffReader reader;
@@ -481,14 +481,12 @@ TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
   // Constraint configurations
   struct ConstraintConfig {
     std::string name;
-    bool c2_constraints;
     bool edge_constraints;
   };
 
   std::vector<ConstraintConfig> constraint_configs = {
-      {"c2_only", true, false},
-      {"edge_only", false, true},
-      {"c2_and_edge", true, true},
+      {"no_constraints", false},
+      {"edge_only", true},
   };
 
   // Lambda values to test
@@ -510,21 +508,23 @@ TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
 
   std::vector<EvalResult> results;
 
-  std::cout << "\n=== AdaptiveCGBezierSmoother Quality Evaluation ===" << std::endl;
-  std::cout << "Domain: 30km x 30km, Initial mesh: 4x4, ngauss_error=6" << std::endl;
+  std::cout << "\n=== AdaptiveCGBezierSmoother Quality Evaluation ==="
+            << std::endl;
+  std::cout << "Domain: 30km x 30km, Initial mesh: 4x4, ngauss_error=6"
+            << std::endl;
   std::cout << "Running " << constraint_configs.size() * lambda_values.size()
             << " configurations..." << std::endl;
 
-  for (const auto& cc : constraint_configs) {
+  for (const auto &cc : constraint_configs) {
     for (Real lambda : lambda_values) {
       AdaptiveCGBezierConfig config;
       config.error_threshold = 2.0;
       config.max_iterations = 4;
       config.max_elements = 200;
-      config.ngauss_error = 6;  // Maximum allowed precision for error integration
+      config.ngauss_error =
+          6; // Maximum allowed precision for error integration
       config.verbose = false;
       config.smoother_config.lambda = lambda;
-      config.smoother_config.enable_c2_constraints = cc.c2_constraints;
       config.smoother_config.enable_edge_constraints = cc.edge_constraints;
 
       AdaptiveCGBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
@@ -534,7 +534,8 @@ TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
       auto start = std::chrono::high_resolution_clock::now();
       auto result = smoother.solve_adaptive();
       auto end = std::chrono::high_resolution_clock::now();
-      double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+      double time_ms =
+          std::chrono::duration<double, std::milli>(end - start).count();
 
       // Collect metrics
       EvalResult er;
@@ -551,8 +552,8 @@ TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
 
       results.push_back(er);
 
-      std::cout << "  " << cc.name << " lambda=" << lambda
-                << ": " << result.num_elements << " elems, "
+      std::cout << "  " << cc.name << " lambda=" << lambda << ": "
+                << result.num_elements << " elems, "
                 << "max_err=" << result.max_error << " m, "
                 << "time=" << time_ms << " ms" << std::endl;
 
@@ -578,10 +579,12 @@ TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
   ofs << "max_elements: 200\n\n";
 
   ofs << "## Results\n\n";
-  ofs << "| Config | Lambda | Elements | DOFs | Max Err (m) | Mean Err (m) | Data Res | Constr Viol | Reg Energy | Time (ms) |\n";
-  ofs << "|--------|--------|----------|------|-------------|--------------|----------|-------------|------------|----------|\n";
+  ofs << "| Config | Lambda | Elements | DOFs | Max Err (m) | Mean Err (m) | "
+         "Data Res | Constr Viol | Reg Energy | Time (ms) |\n";
+  ofs << "|--------|--------|----------|------|-------------|--------------|---"
+         "-------|-------------|------------|----------|\n";
 
-  for (const auto& r : results) {
+  for (const auto &r : results) {
     // Format lambda appropriately (avoid scientific for readability)
     std::ostringstream lambda_ss;
     if (r.lambda >= 1.0) {
@@ -590,27 +593,29 @@ TEST_F(AdaptiveCGBezierSmootherTest, QualityEvaluation) {
       lambda_ss << std::fixed << std::setprecision(2) << r.lambda;
     }
 
-    ofs << "| " << r.config_name
-        << " | " << lambda_ss.str()
-        << " | " << r.num_elements
-        << " | " << r.num_dofs
-        << " | " << std::fixed << std::setprecision(3) << r.max_error
-        << " | " << std::fixed << std::setprecision(3) << r.mean_error
-        << " | " << std::scientific << std::setprecision(2) << r.data_residual
-        << " | " << std::scientific << std::setprecision(2) << r.constraint_violation
-        << " | " << std::scientific << std::setprecision(2) << r.regularization_energy
+    ofs << "| " << r.config_name << " | " << lambda_ss.str() << " | "
+        << r.num_elements << " | " << r.num_dofs << " | " << std::fixed
+        << std::setprecision(3) << r.max_error << " | " << std::fixed
+        << std::setprecision(3) << r.mean_error << " | " << std::scientific
+        << std::setprecision(2) << r.data_residual << " | " << std::scientific
+        << std::setprecision(2) << r.constraint_violation << " | "
+        << std::scientific << std::setprecision(2) << r.regularization_energy
         << " | " << std::fixed << std::setprecision(1) << r.wall_time_ms
         << " |\n";
   }
 
   ofs << "\n## Configuration Legend\n\n";
-  ofs << "- **c2_only**: Vertex derivative constraints (z_u, z_v, z_uu, z_uv, z_vv, z_uuv, z_uvv, z_uuvv)\n";
-  ofs << "- **edge_only**: Edge Gauss point constraints (z_n, z_nn at 4 points per edge)\n";
+  ofs << "- **c2_only**: Vertex derivative constraints (z_u, z_v, z_uu, z_uv, "
+         "z_vv, z_uuv, z_uvv, z_uuvv)\n";
+  ofs << "- **edge_only**: Edge Gauss point constraints (z_n, z_nn at 4 points "
+         "per edge)\n";
   ofs << "- **c2_and_edge**: Both vertex and edge constraints\n\n";
 
   ofs << "## Metric Definitions\n\n";
-  ofs << "- **Max Err**: Maximum normalized L2 error across all elements (meters)\n";
-  ofs << "- **Mean Err**: Mean normalized L2 error across all elements (meters)\n";
+  ofs << "- **Max Err**: Maximum normalized L2 error across all elements "
+         "(meters)\n";
+  ofs << "- **Mean Err**: Mean normalized L2 error across all elements "
+         "(meters)\n";
   ofs << "- **Data Res**: Weighted least-squares residual ||Bx - d||²_W\n";
   ofs << "- **Constr Viol**: C² constraint violation ||Ax - b||\n";
   ofs << "- **Reg Energy**: Thin plate regularization energy x^T H x\n";

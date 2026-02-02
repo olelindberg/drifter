@@ -92,11 +92,6 @@ void CGBezierBathymetrySmoother::init_components() {
                                                               config_.gradient_weight);
     dof_manager_ = std::make_unique<CGBezierDofManager>(*quadtree_);
 
-    // Build vertex derivative constraints if C² continuity is enabled
-    if (config_.enable_c2_constraints) {
-        dof_manager_->build_vertex_derivative_constraints();
-    }
-
     // Build edge derivative constraints if enabled
     if (config_.enable_edge_constraints) {
         dof_manager_->build_edge_derivative_constraints(config_.edge_ngauss);
@@ -268,9 +263,8 @@ void CGBezierBathymetrySmoother::solve() {
             "CGBezierBathymetrySmoother: bathymetry data not set");
     }
 
-    // Use constrained solve if we have any constraints (hanging nodes, vertex, or edge derivatives)
+    // Use constrained solve if we have any constraints (hanging nodes or edge derivatives)
     Index total_constraints = dof_manager_->num_constraints() +
-                              dof_manager_->num_vertex_derivative_constraints() +
                               dof_manager_->num_edge_derivative_constraints();
 
     if (total_constraints == 0) {
@@ -329,9 +323,8 @@ void CGBezierBathymetrySmoother::solve_unconstrained() {
 void CGBezierBathymetrySmoother::solve_with_constraints() {
     Index num_dofs = dof_manager_->num_global_dofs();
     Index num_hanging_constraints = dof_manager_->num_constraints();
-    Index num_vertex_constraints = dof_manager_->num_vertex_derivative_constraints();
     Index num_edge_constraints = dof_manager_->num_edge_derivative_constraints();
-    Index num_constraints = num_hanging_constraints + num_vertex_constraints + num_edge_constraints;
+    Index num_constraints = num_hanging_constraints + num_edge_constraints;
 
     // Build Q matrix (same as unconstrained)
     Real norm_BtWB = BtWB_global_.norm();
@@ -349,8 +342,6 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
     VecX c = -config_.lambda * BtWd_global_;
 
     // Build combined constraint matrix A
-    // First: hanging node constraints (from DOF manager)
-    // Second: vertex derivative constraints for C² continuity
     std::vector<Eigen::Triplet<Real>> A_triplets;
     A_triplets.reserve(num_constraints * 50);  // Estimate non-zeros
 
@@ -362,31 +353,6 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
         for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
             A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
         }
-        ++row;
-    }
-
-    // Add vertex derivative constraints
-    // Form: sum(c1_k * phi1_k) / scale1 - sum(c2_k * phi2_k) / scale2 = 0
-    for (const auto& vc : dof_manager_->vertex_derivative_constraints()) {
-        const auto& global_dofs1 = dof_manager_->element_dofs(vc.elem1);
-        const auto& global_dofs2 = dof_manager_->element_dofs(vc.elem2);
-
-        // Element 1 contribution (positive)
-        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
-            Real coeff = vc.coeffs1(k) / vc.scale1;
-            if (std::abs(coeff) > 1e-14) {
-                A_triplets.emplace_back(row, global_dofs1[k], coeff);
-            }
-        }
-
-        // Element 2 contribution (negative)
-        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
-            Real coeff = vc.coeffs2(k) / vc.scale2;
-            if (std::abs(coeff) > 1e-14) {
-                A_triplets.emplace_back(row, global_dofs2[k], -coeff);
-            }
-        }
-
         ++row;
     }
 
@@ -657,13 +623,12 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
             "CGBezierBathymetrySmoother: must call solve() before write_vtk()");
     }
 
-    io::write_bezier_surface_vtk(
+    // Use CG-aware VTK writer that deduplicates shared vertices at element
+    // boundaries, producing a properly connected mesh without visual gaps
+    io::write_cg_bezier_surface_vtk(
         filename,
         *quadtree_,
-        [this](Index e) { return element_coefficients(e); },
-        [this](const VecX& coeffs, Real u, Real v) {
-            return basis_->evaluate_scalar(coeffs, u, v);
-        },
+        [this](Real x, Real y) { return evaluate(x, y); },
         resolution > 0 ? resolution : 11,
         "elevation");
 }
@@ -715,9 +680,8 @@ Real CGBezierBathymetrySmoother::objective_value() const {
 
 Real CGBezierBathymetrySmoother::constraint_violation() const {
     Index num_hanging = dof_manager_->num_constraints();
-    Index num_vertex = dof_manager_->num_vertex_derivative_constraints();
     Index num_edge = dof_manager_->num_edge_derivative_constraints();
-    Index num_constraints = num_hanging + num_vertex + num_edge;
+    Index num_constraints = num_hanging + num_edge;
 
     if (!solved_ || num_constraints == 0) return 0.0;
 
@@ -731,26 +695,6 @@ Real CGBezierBathymetrySmoother::constraint_violation() const {
         A_triplets.emplace_back(row, hc.slave_dof, 1.0);
         for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
             A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
-        }
-        ++row;
-    }
-
-    // Vertex derivative constraints
-    for (const auto& vc : dof_manager_->vertex_derivative_constraints()) {
-        const auto& global_dofs1 = dof_manager_->element_dofs(vc.elem1);
-        const auto& global_dofs2 = dof_manager_->element_dofs(vc.elem2);
-
-        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
-            Real coeff = vc.coeffs1(k) / vc.scale1;
-            if (std::abs(coeff) > 1e-14) {
-                A_triplets.emplace_back(row, global_dofs1[k], coeff);
-            }
-        }
-        for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
-            Real coeff = vc.coeffs2(k) / vc.scale2;
-            if (std::abs(coeff) > 1e-14) {
-                A_triplets.emplace_back(row, global_dofs2[k], -coeff);
-            }
         }
         ++row;
     }

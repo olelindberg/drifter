@@ -27,18 +27,6 @@ struct CubicHangingNodeConstraint {
     std::vector<Real> weights;
 };
 
-/// @brief C¹ vertex derivative constraint for cubic elements
-///
-/// Enforces matching of first derivatives (z_u, z_v) and mixed partial (z_uv)
-/// at shared vertices. Form: sum(c1*phi1)/scale1 - sum(c2*phi2)/scale2 = 0
-struct CubicVertexDerivativeConstraint {
-    Index elem1, elem2;
-    int corner1, corner2;
-    int nu, nv;                     ///< Derivative order (0,1), (1,0), or (1,1)
-    VecX coeffs1, coeffs2;          ///< Basis derivative coefficients (16 values each)
-    Real scale1, scale2;            ///< Element size scale factors (dx^nu * dy^nv)
-};
-
 /// @brief C¹ edge derivative constraint for cubic elements
 ///
 /// Enforces matching of normal derivative z_n at Gauss points along shared edges.
@@ -87,17 +75,6 @@ public:
     }
     Index num_constraints() const { return static_cast<Index>(constraints_.size()); }
 
-    const std::vector<CubicVertexDerivativeConstraint>& vertex_derivative_constraints() const {
-        return vertex_derivative_constraints_;
-    }
-    Index num_vertex_derivative_constraints() const {
-        return static_cast<Index>(vertex_derivative_constraints_.size());
-    }
-
-    /// Build C¹ vertex derivative constraints
-    /// Enforces: z_u, z_v, z_uv matching at shared vertices
-    void build_vertex_derivative_constraints();
-
     const std::vector<CubicEdgeDerivativeConstraint>& edge_derivative_constraints() const {
         return edge_derivative_constraints_;
     }
@@ -134,7 +111,6 @@ private:
     std::vector<Index> boundary_dofs_;
     std::set<Index> boundary_dof_set_;
     std::vector<CubicHangingNodeConstraint> constraints_;
-    std::vector<CubicVertexDerivativeConstraint> vertex_derivative_constraints_;
     std::vector<CubicEdgeDerivativeConstraint> edge_derivative_constraints_;
     std::set<Index> constrained_dofs_;
     std::vector<Index> global_to_free_;

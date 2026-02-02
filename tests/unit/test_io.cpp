@@ -2,6 +2,7 @@
 #include "io/vtk_writer.hpp"
 #include "io/zarr_writer.hpp"
 #include "mesh/geotiff_reader.hpp"
+#include "mesh/coastline_refinement.hpp"
 #include "mesh/octree_adapter.hpp"
 #include "../test_utils.hpp"
 #include <filesystem>
@@ -33,17 +34,17 @@ protected:
 };
 
 // =============================================================================
-// VTK Legacy Format Tests (using VTKWriter with Legacy format)
+// VTK Format Tests
 // =============================================================================
 
-TEST_F(IOTest, VTKWriterLegacyFormat) {
-    std::string basename = (test_dir_ / "test_legacy").string();
+TEST_F(IOTest, VTKWriterVTUFormat) {
+    std::string basename = (test_dir_ / "test_vtu").string();
 
     // Create a simple 1x1x1 mesh
     OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
     mesh.build_uniform(1, 1, 1);
 
-    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    VTKWriter writer(basename, VTKFormat::VTU, VTKEncoding::ASCII);
     writer.set_polynomial_order(1);
     writer.set_mesh(mesh);
 
@@ -61,60 +62,48 @@ TEST_F(IOTest, VTKWriterLegacyFormat) {
     writer.write(0, 0.0);
 
     // Verify file was created
-    std::string filename = basename + "_000000.vtk";
+    std::string filename = basename + "_000000.vtu";
     ASSERT_TRUE(fs::exists(filename));
 
-    // Verify file content
+    // Verify file content (VTU XML format)
     std::ifstream file(filename);
-    std::string line;
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
 
-    // Check header
-    std::getline(file, line);
-    EXPECT_EQ(line, "# vtk DataFile Version 3.0");
-
-    std::getline(file, line);
-    EXPECT_TRUE(line.find("DRIFTER") != std::string::npos);
-
-    std::getline(file, line);
-    EXPECT_EQ(line, "ASCII");
-
-    std::getline(file, line);
-    EXPECT_EQ(line, "DATASET UNSTRUCTURED_GRID");
+    EXPECT_TRUE(content.find("<?xml version") != std::string::npos);
+    EXPECT_TRUE(content.find("<VTKFile") != std::string::npos);
+    EXPECT_TRUE(content.find("UnstructuredGrid") != std::string::npos);
 }
 
-TEST_F(IOTest, VTKWriterLegacyPointCount) {
-    std::string basename = (test_dir_ / "test_legacy_points").string();
+TEST_F(IOTest, VTKWriterVTUPointCount) {
+    std::string basename = (test_dir_ / "test_vtu_points").string();
 
     // Create a 2x2x2 mesh (8 elements, each with 8 points = 64 points for order 1)
     OctreeAdapter mesh(0.0, 2.0, 0.0, 2.0, 0.0, 2.0);
     mesh.build_uniform(2, 2, 2);
 
-    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    VTKWriter writer(basename, VTKFormat::VTU, VTKEncoding::ASCII);
     writer.set_polynomial_order(1);
     writer.set_mesh(mesh);
     writer.write(0, 0.0);
 
     // Read back and verify point count (8 elements * 8 points = 64)
-    std::string filename = basename + "_000000.vtk";
+    std::string filename = basename + "_000000.vtu";
     std::ifstream file(filename);
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.find("POINTS 64") != std::string::npos) {
-            SUCCEED();
-            return;
-        }
-    }
-    FAIL() << "Expected POINTS 64 in VTK file";
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+
+    EXPECT_TRUE(content.find("NumberOfPoints=\"64\"") != std::string::npos);
 }
 
-TEST_F(IOTest, VTKWriterLegacyCellData) {
-    std::string basename = (test_dir_ / "test_legacy_cells").string();
+TEST_F(IOTest, VTKWriterVTUCellData) {
+    std::string basename = (test_dir_ / "test_vtu_cells").string();
 
     // Create a simple 1x1x1 mesh
     OctreeAdapter mesh(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
     mesh.build_uniform(1, 1, 1);
 
-    VTKWriter writer(basename, VTKFormat::Legacy, VTKEncoding::ASCII);
+    VTKWriter writer(basename, VTKFormat::VTU, VTKEncoding::ASCII);
     writer.set_polynomial_order(1);
     writer.set_mesh(mesh);
 
@@ -125,14 +114,14 @@ TEST_F(IOTest, VTKWriterLegacyCellData) {
 
     writer.write(0, 0.0);
 
-    // Verify file contains CELL_DATA
-    std::string filename = basename + "_000000.vtk";
+    // Verify file contains CellData
+    std::string filename = basename + "_000000.vtu";
     std::ifstream file(filename);
     std::string content((std::istreambuf_iterator<char>(file)),
                          std::istreambuf_iterator<char>());
 
-    EXPECT_TRUE(content.find("CELL_DATA 1") != std::string::npos);
-    EXPECT_TRUE(content.find("SCALARS cell_id") != std::string::npos);
+    EXPECT_TRUE(content.find("<CellData>") != std::string::npos);
+    EXPECT_TRUE(content.find("Name=\"cell_id\"") != std::string::npos);
 }
 
 // =============================================================================
@@ -142,10 +131,10 @@ TEST_F(IOTest, VTKWriterLegacyCellData) {
 TEST_F(IOTest, VTKWriterConstruction) {
     std::string basename = (test_dir_ / "output").string();
 
-    // Test different formats
+    // Test different formats and encodings
     VTKWriter writer_vtu(basename + "_vtu", VTKFormat::VTU);
     VTKWriter writer_ascii(basename + "_ascii", VTKFormat::VTU, VTKEncoding::ASCII);
-    VTKWriter writer_legacy(basename + "_legacy", VTKFormat::Legacy);
+    VTKWriter writer_pvtu(basename + "_pvtu", VTKFormat::PVTU);
 
     // No exceptions should be thrown
     SUCCEED();
@@ -184,8 +173,8 @@ TEST_F(IOTest, VTKWriterGetFilename) {
     EXPECT_TRUE(writer_vtu.get_filename(0).find("_000000") != std::string::npos);
     EXPECT_TRUE(writer_vtu.get_filename(123).find("_000123") != std::string::npos);
 
-    VTKWriter writer_legacy(basename, VTKFormat::Legacy);
-    EXPECT_TRUE(writer_legacy.get_filename(0).find(".vtk") != std::string::npos);
+    VTKWriter writer_pvtu(basename, VTKFormat::PVTU);
+    EXPECT_TRUE(writer_pvtu.get_filename(0).find(".vtu") != std::string::npos);
 }
 
 // =============================================================================
@@ -1227,5 +1216,92 @@ TEST_F(IOTest, SeabedVTKWriterBernsteinOutput) {
     EXPECT_TRUE(fs::exists(vtu_filename));
     EXPECT_GT(writer.num_points(), 0);
     EXPECT_GT(writer.num_cells(), 0);
+}
+
+// =============================================================================
+// Coastline Refinement Tests
+// =============================================================================
+
+TEST_F(IOTest, CoastlineReaderAvailability) {
+    // Test that is_available() returns a consistent value
+    bool available = CoastlineReader::is_available();
+    // Either GDAL/OGR is available or not - just verify no crash
+    EXPECT_TRUE(available || !available);
+}
+
+TEST_F(IOTest, CoastlineReaderConstruction) {
+    CoastlineReader reader;
+
+    // Empty reader should have 0 polygons
+    EXPECT_EQ(reader.num_polygons(), 0);
+}
+
+TEST_F(IOTest, CoastlineReaderLoadNonexistent) {
+    CoastlineReader reader;
+
+    // Loading nonexistent file should fail
+    bool success = reader.load("/nonexistent/path/file.gpkg");
+
+    EXPECT_FALSE(success);
+
+    // Should have error message
+    std::string error = reader.last_error();
+    EXPECT_FALSE(error.empty());
+}
+
+TEST_F(IOTest, CoastlineIndexConstruction) {
+    CoastlineIndex index;
+
+    // Empty index should have 0 segments
+    EXPECT_EQ(index.num_segments(), 0);
+
+    // Empty index should not intersect anything
+    EXPECT_FALSE(index.intersects(0.0, 0.0, 1.0, 1.0));
+}
+
+TEST_F(IOTest, CoastlineRefinementWithEmptyIndex) {
+    // Create an empty CoastlineIndex
+    auto index = std::make_shared<CoastlineIndex>();
+
+    // Create refinement with max level 5
+    CoastlineRefinement refinement(index, 5);
+
+    // With empty index, nothing should be refined
+    ElementBounds bounds;
+    bounds.xmin = 0.0;
+    bounds.xmax = 1.0;
+    bounds.ymin = 0.0;
+    bounds.ymax = 1.0;
+    bounds.zmin = -1.0;
+    bounds.zmax = 0.0;
+
+    // Empty index means no coastline intersections
+    EXPECT_FALSE(refinement.should_refine(bounds, 0));
+
+    // Mask should be NONE for non-intersecting elements
+    EXPECT_EQ(refinement.get_mask(bounds), RefineMask::NONE);
+}
+
+TEST_F(IOTest, CoastlineRefinementMaxLevel) {
+    // Even with a real coastline index, refinement should stop at max_level
+    // We test this logic with an empty index (always returns false anyway)
+    auto index = std::make_shared<CoastlineIndex>();
+    const int max_level = 3;
+
+    CoastlineRefinement refinement(index, max_level);
+
+    ElementBounds bounds;
+    bounds.xmin = 0.0;
+    bounds.xmax = 1.0;
+    bounds.ymin = 0.0;
+    bounds.ymax = 1.0;
+    bounds.zmin = -1.0;
+    bounds.zmax = 0.0;
+
+    // Test at various levels - should never refine with empty index
+    EXPECT_FALSE(refinement.should_refine(bounds, 0));
+    EXPECT_FALSE(refinement.should_refine(bounds, max_level - 1));
+    EXPECT_FALSE(refinement.should_refine(bounds, max_level));
+    EXPECT_FALSE(refinement.should_refine(bounds, max_level + 1));
 }
 
