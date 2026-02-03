@@ -60,12 +60,15 @@ public:
   /// Convert (i, j) tensor indices to linear DOF index
   /// @param i Index in u direction (0 or 1)
   /// @param j Index in v direction (0 or 1)
-  static int dof_index(int i, int j) { return i + N1D * j; }
+  /// Layout: DOF = j + N1D * i to match diagram [0,1] bottom, [2,3] top with u
+  /// varying
+  static int dof_index(int i, int j) { return j + N1D * i; }
 
   /// Extract (i, j) from linear DOF index
+  /// Layout: DOF = j + N1D * i, so i = dof / N1D, j = dof % N1D
   static void dof_ij(int dof, int &i, int &j) {
-    j = dof / N1D;
-    i = dof % N1D;
+    i = dof / N1D;
+    j = dof % N1D;
   }
 
   /// Get control point position for DOF index (at corners of [0,1]^2)
