@@ -20,6 +20,7 @@
 #include "core/types.hpp"
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace drifter {
@@ -120,7 +121,9 @@ void write_cg_bezier_surface_vtk(
     const QuadtreeAdapter& mesh,
     const std::function<Real(Real, Real)>& evaluate_at,
     int resolution = 11,
-    const std::string& scalar_name = "elevation");
+    const std::string& scalar_name = "elevation",
+    const std::vector<std::pair<std::string, std::vector<Real>>>&
+        element_cell_data = {});
 
 /// @brief Write CG Bezier surface with explicit quantization parameters
 ///
@@ -143,7 +146,9 @@ void write_cg_bezier_surface_vtk(
     Real ymin_domain,
     Real inv_quantization_tol,
     int resolution = 11,
-    const std::string& scalar_name = "elevation");
+    const std::string& scalar_name = "elevation",
+    const std::vector<std::pair<std::string, std::vector<Real>>>&
+        element_cell_data = {});
 
 }  // namespace io
 }  // namespace drifter

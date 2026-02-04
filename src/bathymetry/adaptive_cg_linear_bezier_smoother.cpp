@@ -1,8 +1,10 @@
 #include "bathymetry/adaptive_cg_linear_bezier_smoother.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
+#include "core/scoped_timer.hpp"
 #include "mesh/refine_mask.hpp"
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 
@@ -108,14 +110,25 @@ void AdaptiveCGLinearBezierSmoother::set_bathymetry_data(
 // =============================================================================
 
 void AdaptiveCGLinearBezierSmoother::rebuild_smoother() {
-  // Sync quadtree with refined octree
-  quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
+  {
+    OptionalScopedTimer t(
+        current_profile_ ? &current_profile_->quadtree_build_ms : nullptr);
+    // Sync quadtree with refined octree
+    quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
+  }
 
-  // Create new CG linear smoother for updated mesh
-  smoother_ = std::make_unique<CGLinearBezierBathymetrySmoother>(
-      *quadtree_, config_.smoother_config);
+  {
+    OptionalScopedTimer t(current_profile_ ? &current_profile_->smoother_init_ms
+                                           : nullptr);
+    // Create new CG linear smoother for updated mesh
+    smoother_ = std::make_unique<CGLinearBezierBathymetrySmoother>(
+        *quadtree_, config_.smoother_config);
+  }
 
-  // Apply bathymetry data
+  // Pass profile pointer so assembly sub-timings are recorded
+  smoother_->set_profile(current_profile_);
+
+  // Apply bathymetry data (assembly timings go into profile via inner smoother)
   apply_bathymetry_to_smoother();
 }
 
@@ -237,11 +250,148 @@ void AdaptiveCGLinearBezierSmoother::refine_elements(
   // Create refinement masks (XY only for 2D bathymetry)
   std::vector<RefineMask> masks(elements_to_refine.size(), RefineMask::XY);
 
-  // Refine octree (auto-balances to maintain 2:1 constraint)
-  octree_->refine(elements_to_refine, masks);
+  {
+    OptionalScopedTimer t(current_profile_ ? &current_profile_->refinement_ms
+                                           : nullptr);
+    // Refine octree (auto-balances to maintain 2:1 constraint)
+    octree_->refine(elements_to_refine, masks);
+  }
 
-  // Rebuild smoother for new mesh
-  rebuild_smoother();
+  {
+    OptionalScopedTimer t(current_profile_ ? &current_profile_->rebuild_ms
+                                           : nullptr);
+    // Rebuild smoother for new mesh
+    rebuild_smoother();
+  }
+}
+
+// =============================================================================
+// Element selection strategies
+// =============================================================================
+
+std::vector<Index>
+AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
+    const std::vector<CGLinearElementErrorEstimate> &errors) const {
+  if (errors.empty())
+    return {};
+
+  std::vector<Index> selected;
+
+  switch (config_.marking_strategy) {
+  case MarkingStrategy::DorflerSymmetric: {
+    // Dorfler bulk marking with symmetry extension:
+    // 1. Find cutoff via greedy accumulation of squared errors
+    // 2. Include ALL elements at or above the cutoff error
+    Real total_sq = 0.0;
+    for (const auto &err : errors) {
+      total_sq += err.normalized_error * err.normalized_error;
+    }
+
+    // Sort copy by error descending (stable for deterministic ordering)
+    auto sorted = errors;
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [](const CGLinearElementErrorEstimate &a,
+                        const CGLinearElementErrorEstimate &b) {
+                       return a.normalized_error > b.normalized_error;
+                     });
+
+    // Greedy selection to find cutoff error
+    Real target = config_.dorfler_theta * total_sq;
+    Real accumulated = 0.0;
+    Real cutoff_error = 0.0;
+
+    for (const auto &err : sorted) {
+      if (accumulated >= target)
+        break;
+      accumulated += err.normalized_error * err.normalized_error;
+      cutoff_error = err.normalized_error;
+    }
+
+    // Symmetry extension: include ALL elements at or above cutoff
+    Real threshold = cutoff_error * (1.0 - config_.symmetry_tolerance);
+    for (const auto &err : errors) {
+      if (err.normalized_error >= threshold) {
+        selected.push_back(err.element);
+      }
+    }
+    break;
+  }
+
+  case MarkingStrategy::Dorfler: {
+    // Standard Dorfler without symmetry extension
+    Real total_sq = 0.0;
+    for (const auto &err : errors) {
+      total_sq += err.normalized_error * err.normalized_error;
+    }
+
+    auto sorted = errors;
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [](const CGLinearElementErrorEstimate &a,
+                        const CGLinearElementErrorEstimate &b) {
+                       return a.normalized_error > b.normalized_error;
+                     });
+
+    Real target = config_.dorfler_theta * total_sq;
+    Real accumulated = 0.0;
+
+    for (const auto &err : sorted) {
+      if (accumulated >= target)
+        break;
+      selected.push_back(err.element);
+      accumulated += err.normalized_error * err.normalized_error;
+    }
+    break;
+  }
+
+  case MarkingStrategy::RelativeThreshold: {
+    // Refine all elements with error > alpha * max_error
+    Real max_err = 0.0;
+    for (const auto &err : errors) {
+      max_err = std::max(max_err, err.normalized_error);
+    }
+    Real threshold = config_.relative_alpha * max_err;
+
+    for (const auto &err : errors) {
+      if (err.normalized_error > threshold) {
+        selected.push_back(err.element);
+      }
+    }
+    break;
+  }
+
+  case MarkingStrategy::FixedFraction:
+  default: {
+    // Legacy: top refine_fraction elements
+    auto sorted = errors;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const CGLinearElementErrorEstimate &a,
+                 const CGLinearElementErrorEstimate &b) {
+                return a.normalized_error > b.normalized_error;
+              });
+    Index num = static_cast<Index>(
+        std::ceil(config_.refine_fraction * static_cast<Real>(sorted.size())));
+    num = std::max(Index(1), num);
+    for (Index i = 0; i < num && i < static_cast<Index>(sorted.size()); ++i) {
+      selected.push_back(sorted[i].element);
+    }
+    break;
+  }
+  }
+
+  // Ensure at least one element selected
+  if (selected.empty()) {
+    Real max_err = 0.0;
+    Index max_elem = errors[0].element;
+    for (const auto &err : errors) {
+      if (err.normalized_error > max_err) {
+        max_err = err.normalized_error;
+        max_elem = err.element;
+      }
+    }
+    selected.push_back(max_elem);
+  }
+
+  return selected;
 }
 
 // =============================================================================
@@ -249,19 +399,41 @@ void AdaptiveCGLinearBezierSmoother::refine_elements(
 // =============================================================================
 
 CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
+  CGLinearIterationProfile profile;
+  current_profile_ = config_.verbose ? &profile : nullptr;
+
   CGLinearAdaptationResult result;
   result.iteration = static_cast<int>(history_.size());
 
   // Create smoother if not exists
   if (!smoother_) {
+    ScopedTimer t(profile.rebuild_ms);
     rebuild_smoother();
   }
 
+  // Ensure profile pointer is set on smoother for solve sub-timings
+  smoother_->set_profile(current_profile_);
+
   // Solve on current mesh
-  smoother_->solve();
+  {
+    ScopedTimer t(profile.solve_ms);
+    smoother_->solve();
+  }
+
+  smoother_->set_profile(nullptr);
+
+  // Record context
+  profile.num_elements = quadtree_->num_elements();
+  profile.num_dofs = smoother_->num_global_dofs();
+  profile.num_free_dofs = smoother_->num_free_dofs();
+  profile.num_constraints = smoother_->num_constraints();
 
   // Estimate errors
-  auto errors = estimate_errors();
+  std::vector<CGLinearElementErrorEstimate> errors;
+  {
+    ScopedTimer t(profile.error_estimation_ms);
+    errors = estimate_errors();
+  }
 
   // Compute statistics
   Real max_err = 0.0;
@@ -284,26 +456,21 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
   if (error_converged || max_elements_reached) {
     result.converged = true;
     result.elements_refined = 0;
+    profiles_.push_back(profile);
+    current_profile_ = nullptr;
     return result;
   }
 
-  // Sort errors by normalized_error (descending) to find worst elements
-  std::sort(errors.begin(), errors.end(),
-            [](const CGLinearElementErrorEstimate &a,
-               const CGLinearElementErrorEstimate &b) {
-              return a.normalized_error > b.normalized_error;
-            });
+  // Select elements using configured marking strategy
+  std::vector<Index> selected;
+  {
+    ScopedTimer t(profile.marking_ms);
+    selected = select_elements_for_refinement(errors);
+  }
 
-  // Select top refine_fraction elements for refinement
-  Index num_to_refine = static_cast<Index>(
-      std::ceil(config_.refine_fraction * static_cast<Real>(errors.size())));
-  num_to_refine = std::max(Index(1), num_to_refine); // At least 1 element
-
-  // Collect elements to refine, filtering by refinement level limit
+  // Filter by refinement level limit
   std::vector<Index> valid_refine;
-  for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size());
-       ++i) {
-    Index elem = errors[i].element;
+  for (Index elem : selected) {
     QuadLevel level = quadtree_->element_level(elem);
     if (level.max_level() < config_.max_refinement_level) {
       valid_refine.push_back(elem);
@@ -316,10 +483,13 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
     // Can't refine further due to level limit
     result.converged = true;
   } else {
+    // refine_elements() internally times refinement_ms and rebuild_ms
     refine_elements(valid_refine);
     result.converged = false;
   }
 
+  profiles_.push_back(profile);
+  current_profile_ = nullptr;
   return result;
 }
 
@@ -329,6 +499,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::solve_adaptive() {
         "AdaptiveCGLinearBezierSmoother: bathymetry data not set");
   }
 
+  profiles_.clear();
   CGLinearAdaptationResult result;
 
   for (int iter = 0; iter < config_.max_iterations; ++iter) {
@@ -354,6 +525,10 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::solve_adaptive() {
   // Ensure final smoother is solved (in case we stopped after refinement)
   if (smoother_ && !smoother_->is_solved()) {
     smoother_->solve();
+  }
+
+  if (config_.verbose) {
+    print_profile_report();
   }
 
   return result;
@@ -387,6 +562,150 @@ void AdaptiveCGLinearBezierSmoother::write_vtk(const std::string &filename,
         "AdaptiveCGLinearBezierSmoother: must solve before writing VTK");
   }
   smoother_->write_vtk(filename, resolution);
+}
+
+// =============================================================================
+// Profiling report
+// =============================================================================
+
+void AdaptiveCGLinearBezierSmoother::print_profile_report() const {
+  if (profiles_.empty())
+    return;
+
+  // Accumulate cumulative totals
+  CGLinearIterationProfile cumulative;
+  for (const auto &p : profiles_) {
+    cumulative.rebuild_ms += p.rebuild_ms;
+    cumulative.solve_ms += p.solve_ms;
+    cumulative.error_estimation_ms += p.error_estimation_ms;
+    cumulative.marking_ms += p.marking_ms;
+    cumulative.refinement_ms += p.refinement_ms;
+    cumulative.quadtree_build_ms += p.quadtree_build_ms;
+    cumulative.smoother_init_ms += p.smoother_init_ms;
+    cumulative.hessian_assembly_ms += p.hessian_assembly_ms;
+    cumulative.data_fitting_ms += p.data_fitting_ms;
+    cumulative.matrix_build_ms += p.matrix_build_ms;
+    cumulative.sparse_lu_compute_ms += p.sparse_lu_compute_ms;
+    cumulative.sparse_lu_solve_ms += p.sparse_lu_solve_ms;
+    cumulative.constraint_condense_ms += p.constraint_condense_ms;
+  }
+
+  double grand_total = cumulative.total_ms();
+  auto pct = [&](double ms) -> double {
+    return grand_total > 0 ? 100.0 * ms / grand_total : 0.0;
+  };
+
+  std::cout << std::fixed << std::setprecision(3);
+
+  // Per-iteration table
+  std::string sep(105, '-');
+  std::cout << "\nAdaptive CG Linear Bezier Profile\n";
+  std::cout << std::string(105, '=') << "\n";
+  std::cout << std::setw(4) << "Iter" << std::setw(8) << "Elems" << std::setw(8)
+            << "DOFs" << std::setw(7) << "Cstr" << std::setw(11) << "Rebuild"
+            << std::setw(11) << "Solve" << std::setw(11) << "Errors"
+            << std::setw(11) << "Mark" << std::setw(11) << "Refine"
+            << std::setw(11) << "Total"
+            << "  [ms]\n";
+  std::cout << sep << "\n";
+
+  for (size_t i = 0; i < profiles_.size(); ++i) {
+    const auto &p = profiles_[i];
+    std::cout << std::setw(4) << i << std::setw(8) << p.num_elements
+              << std::setw(8) << p.num_dofs << std::setw(7) << p.num_constraints
+              << std::setw(11) << p.rebuild_ms << std::setw(11) << p.solve_ms
+              << std::setw(11) << p.error_estimation_ms << std::setw(11)
+              << p.marking_ms << std::setw(11) << p.refinement_ms
+              << std::setw(11) << p.total_ms() << "\n";
+  }
+
+  std::cout << sep << "\n";
+  std::cout << std::setw(27) << "Cumulative:" << std::setw(11)
+            << cumulative.rebuild_ms << std::setw(11) << cumulative.solve_ms
+            << std::setw(11) << cumulative.error_estimation_ms << std::setw(11)
+            << cumulative.marking_ms << std::setw(11)
+            << cumulative.refinement_ms << std::setw(11) << grand_total << "\n";
+  std::cout << std::string(105, '=') << "\n";
+
+  // Find bottleneck among top-level phases
+  struct Phase {
+    const char *name;
+    double ms;
+  };
+  Phase phases[] = {{"Rebuild", cumulative.rebuild_ms},
+                    {"Solve", cumulative.solve_ms},
+                    {"Error estimation", cumulative.error_estimation_ms},
+                    {"Marking", cumulative.marking_ms},
+                    {"Refinement", cumulative.refinement_ms}};
+  const Phase *bottleneck = &phases[0];
+  for (const auto &ph : phases) {
+    if (ph.ms > bottleneck->ms)
+      bottleneck = &ph;
+  }
+  std::cout << "Bottleneck: " << bottleneck->name << " ("
+            << std::setprecision(1) << pct(bottleneck->ms) << "% of total)\n";
+
+  std::cout << std::setprecision(3);
+
+  // Rebuild breakdown
+  double rebuild_total =
+      cumulative.quadtree_build_ms + cumulative.smoother_init_ms +
+      cumulative.hessian_assembly_ms + cumulative.data_fitting_ms;
+  auto rebuild_pct = [&](double ms) -> double {
+    return rebuild_total > 0 ? 100.0 * ms / rebuild_total : 0.0;
+  };
+
+  std::cout << "\nRebuild breakdown (" << cumulative.rebuild_ms
+            << " ms cumulative):\n";
+  std::cout << "  Quadtree build:     " << std::setw(10)
+            << cumulative.quadtree_build_ms << " ms (" << std::setprecision(1)
+            << rebuild_pct(cumulative.quadtree_build_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+  std::cout << "  Smoother init:      " << std::setw(10)
+            << cumulative.smoother_init_ms << " ms (" << std::setprecision(1)
+            << rebuild_pct(cumulative.smoother_init_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+  std::cout << "  Hessian assembly:   " << std::setw(10)
+            << cumulative.hessian_assembly_ms << " ms (" << std::setprecision(1)
+            << rebuild_pct(cumulative.hessian_assembly_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+  std::cout << "  Data fitting:       " << std::setw(10)
+            << cumulative.data_fitting_ms << " ms (" << std::setprecision(1)
+            << rebuild_pct(cumulative.data_fitting_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+
+  // Solve breakdown
+  double solve_total =
+      cumulative.matrix_build_ms + cumulative.constraint_condense_ms +
+      cumulative.sparse_lu_compute_ms + cumulative.sparse_lu_solve_ms;
+  auto solve_pct = [&](double ms) -> double {
+    return solve_total > 0 ? 100.0 * ms / solve_total : 0.0;
+  };
+
+  std::cout << "\nSolve breakdown (" << cumulative.solve_ms
+            << " ms cumulative):\n";
+  std::cout << "  Matrix build:       " << std::setw(10)
+            << cumulative.matrix_build_ms << " ms (" << std::setprecision(1)
+            << solve_pct(cumulative.matrix_build_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+  if (cumulative.constraint_condense_ms > 0) {
+    std::cout << "  Constraint condense:" << std::setw(10)
+              << cumulative.constraint_condense_ms << " ms ("
+              << std::setprecision(1)
+              << solve_pct(cumulative.constraint_condense_ms) << "%)\n";
+    std::cout << std::setprecision(3);
+  }
+  std::cout << "  SparseLU compute:   " << std::setw(10)
+            << cumulative.sparse_lu_compute_ms << " ms ("
+            << std::setprecision(1)
+            << solve_pct(cumulative.sparse_lu_compute_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+  std::cout << "  SparseLU solve:     " << std::setw(10)
+            << cumulative.sparse_lu_solve_ms << " ms (" << std::setprecision(1)
+            << solve_pct(cumulative.sparse_lu_solve_ms) << "%)\n";
+  std::cout << std::setprecision(3);
+
+  std::cout << std::endl;
 }
 
 } // namespace drifter

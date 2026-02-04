@@ -1,5 +1,7 @@
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/adaptive_cg_linear_bezier_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
+#include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
@@ -89,8 +91,14 @@ void CGLinearBezierBathymetrySmoother::set_bathymetry_data(
 
 void CGLinearBezierBathymetrySmoother::set_bathymetry_data(
     std::function<Real(Real, Real)> bathy_func) {
-  assemble_dirichlet_hessian();
-  assemble_data_fitting(bathy_func);
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->hessian_assembly_ms : nullptr);
+    assemble_dirichlet_hessian();
+  }
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->data_fitting_ms : nullptr);
+    assemble_data_fitting(bathy_func);
+  }
   data_set_ = true;
 }
 
@@ -243,24 +251,34 @@ void CGLinearBezierBathymetrySmoother::solve() {
 void CGLinearBezierBathymetrySmoother::solve_unconstrained() {
   Index num_dofs = dof_manager_->num_global_dofs();
 
-  // Q = alpha * H_dirichlet + lambda * BtWB (alpha computed during assembly)
-  SpMat Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
+  SpMat Q;
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->matrix_build_ms : nullptr);
+    // Q = alpha * H_dirichlet + lambda * BtWB (alpha computed during assembly)
+    Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
 
-  // Ridge regularization
-  for (Index i = 0; i < num_dofs; ++i) {
-    Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+    // Ridge regularization
+    for (Index i = 0; i < num_dofs; ++i) {
+      Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+    }
   }
 
   VecX c = -config_.lambda * BtWd_global_;
 
   Eigen::SparseLU<SpMat> solver;
-  solver.compute(Q);
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->sparse_lu_compute_ms : nullptr);
+    solver.compute(Q);
+  }
   if (solver.info() != Eigen::Success) {
     throw std::runtime_error(
         "CGLinearBezierBathymetrySmoother: SparseLU decomposition failed");
   }
 
-  solution_ = solver.solve(-c);
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->sparse_lu_solve_ms : nullptr);
+    solution_ = solver.solve(-c);
+  }
   if (solver.info() != Eigen::Success) {
     throw std::runtime_error(
         "CGLinearBezierBathymetrySmoother: SparseLU solve failed");
@@ -282,12 +300,17 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     slave_to_constraint[constraints[ci].slave_dof] = ci;
   }
 
-  // Build Q and c for all DOFs
-  SpMat Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
-  for (Index i = 0; i < num_dofs; ++i) {
-    Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+  SpMat Q;
+  VecX c;
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->matrix_build_ms : nullptr);
+    // Build Q and c for all DOFs
+    Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
+    for (Index i = 0; i < num_dofs; ++i) {
+      Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+    }
+    c = -config_.lambda * BtWd_global_;
   }
-  VecX c = -config_.lambda * BtWd_global_;
 
   // Helper: expand a global DOF to (free_index, weight) pairs
   // Free DOF: returns {(free_idx, 1.0)}
@@ -313,49 +336,62 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     return result;
   };
 
-  // Build reduced system by condensing slave DOFs
-  std::vector<Eigen::Triplet<Real>> triplets;
-  triplets.reserve(Q.nonZeros());
-  VecX c_reduced = VecX::Zero(num_free);
+  SpMat Q_reduced;
+  VecX c_reduced;
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->constraint_condense_ms
+                                   : nullptr);
+    // Build reduced system by condensing slave DOFs
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(Q.nonZeros());
+    c_reduced = VecX::Zero(num_free);
 
-  // Condense Q matrix
-  for (int k = 0; k < Q.outerSize(); ++k) {
-    for (SpMat::InnerIterator it(Q, k); it; ++it) {
-      Index I = it.row();
-      Index J = it.col();
-      Real val = it.value();
+    // Condense Q matrix
+    for (int k = 0; k < Q.outerSize(); ++k) {
+      for (SpMat::InnerIterator it(Q, k); it; ++it) {
+        Index I = it.row();
+        Index J = it.col();
+        Real val = it.value();
 
-      auto I_expanded = expand_dof(I);
-      auto J_expanded = expand_dof(J);
+        auto I_expanded = expand_dof(I);
+        auto J_expanded = expand_dof(J);
 
-      for (const auto &[If, Iw] : I_expanded) {
-        for (const auto &[Jf, Jw] : J_expanded) {
-          triplets.emplace_back(If, Jf, val * Iw * Jw);
+        for (const auto &[If, Iw] : I_expanded) {
+          for (const auto &[Jf, Jw] : J_expanded) {
+            triplets.emplace_back(If, Jf, val * Iw * Jw);
+          }
         }
       }
     }
-  }
 
-  // Condense RHS vector
-  for (Index g = 0; g < num_dofs; ++g) {
-    auto g_expanded = expand_dof(g);
-    for (const auto &[gf, gw] : g_expanded) {
-      c_reduced(gf) += c(g) * gw;
+    // Condense RHS vector
+    for (Index g = 0; g < num_dofs; ++g) {
+      auto g_expanded = expand_dof(g);
+      for (const auto &[gf, gw] : g_expanded) {
+        c_reduced(gf) += c(g) * gw;
+      }
     }
-  }
 
-  SpMat Q_reduced(num_free, num_free);
-  Q_reduced.setFromTriplets(triplets.begin(), triplets.end());
+    Q_reduced.resize(num_free, num_free);
+    Q_reduced.setFromTriplets(triplets.begin(), triplets.end());
+  }
 
   // Solve reduced system
   Eigen::SparseLU<SpMat> solver;
-  solver.compute(Q_reduced);
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->sparse_lu_compute_ms : nullptr);
+    solver.compute(Q_reduced);
+  }
   if (solver.info() != Eigen::Success) {
     throw std::runtime_error(
         "CGLinearBezierBathymetrySmoother: SparseLU decomposition failed");
   }
 
-  VecX x_free = solver.solve(-c_reduced);
+  VecX x_free;
+  {
+    OptionalScopedTimer t(profile_ ? &profile_->sparse_lu_solve_ms : nullptr);
+    x_free = solver.solve(-c_reduced);
+  }
   if (solver.info() != Eigen::Success) {
     throw std::runtime_error(
         "CGLinearBezierBathymetrySmoother: SparseLU solve failed");
@@ -383,8 +419,8 @@ Index CGLinearBezierBathymetrySmoother::find_element(Real x, Real y) const {
   return quadtree_->find_element(Vec2(x, y));
 }
 
-Index CGLinearBezierBathymetrySmoother::find_element_with_fallback(Real x,
-                                                                    Real y) const {
+Index CGLinearBezierBathymetrySmoother::find_element_with_fallback(
+    Real x, Real y) const {
   Index elem = find_element(x, y);
   if (elem >= 0) {
     return elem;
@@ -502,8 +538,7 @@ void CGLinearBezierBathymetrySmoother::write_vtk(const std::string &filename,
   // Use CG-aware VTK writer with DOF manager's quantization parameters
   // This ensures consistent vertex deduplication between DOF sharing and VTK
   io::write_cg_bezier_surface_vtk(
-      filename, *quadtree_,
-      [this](Real x, Real y) { return evaluate(x, y); },
+      filename, *quadtree_, [this](Real x, Real y) { return evaluate(x, y); },
       dof_manager_->xmin_domain(), dof_manager_->ymin_domain(),
       dof_manager_->inv_quantization_tol(), resolution > 0 ? resolution : 6,
       "elevation");

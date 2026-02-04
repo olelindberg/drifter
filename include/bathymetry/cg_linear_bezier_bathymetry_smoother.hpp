@@ -24,6 +24,7 @@ namespace drifter {
 class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
+struct CGLinearIterationProfile;
 
 /// @brief Configuration for CG linear Bezier bathymetry smoother
 struct CGLinearBezierSmootherConfig {
@@ -98,6 +99,10 @@ public:
 
   const CGLinearBezierSmootherConfig &config() const { return config_; }
 
+  /// @brief Set profiling target for timing sub-operations
+  /// @param profile Pointer to profile struct (nullptr to disable profiling)
+  void set_profile(CGLinearIterationProfile *profile) { profile_ = profile; }
+
   // =========================================================================
   // Solve
   // =========================================================================
@@ -151,6 +156,8 @@ private:
   std::unique_ptr<DirichletHessian> dirichlet_hessian_;
   std::unique_ptr<CGLinearBezierDofManager> dof_manager_;
 
+  CGLinearIterationProfile *profile_ = nullptr;
+
   VecX solution_;
   bool solved_ = false;
   bool data_set_ = false;
@@ -159,7 +166,7 @@ private:
   SpMat BtWB_global_;
   VecX BtWd_global_;
   Real dTWd_global_ = 0;
-  Real alpha_ = 0;  // Cached scale normalization factor
+  Real alpha_ = 0; // Cached scale normalization factor
 
   void init_components();
   void assemble_dirichlet_hessian();

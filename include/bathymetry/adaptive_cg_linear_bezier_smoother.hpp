@@ -21,12 +21,54 @@
 #include "mesh/octree_adapter.hpp"
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace drifter {
 
 // Forward declarations
 class BathymetrySource;
+
+/// @brief Timing profile for one adaptive iteration (all times in milliseconds)
+struct CGLinearIterationProfile {
+  // Top-level phases
+  double rebuild_ms = 0.0;          ///< Total rebuild_smoother() time
+  double solve_ms = 0.0;            ///< Total smoother_->solve() time
+  double error_estimation_ms = 0.0; ///< Total estimate_errors() time
+  double marking_ms = 0.0;          ///< select_elements_for_refinement() time
+  double refinement_ms = 0.0; ///< refine_elements() time (including re-rebuild)
+
+  // Rebuild breakdown
+  double quadtree_build_ms = 0.0;   ///< QuadtreeAdapter construction
+  double smoother_init_ms = 0.0;    ///< CGLinearBezierBathymetrySmoother init
+  double hessian_assembly_ms = 0.0; ///< assemble_dirichlet_hessian()
+  double data_fitting_ms = 0.0;     ///< assemble_data_fitting()
+
+  // Solve breakdown
+  double matrix_build_ms = 0.0;        ///< Q matrix construction
+  double sparse_lu_compute_ms = 0.0;   ///< SparseLU factorization
+  double sparse_lu_solve_ms = 0.0;     ///< SparseLU back-substitution
+  double constraint_condense_ms = 0.0; ///< Constraint elimination
+
+  // Context
+  Index num_elements = 0;
+  Index num_dofs = 0;
+  Index num_free_dofs = 0;
+  Index num_constraints = 0;
+
+  double total_ms() const {
+    return rebuild_ms + solve_ms + error_estimation_ms + marking_ms +
+           refinement_ms;
+  }
+};
+
+/// @brief Strategy for selecting elements to refine
+enum class MarkingStrategy {
+  FixedFraction, ///< Legacy: top refine_fraction elements (may break symmetry)
+  Dorfler,       ///< Bulk criterion: squared errors >= theta * total
+  DorflerSymmetric, ///< Dorfler + include all elements at cutoff error
+  RelativeThreshold ///< All elements with error > alpha * max_error
+};
 
 /// @brief Per-element error estimate for CG linear adaptive smoother
 struct CGLinearElementErrorEstimate {
@@ -44,9 +86,21 @@ struct AdaptiveCGLinearBezierConfig {
   int max_elements = 10000;      ///< Maximum number of elements
   int max_refinement_level = 10; ///< Maximum refinement level per axis
 
-  // Refinement strategy
-  Real refine_fraction =
-      0.2; ///< Fraction of elements to refine per iteration (0.2 = top 20%)
+  // Marking strategy selection
+  MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
+
+  // Dorfler parameter: fraction of total squared error to capture
+  // theta = 0.5 means refine elements contributing >= 50% of total error
+  Real dorfler_theta = 0.5;
+
+  // Relative threshold: refine if error > alpha * max_error
+  Real relative_alpha = 0.3;
+
+  // Tolerance for grouping equal errors (symmetry preservation)
+  Real symmetry_tolerance = 1e-12;
+
+  // Legacy: fraction of elements to refine (only for FixedFraction strategy)
+  Real refine_fraction = 0.2;
 
   // Error estimation
   int ngauss_error = 4; ///< Gauss points per direction for error integration
@@ -151,6 +205,11 @@ public:
     return history_;
   }
 
+  /// @brief Get per-iteration profiling data (populated when verbose=true)
+  const std::vector<CGLinearIterationProfile> &profiles() const {
+    return profiles_;
+  }
+
   // =========================================================================
   // Error estimation
   // =========================================================================
@@ -221,6 +280,10 @@ private:
   // Adaptation history
   std::vector<CGLinearAdaptationResult> history_;
 
+  // Profiling
+  std::vector<CGLinearIterationProfile> profiles_;
+  CGLinearIterationProfile *current_profile_ = nullptr;
+
   // Gauss quadrature nodes and weights on [0, 1]
   VecX gauss_nodes_;
   VecX gauss_weights_;
@@ -238,6 +301,12 @@ private:
   /// @brief Set bathymetry data on current smoother
   void apply_bathymetry_to_smoother();
 
+  /// @brief Select elements for refinement using configured marking strategy
+  /// @param errors Per-element error estimates
+  /// @return Element indices selected for refinement
+  std::vector<Index> select_elements_for_refinement(
+      const std::vector<CGLinearElementErrorEstimate> &errors) const;
+
   /// @brief Refine marked elements and update mesh
   /// @param elements_to_refine Element indices to refine
   void refine_elements(const std::vector<Index> &elements_to_refine);
@@ -246,6 +315,9 @@ private:
   /// @param elem Element index
   /// @return L2 error ||z_data - z_bezier||_L2 over element
   Real compute_element_l2_error(Index elem) const;
+
+  /// @brief Print profiling report to stdout
+  void print_profile_report() const;
 };
 
 } // namespace drifter

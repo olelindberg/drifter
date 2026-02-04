@@ -1,5 +1,6 @@
 #include "bathymetry/adaptive_cg_linear_bezier_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
+#include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include "test_integration_fixtures.hpp"
 #include <chrono>
@@ -96,7 +97,8 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, ConvergesOnLinearBathymetry) {
 TEST_F(AdaptiveCGLinearBezierSmootherTest, RefinesOnQuadraticBathymetry) {
   // Quadratic bathymetry: linear Bezier needs refinement to approximate
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 0.1;  // 0.1 meter threshold (tight to force refinement)
+  config.error_threshold =
+      0.1; // 0.1 meter threshold (tight to force refinement)
   config.max_iterations = 5;
   config.max_elements = 200;
   config.smoother_config.lambda = 100.0;
@@ -230,9 +232,10 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, ErrorEstimationAfterSolve) {
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest, MaintainsContinuityAfterRefinement) {
   // Test that the solution is defined and evaluable after refinement.
-  // Note: For CG linear Bezier, C0 continuity is maintained through shared DOFs.
+  // Note: For CG linear Bezier, C0 continuity is maintained through shared
+  // DOFs.
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 0.5;  // Tight threshold to force refinement
+  config.error_threshold = 0.5; // Tight threshold to force refinement
   config.max_iterations = 2;
   config.smoother_config.lambda = 10.0;
 
@@ -248,13 +251,13 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, MaintainsContinuityAfterRefinement) {
   smoother.solve_adaptive();
 
   EXPECT_TRUE(smoother.is_solved());
-  EXPECT_GT(smoother.mesh().num_elements(), 16);  // Should have refined
+  EXPECT_GT(smoother.mesh().num_elements(), 16); // Should have refined
 
   // Test that evaluation works at various points
   std::vector<std::pair<Real, Real>> test_points = {
       {50.0, 50.0}, {25.0, 25.0}, {75.0, 75.0}, {25.0, 75.0}, {75.0, 25.0}};
 
-  for (const auto& [x, y] : test_points) {
+  for (const auto &[x, y] : test_points) {
     Real z = smoother.evaluate(x, y);
     // Values should be bounded and reasonable
     EXPECT_GT(z, 0.0);
@@ -268,9 +271,9 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, MaintainsContinuityAfterRefinement) {
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest, WritesVTKOutput) {
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 0.5;  // Tight threshold to force refinement
+  config.error_threshold = 0.5; // Tight threshold to force refinement
   config.max_iterations = 5;
-  config.smoother_config.lambda = 100.0;  // Strong data fitting
+  config.smoother_config.lambda = 100.0; // Strong data fitting
 
   // Gaussian bump that requires adaptive refinement
   auto bathy = [](Real x, Real y) {
@@ -362,8 +365,8 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, CGHasFewerDOFsThanDG) {
   // DG would have num_elements * 4 DOFs (linear: 2x2 = 4 per element)
   Index dg_dofs = num_elements * 4;
 
-  std::cout << "CG linear DOFs: " << num_dofs << " vs DG equivalent: " << dg_dofs
-            << "\n";
+  std::cout << "CG linear DOFs: " << num_dofs
+            << " vs DG equivalent: " << dg_dofs << "\n";
 
   EXPECT_LT(num_dofs, dg_dofs);
 }
@@ -411,9 +414,9 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, AdaptiveGeoTiffRefinement) {
 
   AdaptiveCGLinearBezierConfig config;
   config.error_threshold = 5.0; // 5 meter threshold
-  config.max_iterations = 8;
-  config.max_elements = 1000;
-  config.smoother_config.lambda = 10.0;
+  config.max_iterations = 20;
+  config.max_elements = 10000;
+  config.smoother_config.lambda = 100.0;
   config.verbose = true;
 
   AdaptiveCGLinearBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
@@ -436,9 +439,24 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, AdaptiveGeoTiffRefinement) {
 
   EXPECT_TRUE(smoother.is_solved());
 
-  // Write output for visualization
+  // Write output for visualization with per-element error
   std::string output_file = "/tmp/adaptive_cg_linear_bezier_kattegat";
-  smoother.write_vtk(output_file);
+  auto errors = smoother.estimate_errors();
+  std::vector<Real> element_errors(smoother.mesh().num_elements(), 0.0);
+  for (const auto &e : errors) {
+    element_errors[e.element] = e.normalized_error;
+  }
+  std::vector<Real> refinement_levels(smoother.mesh().num_elements(), 0.0);
+  for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
+    refinement_levels[i] =
+        static_cast<Real>(smoother.mesh().element_level(i).max_level());
+  }
+  io::write_cg_bezier_surface_vtk(
+      output_file, smoother.mesh(),
+      [&smoother](Real x, Real y) { return smoother.evaluate(x, y); }, 6,
+      "elevation",
+      {{"normalized_error", element_errors},
+       {"refinement_level", refinement_levels}});
   std::cout << "Output written to: " << output_file << ".vtu" << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
@@ -473,7 +491,8 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
   BathymetrySurface surface(bathy_ptr);
 
   auto depth_func = [&surface](Real x, Real y) -> Real {
-    return -surface.depth(x, y);  // depth returns positive down, we want elevation
+    return -surface.depth(x,
+                          y); // depth returns positive down, we want elevation
   };
 
   std::cout << "=== Writing Raw Bathymetry VTK ===" << std::endl;
@@ -490,23 +509,27 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
 
   // VTU XML format header
   file << "<?xml version=\"1.0\"?>\n";
-  file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+  file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+          "byte_order=\"LittleEndian\">\n";
   file << "  <UnstructuredGrid>\n";
 
   Index num_points = nx * ny;
   Index num_cells = (nx - 1) * (ny - 1);
 
-  file << "    <Piece NumberOfPoints=\"" << num_points << "\" NumberOfCells=\"" << num_cells << "\">\n";
+  file << "    <Piece NumberOfPoints=\"" << num_points << "\" NumberOfCells=\""
+       << num_cells << "\">\n";
 
   // Points
   file << "      <Points>\n";
-  file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+  file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" "
+          "format=\"ascii\">\n";
   for (int j = 0; j < ny; ++j) {
     Real y = ymin + j * hy;
     for (int i = 0; i < nx; ++i) {
       Real x = xmin + i * hx;
       Real z = depth_func(x, y);
-      file << "          " << std::setprecision(10) << x << " " << y << " " << z << "\n";
+      file << "          " << std::setprecision(10) << x << " " << y << " " << z
+           << "\n";
     }
   }
   file << "        </DataArray>\n";
@@ -514,7 +537,8 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
 
   // Cells (quads)
   file << "      <Cells>\n";
-  file << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
+  file << "        <DataArray type=\"Int64\" Name=\"connectivity\" "
+          "format=\"ascii\">\n";
   for (int j = 0; j < ny - 1; ++j) {
     for (int i = 0; i < nx - 1; ++i) {
       Index p0 = j * nx + i;
@@ -525,21 +549,24 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
     }
   }
   file << "        </DataArray>\n";
-  file << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+  file << "        <DataArray type=\"Int64\" Name=\"offsets\" "
+          "format=\"ascii\">\n";
   for (Index c = 1; c <= num_cells; ++c) {
     file << "          " << (c * 4) << "\n";
   }
   file << "        </DataArray>\n";
-  file << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+  file
+      << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
   for (Index c = 0; c < num_cells; ++c) {
-    file << "          9\n";  // VTK_QUAD
+    file << "          9\n"; // VTK_QUAD
   }
   file << "        </DataArray>\n";
   file << "      </Cells>\n";
 
   // Point data (elevation)
   file << "      <PointData Scalars=\"elevation\">\n";
-  file << "        <DataArray type=\"Float64\" Name=\"elevation\" format=\"ascii\">\n";
+  file << "        <DataArray type=\"Float64\" Name=\"elevation\" "
+          "format=\"ascii\">\n";
   for (int j = 0; j < ny; ++j) {
     Real y = ymin + j * hy;
     for (int i = 0; i < nx; ++i) {
@@ -558,7 +585,8 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
   file.close();
 
   std::cout << "Raw bathymetry written to: " << output_file << std::endl;
-  std::cout << "Grid: " << nx << " x " << ny << " = " << num_points << " points" << std::endl;
+  std::cout << "Grid: " << nx << " x " << ny << " = " << num_points << " points"
+            << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file));
 }
@@ -604,4 +632,159 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, ThrowsIfEvaluateBeforeSolve) {
   smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
 
   EXPECT_THROW(smoother.evaluate(50.0, 50.0), std::runtime_error);
+}
+
+// =============================================================================
+// Marking Strategy Tests
+// =============================================================================
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       DorflerSymmetricPreservesSymmetryForGaussianBump) {
+  // Centered Gaussian bump - perfectly symmetric about (50, 50)
+  auto symmetric_bump = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real dx = x - cx, dy = y - cy;
+    return 50.0 * std::exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierConfig config;
+  config.marking_strategy = MarkingStrategy::DorflerSymmetric;
+  config.dorfler_theta = 0.5;
+  config.error_threshold = 2.0;
+  config.max_iterations = 3;
+  config.smoother_config.lambda = 10.0;
+
+  // Use even initial grid so symmetry is possible
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+  smoother.set_bathymetry_data(symmetric_bump);
+  smoother.solve_adaptive();
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(smoother.mesh().num_elements(), 16); // Should have refined
+
+  // Verify mesh symmetry: count elements in each quadrant
+  const auto &mesh = smoother.mesh();
+  int q1 = 0, q2 = 0, q3 = 0, q4 = 0;
+  for (Index e = 0; e < mesh.num_elements(); ++e) {
+    const auto &bounds = mesh.element_bounds(e);
+    Real cx = (bounds.xmin + bounds.xmax) / 2.0;
+    Real cy = (bounds.ymin + bounds.ymax) / 2.0;
+    if (cx < 50.0 && cy < 50.0)
+      q1++;
+    else if (cx >= 50.0 && cy < 50.0)
+      q2++;
+    else if (cx < 50.0 && cy >= 50.0)
+      q3++;
+    else
+      q4++;
+  }
+
+  std::cout << "DorflerSymmetric quadrant counts: " << q1 << " " << q2 << " "
+            << q3 << " " << q4 << "\n";
+
+  EXPECT_EQ(q1, q2) << "X-symmetry broken";
+  EXPECT_EQ(q1, q3) << "Y-symmetry broken";
+  EXPECT_EQ(q1, q4) << "Diagonal symmetry broken";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       RelativeThresholdPreservesSymmetryForGaussianBump) {
+  auto symmetric_bump = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real dx = x - cx, dy = y - cy;
+    return 50.0 * std::exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierConfig config;
+  config.marking_strategy = MarkingStrategy::RelativeThreshold;
+  config.relative_alpha = 0.3;
+  config.error_threshold = 2.0;
+  config.max_iterations = 3;
+  config.smoother_config.lambda = 10.0;
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+  smoother.set_bathymetry_data(symmetric_bump);
+  smoother.solve_adaptive();
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(smoother.mesh().num_elements(), 16);
+
+  const auto &mesh = smoother.mesh();
+  int q1 = 0, q2 = 0, q3 = 0, q4 = 0;
+  for (Index e = 0; e < mesh.num_elements(); ++e) {
+    const auto &bounds = mesh.element_bounds(e);
+    Real cx = (bounds.xmin + bounds.xmax) / 2.0;
+    Real cy = (bounds.ymin + bounds.ymax) / 2.0;
+    if (cx < 50.0 && cy < 50.0)
+      q1++;
+    else if (cx >= 50.0 && cy < 50.0)
+      q2++;
+    else if (cx < 50.0 && cy >= 50.0)
+      q3++;
+    else
+      q4++;
+  }
+
+  std::cout << "RelativeThreshold quadrant counts: " << q1 << " " << q2 << " "
+            << q3 << " " << q4 << "\n";
+
+  EXPECT_EQ(q1, q2) << "X-symmetry broken";
+  EXPECT_EQ(q1, q3) << "Y-symmetry broken";
+  EXPECT_EQ(q1, q4) << "Diagonal symmetry broken";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       DorflerSymmetricConvergesOnQuadratic) {
+  // Verify DorflerSymmetric achieves convergence comparable to FixedFraction
+  AdaptiveCGLinearBezierConfig config;
+  config.marking_strategy = MarkingStrategy::DorflerSymmetric;
+  config.dorfler_theta = 0.5;
+  config.error_threshold = 0.1;
+  config.max_iterations = 8;
+  config.max_elements = 500;
+  config.smoother_config.lambda = 100.0;
+
+  auto quadratic = [](Real x, Real y) {
+    return 100.0 + 0.001 * x * x + 0.002 * y * y;
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(quadratic);
+  auto result = smoother.solve_adaptive();
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(result.num_elements, 4);
+
+  // Error should decrease over iterations
+  const auto &history = smoother.history();
+  if (history.size() >= 2) {
+    EXPECT_LT(history.back().max_error, history.front().max_error);
+  }
+
+  std::cout << "DorflerSymmetric quadratic: " << result.num_elements
+            << " elements, max_error=" << result.max_error << " m\n";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, FixedFractionBackwardCompatible) {
+  // Verify FixedFraction still works for backward compatibility
+  AdaptiveCGLinearBezierConfig config;
+  config.marking_strategy = MarkingStrategy::FixedFraction;
+  config.refine_fraction = 0.2;
+  config.error_threshold = 1.0;
+  config.max_iterations = 5;
+  config.max_elements = 200;
+  config.smoother_config.lambda = 10.0;
+
+  auto bump = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 10.0;
+    Real dx = x - cx, dy = y - cy;
+    return 50.0 * std::exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(bump);
+  auto result = smoother.solve_adaptive();
+
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(result.num_elements, 4);
 }

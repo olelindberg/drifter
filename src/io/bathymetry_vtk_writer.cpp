@@ -515,7 +515,8 @@ void write_cg_bezier_surface_vtk(
     const QuadtreeAdapter& mesh,
     const std::function<Real(Real, Real)>& evaluate_at,
     int resolution,
-    const std::string& scalar_name) {
+    const std::string& scalar_name,
+    const std::vector<std::pair<std::string, std::vector<Real>>>& element_cell_data) {
 
     std::ofstream file(filename + ".vtu");
     if (!file) {
@@ -683,6 +684,13 @@ void write_cg_bezier_surface_vtk(
         file << elem_id << "\n";
     }
     file << "</DataArray>\n";
+    for (const auto& [name, values] : element_cell_data) {
+        file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
+        for (Index elem_id : quad_element_ids) {
+            file << std::setprecision(12) << values[elem_id] << "\n";
+        }
+        file << "</DataArray>\n";
+    }
     file << "</CellData>\n";
 
     // VTU footer
@@ -701,7 +709,8 @@ void write_cg_bezier_surface_vtk(
     Real ymin_domain,
     Real inv_quantization_tol,
     int resolution,
-    const std::string& scalar_name) {
+    const std::string& scalar_name,
+    const std::vector<std::pair<std::string, std::vector<Real>>>& element_cell_data) {
 
     std::ofstream file(filename + ".vtu");
     if (!file) {
@@ -845,6 +854,13 @@ void write_cg_bezier_surface_vtk(
         file << elem_id << "\n";
     }
     file << "</DataArray>\n";
+    for (const auto& [name, values] : element_cell_data) {
+        file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
+        for (Index elem_id : quad_element_ids) {
+            file << std::setprecision(12) << values[elem_id] << "\n";
+        }
+        file << "</DataArray>\n";
+    }
     file << "</CellData>\n";
 
     // VTU footer
