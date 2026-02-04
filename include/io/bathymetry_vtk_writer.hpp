@@ -122,5 +122,28 @@ void write_cg_bezier_surface_vtk(
     int resolution = 11,
     const std::string& scalar_name = "elevation");
 
+/// @brief Write CG Bezier surface with explicit quantization parameters
+///
+/// This overload allows passing quantization parameters from a DOF manager
+/// to ensure consistent vertex deduplication between DOF sharing and VTK output.
+///
+/// @param filename Output filename (without extension, .vtu will be added)
+/// @param mesh The quadtree mesh
+/// @param evaluate_at Function evaluating surface z-value at physical (x, y)
+/// @param xmin_domain Domain origin x for coordinate normalization
+/// @param ymin_domain Domain origin y for coordinate normalization
+/// @param inv_quantization_tol Inverse tolerance for position quantization
+/// @param resolution Number of sample points per direction (default 11)
+/// @param scalar_name Name for the elevation/depth scalar field
+void write_cg_bezier_surface_vtk(
+    const std::string& filename,
+    const QuadtreeAdapter& mesh,
+    const std::function<Real(Real, Real)>& evaluate_at,
+    Real xmin_domain,
+    Real ymin_domain,
+    Real inv_quantization_tol,
+    int resolution = 11,
+    const std::string& scalar_name = "elevation");
+
 }  // namespace io
 }  // namespace drifter

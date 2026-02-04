@@ -1,11 +1,10 @@
 #include "bathymetry/cg_linear_bezier_dof_manager.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace drifter {
-
-static constexpr Real POSITION_SCALE = 1e8;
 
 CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
     : mesh_(mesh) {
@@ -16,6 +15,28 @@ CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
     num_free_dofs_ = 0;
     return;
   }
+
+  // Compute domain bounds and quantization tolerance for mesh-relative DOF sharing
+  Real xmin = std::numeric_limits<Real>::max();
+  Real xmax = std::numeric_limits<Real>::lowest();
+  Real ymin = std::numeric_limits<Real>::max();
+  Real ymax = std::numeric_limits<Real>::lowest();
+  Real min_element_size = std::numeric_limits<Real>::max();
+
+  for (Index e = 0; e < num_elements; ++e) {
+    const auto &b = mesh_.element_bounds(e);
+    xmin = std::min(xmin, b.xmin);
+    xmax = std::max(xmax, b.xmax);
+    ymin = std::min(ymin, b.ymin);
+    ymax = std::max(ymax, b.ymax);
+    min_element_size =
+        std::min(min_element_size, std::min(b.xmax - b.xmin, b.ymax - b.ymin));
+  }
+
+  xmin_domain_ = xmin;
+  ymin_domain_ = ymin;
+  // Scale: resolve positions to 1e-8 of minimum element size
+  inv_quantization_tol_ = 1.0 / (min_element_size * 1e-8);
 
   elem_to_global_.resize(num_elements);
   for (Index e = 0; e < num_elements; ++e) {
@@ -102,9 +123,12 @@ SpMat CGLinearBezierDofManager::build_constraint_matrix() const {
 
 std::pair<int64_t, int64_t>
 CGLinearBezierDofManager::quantize_position(const Vec2 &pos) const {
+  // Normalize to domain origin to reduce floating-point error for large coords
+  Real x_rel = pos(0) - xmin_domain_;
+  Real y_rel = pos(1) - ymin_domain_;
   return std::make_pair(
-      static_cast<int64_t>(std::round(pos(0) * POSITION_SCALE)),
-      static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE)));
+      static_cast<int64_t>(std::round(x_rel * inv_quantization_tol_)),
+      static_cast<int64_t>(std::round(y_rel * inv_quantization_tol_)));
 }
 
 Vec2 CGLinearBezierDofManager::get_dof_position(Index elem,

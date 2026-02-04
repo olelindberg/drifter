@@ -77,6 +77,14 @@ public:
   const QuadtreeAdapter &mesh() const { return mesh_; }
   const LinearBezierBasis2D &basis() const { return basis_; }
 
+  // =========================================================================
+  // Quantization parameters (for consistent vertex deduplication in VTK)
+  // =========================================================================
+
+  Real xmin_domain() const { return xmin_domain_; }
+  Real ymin_domain() const { return ymin_domain_; }
+  Real inv_quantization_tol() const { return inv_quantization_tol_; }
+
 private:
   const QuadtreeAdapter &mesh_;
   LinearBezierBasis2D basis_;
@@ -105,6 +113,11 @@ private:
   std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;
   std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const;
   Index find_dof_at_position(const Vec2 &pos) const;
+
+  // Domain bounds and quantization scale (for mesh-relative quantization)
+  Real xmin_domain_ = 0.0;
+  Real ymin_domain_ = 0.0;
+  Real inv_quantization_tol_ = 1e8;
 };
 
 } // namespace drifter

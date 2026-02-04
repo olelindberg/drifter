@@ -45,6 +45,7 @@ set(INTEGRATION_TESTS
     integration/test_adaptive_cg_cubic_bezier_smoother.cpp
     # CG Bezier bathymetry smoother (linear with C⁰ continuity)
     integration/test_cg_linear_bezier_bathymetry_smoother.cpp
+    integration/test_adaptive_cg_linear_bezier_smoother.cpp
     # CG Bezier bathymetry smoother (quintic with triharmonic energy)
     integration/test_cg_triharmonic_bezier_bathymetry_smoother.cpp
 )

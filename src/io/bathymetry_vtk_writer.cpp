@@ -526,6 +526,13 @@ void write_cg_bezier_surface_vtk(
     int n_pts = resolution > 0 ? resolution : 11;
     Index num_elements = mesh.num_elements();
 
+    // Use LGL nodes for high-order accurate interpolation
+    VecX lgl_nodes, lgl_weights;
+    compute_gauss_lobatto_nodes(n_pts, lgl_nodes, lgl_weights);
+
+    // Map LGL nodes from [-1, 1] to [0, 1] for parameter space
+    VecX param_nodes = (lgl_nodes.array() + 1.0) * 0.5;
+
     // Position quantization for vertex deduplication
     // Use a scale factor based on mesh extent to handle various coordinate ranges
     Real xmin_global = std::numeric_limits<Real>::max();
@@ -578,11 +585,173 @@ void write_cg_bezier_surface_vtk(
         elem_vertex_grid[elem].resize(n_pts * n_pts);
 
         for (int j = 0; j < n_pts; ++j) {
-            Real t_y = static_cast<Real>(j) / (n_pts - 1);
+            Real t_y = param_nodes(j);
             Real y = bounds.ymin + t_y * dy;
 
             for (int i = 0; i < n_pts; ++i) {
-                Real t_x = static_cast<Real>(i) / (n_pts - 1);
+                Real t_x = param_nodes(i);
+                Real x = bounds.xmin + t_x * dx;
+
+                auto key = quantize(x, y);
+                auto it = position_to_vertex.find(key);
+
+                Index vidx;
+                if (it != position_to_vertex.end()) {
+                    // Vertex already exists (shared boundary)
+                    vidx = it->second;
+                } else {
+                    // New vertex
+                    vidx = static_cast<Index>(vertices.size());
+                    position_to_vertex[key] = vidx;
+
+                    Real z = evaluate_at(x, y);
+                    vertices.emplace_back(x, y, z);
+                    elevations.push_back(z);
+                }
+
+                elem_vertex_grid[elem][i + j * n_pts] = vidx;
+            }
+        }
+
+        // Build quads for this element
+        for (int j = 0; j < n_pts - 1; ++j) {
+            for (int i = 0; i < n_pts - 1; ++i) {
+                Index p0 = elem_vertex_grid[elem][i + j * n_pts];
+                Index p1 = elem_vertex_grid[elem][(i + 1) + j * n_pts];
+                Index p2 = elem_vertex_grid[elem][(i + 1) + (j + 1) * n_pts];
+                Index p3 = elem_vertex_grid[elem][i + (j + 1) * n_pts];
+
+                quads.push_back({p0, p1, p2, p3});
+                quad_element_ids.push_back(elem);
+            }
+        }
+    }
+
+    Index total_points = static_cast<Index>(vertices.size());
+    Index total_cells = static_cast<Index>(quads.size());
+
+    // Write VTU file
+    file << "<?xml version=\"1.0\"?>\n";
+    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+    file << "<UnstructuredGrid>\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells << "\">\n";
+
+    // Points
+    file << "<Points>\n";
+    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    file << std::setprecision(12);
+    for (const auto& v : vertices) {
+        file << v.x() << " " << v.y() << " " << v.z() << "\n";
+    }
+    file << "</DataArray>\n";
+    file << "</Points>\n";
+
+    // Cells
+    file << "<Cells>\n";
+    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
+    for (const auto& q : quads) {
+        file << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "\n";
+    }
+    file << "</DataArray>\n";
+
+    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+    for (Index i = 1; i <= total_cells; ++i) {
+        file << (i * 4) << "\n";
+    }
+    file << "</DataArray>\n";
+
+    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+    for (Index i = 0; i < total_cells; ++i) {
+        file << "9\n";  // VTK_QUAD
+    }
+    file << "</DataArray>\n";
+    file << "</Cells>\n";
+
+    // Point data: elevation
+    file << "<PointData Scalars=\"" << scalar_name << "\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name << "\" format=\"ascii\">\n";
+    for (Real z : elevations) {
+        file << z << "\n";
+    }
+    file << "</DataArray>\n";
+    file << "</PointData>\n";
+
+    // Cell data: element ID
+    file << "<CellData Scalars=\"element_id\">\n";
+    file << "<DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
+    for (Index elem_id : quad_element_ids) {
+        file << elem_id << "\n";
+    }
+    file << "</DataArray>\n";
+    file << "</CellData>\n";
+
+    // VTU footer
+    file << "</Piece>\n";
+    file << "</UnstructuredGrid>\n";
+    file << "</VTKFile>\n";
+
+    file.close();
+}
+
+void write_cg_bezier_surface_vtk(
+    const std::string& filename,
+    const QuadtreeAdapter& mesh,
+    const std::function<Real(Real, Real)>& evaluate_at,
+    Real xmin_domain,
+    Real ymin_domain,
+    Real inv_quantization_tol,
+    int resolution,
+    const std::string& scalar_name) {
+
+    std::ofstream file(filename + ".vtu");
+    if (!file) {
+        throw std::runtime_error("write_cg_bezier_surface_vtk: cannot open " +
+                                 filename + ".vtu");
+    }
+
+    int n_pts = resolution > 0 ? resolution : 11;
+    Index num_elements = mesh.num_elements();
+
+    // Use LGL nodes for high-order accurate interpolation
+    VecX lgl_nodes, lgl_weights;
+    compute_gauss_lobatto_nodes(n_pts, lgl_nodes, lgl_weights);
+
+    // Map LGL nodes from [-1, 1] to [0, 1] for parameter space
+    VecX param_nodes = (lgl_nodes.array() + 1.0) * 0.5;
+
+    // Use provided quantization parameters (from DOF manager)
+    // This ensures consistent vertex deduplication with DOF sharing
+    auto quantize = [xmin_domain, ymin_domain, inv_quantization_tol](Real x, Real y)
+        -> std::pair<int64_t, int64_t> {
+        Real x_rel = x - xmin_domain;
+        Real y_rel = y - ymin_domain;
+        return {static_cast<int64_t>(std::round(x_rel * inv_quantization_tol)),
+                static_cast<int64_t>(std::round(y_rel * inv_quantization_tol))};
+    };
+
+    // First pass: collect unique vertices and build connectivity
+    std::map<std::pair<int64_t, int64_t>, Index> position_to_vertex;
+    std::vector<Vec3> vertices;
+    std::vector<Real> elevations;
+    std::vector<std::array<Index, 4>> quads;
+    std::vector<Index> quad_element_ids;
+
+    // Per-element grid of vertex indices
+    std::vector<std::vector<Index>> elem_vertex_grid(num_elements);
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const auto& bounds = mesh.element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        elem_vertex_grid[elem].resize(n_pts * n_pts);
+
+        for (int j = 0; j < n_pts; ++j) {
+            Real t_y = param_nodes(j);
+            Real y = bounds.ymin + t_y * dy;
+
+            for (int i = 0; i < n_pts; ++i) {
+                Real t_x = param_nodes(i);
                 Real x = bounds.xmin + t_x * dx;
 
                 auto key = quantize(x, y);

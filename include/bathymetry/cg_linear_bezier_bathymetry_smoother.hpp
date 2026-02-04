@@ -122,7 +122,7 @@ public:
   // =========================================================================
 
   void transfer_to_seabed(SeabedSurface &seabed) const;
-  void write_vtk(const std::string &filename, int resolution = 4) const;
+  void write_vtk(const std::string &filename, int resolution = 6) const;
   void write_control_points_vtk(const std::string &filename) const;
 
   // =========================================================================

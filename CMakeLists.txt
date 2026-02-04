@@ -143,6 +143,7 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/dirichlet_hessian.cpp
     src/bathymetry/cg_linear_bezier_dof_manager.cpp
     src/bathymetry/cg_linear_bezier_bathymetry_smoother.cpp
+    src/bathymetry/adaptive_cg_linear_bezier_smoother.cpp
     # CG Bezier bathymetry smoother (quintic with triharmonic energy)
     src/bathymetry/triharmonic_hessian.cpp
     src/bathymetry/cg_triharmonic_bezier_bathymetry_smoother.cpp

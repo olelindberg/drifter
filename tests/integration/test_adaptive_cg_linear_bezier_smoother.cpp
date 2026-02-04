@@ -96,7 +96,7 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, ConvergesOnLinearBathymetry) {
 TEST_F(AdaptiveCGLinearBezierSmootherTest, RefinesOnQuadraticBathymetry) {
   // Quadratic bathymetry: linear Bezier needs refinement to approximate
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 0.5;  // 0.5 meter threshold
+  config.error_threshold = 0.1;  // 0.1 meter threshold (tight to force refinement)
   config.max_iterations = 5;
   config.max_elements = 200;
   config.smoother_config.lambda = 100.0;
@@ -232,7 +232,7 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, MaintainsContinuityAfterRefinement) {
   // Test that the solution is defined and evaluable after refinement.
   // Note: For CG linear Bezier, C0 continuity is maintained through shared DOFs.
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 2.0;
+  config.error_threshold = 0.5;  // Tight threshold to force refinement
   config.max_iterations = 2;
   config.smoother_config.lambda = 10.0;
 
@@ -372,7 +372,7 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, CGHasFewerDOFsThanDG) {
 // GeoTIFF Integration Tests
 // =============================================================================
 
-TEST_F(AdaptiveCGLinearBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
+TEST_F(AdaptiveCGLinearBezierSmootherTest, AdaptiveGeoTiffRefinement) {
   // Kattegat test area
   Real center_x = 4095238.0;  // EPSG:3034
   Real center_y = 3344695.0;  // EPSG:3034
@@ -442,6 +442,125 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   std::cout << "Output written to: " << output_file << ".vtu" << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
+  // Kattegat test area (same as AdaptiveGeoTiffRefinement for comparison)
+  Real center_x = 4095238.0;  // EPSG:3034
+  Real center_y = 3344695.0;  // EPSG:3034
+  Real domain_size = 30000.0; // 30 km
+
+  Real xmin = center_x - domain_size / 2;
+  Real xmax = center_x + domain_size / 2;
+  Real ymin = center_y - domain_size / 2;
+  Real ymax = center_y + domain_size / 2;
+
+  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
+  GeoTiffReader reader;
+  BathymetryData bathy;
+
+  try {
+    bathy = reader.load(geotiff_path);
+  } catch (...) {
+    GTEST_SKIP() << "GeoTIFF not available";
+  }
+
+  if (!bathy.is_valid()) {
+    GTEST_SKIP() << "GeoTIFF not valid";
+  }
+
+  auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
+  BathymetrySurface surface(bathy_ptr);
+
+  auto depth_func = [&surface](Real x, Real y) -> Real {
+    return -surface.depth(x, y);  // depth returns positive down, we want elevation
+  };
+
+  std::cout << "=== Writing Raw Bathymetry VTK ===" << std::endl;
+  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
+            << ymax << "]" << std::endl;
+
+  // Sample on uniform grid (200x200 for good visual quality)
+  int nx = 200, ny = 200;
+  Real hx = (xmax - xmin) / (nx - 1);
+  Real hy = (ymax - ymin) / (ny - 1);
+
+  std::string output_file = "/tmp/raw_bathymetry_kattegat.vtu";
+  std::ofstream file(output_file);
+
+  // VTU XML format header
+  file << "<?xml version=\"1.0\"?>\n";
+  file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+  file << "  <UnstructuredGrid>\n";
+
+  Index num_points = nx * ny;
+  Index num_cells = (nx - 1) * (ny - 1);
+
+  file << "    <Piece NumberOfPoints=\"" << num_points << "\" NumberOfCells=\"" << num_cells << "\">\n";
+
+  // Points
+  file << "      <Points>\n";
+  file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+  for (int j = 0; j < ny; ++j) {
+    Real y = ymin + j * hy;
+    for (int i = 0; i < nx; ++i) {
+      Real x = xmin + i * hx;
+      Real z = depth_func(x, y);
+      file << "          " << std::setprecision(10) << x << " " << y << " " << z << "\n";
+    }
+  }
+  file << "        </DataArray>\n";
+  file << "      </Points>\n";
+
+  // Cells (quads)
+  file << "      <Cells>\n";
+  file << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
+  for (int j = 0; j < ny - 1; ++j) {
+    for (int i = 0; i < nx - 1; ++i) {
+      Index p0 = j * nx + i;
+      Index p1 = j * nx + (i + 1);
+      Index p2 = (j + 1) * nx + (i + 1);
+      Index p3 = (j + 1) * nx + i;
+      file << "          " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
+    }
+  }
+  file << "        </DataArray>\n";
+  file << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+  for (Index c = 1; c <= num_cells; ++c) {
+    file << "          " << (c * 4) << "\n";
+  }
+  file << "        </DataArray>\n";
+  file << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+  for (Index c = 0; c < num_cells; ++c) {
+    file << "          9\n";  // VTK_QUAD
+  }
+  file << "        </DataArray>\n";
+  file << "      </Cells>\n";
+
+  // Point data (elevation)
+  file << "      <PointData Scalars=\"elevation\">\n";
+  file << "        <DataArray type=\"Float64\" Name=\"elevation\" format=\"ascii\">\n";
+  for (int j = 0; j < ny; ++j) {
+    Real y = ymin + j * hy;
+    for (int i = 0; i < nx; ++i) {
+      Real x = xmin + i * hx;
+      Real z = depth_func(x, y);
+      file << "          " << std::setprecision(10) << z << "\n";
+    }
+  }
+  file << "        </DataArray>\n";
+  file << "      </PointData>\n";
+
+  file << "    </Piece>\n";
+  file << "  </UnstructuredGrid>\n";
+  file << "</VTKFile>\n";
+
+  file.close();
+
+  std::cout << "Raw bathymetry written to: " << output_file << std::endl;
+  std::cout << "Grid: " << nx << " x " << ny << " = " << num_points << " points" << std::endl;
+
+  EXPECT_TRUE(std::filesystem::exists(output_file));
 }
 
 // =============================================================================

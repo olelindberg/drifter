@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DRIFTER is a 3D Discontinuous Galerkin (DG) adaptive multi-resolution coastal ocean circulation model written in C++20. It implements the primitive equations for ocean modeling with terrain-following sigma coordinates.
 
+## Project Conventions
+
+- Always separate I/O code from algorithmic code
+- Never add "Co-Authored-By" lines to git commit messages
+- Always output per-element interpolations to VTK (never uniform global mesh)
+
 ## Build Commands
 
 ```bash
@@ -36,6 +42,9 @@ LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_integration_tests
 
 # Run specific test(s) with gtest filter
 LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_unit_tests --gtest_filter="TestName*"
+
+# Run tests with verbose output
+LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -V
 ```
 
 The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home/ole/.local/lib`.
@@ -127,257 +136,35 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 
 ### Bezier Bathymetry Smoother (`bathymetry/`)
 
-The CG (Continuous Galerkin) Bezier bathymetry smoothers fit Bezier surfaces to bathymetry data with configurable continuity. DOFs at element boundaries are shared, providing automatic C⁰ continuity.
+CG (Continuous Galerkin) Bezier smoothers fit Bezier surfaces to bathymetry data. DOFs at element boundaries are shared for automatic C⁰ continuity.
 
 **Available Smoothers:**
-- `CGBezierBathymetrySmoother` - Quintic (degree 5), C² continuity, 36 DOFs/element
-- `CGCubicBezierBathymetrySmoother` - Cubic (degree 3), C¹ continuity, 16 DOFs/element
-- `CGLinearBezierBathymetrySmoother` - Linear (degree 1), C⁰ continuity, 4 DOFs/element
-- `CGTriharmonicBezierBathymetrySmoother` - Quintic with triharmonic (3rd order) energy
+| Class | Degree | Continuity | DOFs/element |
+|-------|--------|------------|--------------|
+| `CGBezierBathymetrySmoother` | Quintic (5) | C² | 36 |
+| `CGCubicBezierBathymetrySmoother` | Cubic (3) | C¹ | 16 |
+| `CGLinearBezierBathymetrySmoother` | Linear (1) | C⁰ | 4 |
+| `CGTriharmonicBezierBathymetrySmoother` | Quintic (5) | C² | 36 |
 
-**Optimization Problem (ShipMesh Formulation):**
+**Adaptive variants:** `AdaptiveCGBezierSmoother`, `AdaptiveCGCubicBezierSmoother` - error-driven mesh refinement.
 
-The smoother uses the ShipMesh-style formulation where smoothness is the primary objective and data fitting is weighted by λ. This approach prioritizes smooth surfaces and avoids boundary oscillations that occur with standard least-squares + regularization.
+**Optimization (ShipMesh Formulation):**
 
-```
-minimize    ½ xᵀQx + cᵀx
-subject to  Ax = b       (C² continuity constraints)
-```
+Uses smoothness-first formulation: `Q = α·H + λ·(BᵀWB + εI)` where H is thin plate Hessian, BᵀWB is data fitting, and α normalizes scales. This avoids boundary oscillations from standard least-squares + regularization.
 
-where:
-- `x` = vector of all Bezier control points (36 per element)
-- `Q = α·H + λ·(BᵀWB + εI)` where:
-  - `H` = thin plate Hessian (smoothness)
-  - `BᵀWB` = weighted least-squares normal matrix
-  - `ε = 1e-4` = ridge regularization (Tikhonov)
-  - `α = ||BᵀWB + εI|| / ||H||` = scale normalization factor (see below)
-- `c = -λ·BᵀWd` where `d` is the data vector
-- `A` = constraint matrix (edge derivative constraints + hanging node constraints for non-conforming meshes)
-- `b` = constraint RHS (zero for interior continuity)
+- `λ = 0`: Pure thin plate (soap film, ignores data)
+- `λ → ∞`: Approaches least-squares fit
+- Typical: `λ = 0.01` (smooth) to `λ = 100` (close to data)
 
-**Scale normalization for λ:**
+Solved via KKT system with constraint projection for exact satisfaction.
 
-The thin plate Hessian H scales with physical element size (e.g., ~1e-8 for km-scale elements),
-while the data fitting matrix BᵀWB is typically ~1. Without normalization, λ would need to be
-adjusted based on coordinate magnitude. The scale factor α normalizes H to have comparable
-magnitude to BᵀWB, making λ scale-invariant:
-
-```
-α = ||BᵀWB + εI||_F / ||H||_F
-Q = α·H + λ·(BᵀWB + εI)
-```
-
-This ensures λ controls the actual balance regardless of whether coordinates are in meters or kilometers.
-
-**Key difference from standard regularization:**
-
-Standard approach (causes oscillations):
-```
-Q = BᵀWB + λ·H    (data fitting + λ×smoothness)
-```
-
-ShipMesh approach (used here):
-```
-Q = α·H + λ·BᵀWB    (normalized smoothness + λ×data fitting)
-```
-
-This means:
-- `λ = 0`: Pure thin plate energy (soap film surface, ignores data)
-- `λ → ∞`: Approaches least-squares fit to data
-- Typical values: `λ = 0.01` (smooth) to `λ = 100` (close to data)
-- The scale factor α ensures these λ values work regardless of physical coordinate scale
-
-The objective combines:
-1. **Thin plate energy** (primary): `E_tp = ∫∫ (z_uu + z_vv)² + 2z_uv² du dv`
-2. **Gradient penalty** (optional): `E_grad = γ·∫∫ z_u² + z_v² du dv`
-3. **Data fitting** (weighted by λ): `E_data = λ·Σᵢ wᵢ(z(uᵢ,vᵢ) - dᵢ)²`
-4. **Ridge regularization**: `E_ridge = λε·||x||²` (stabilizes ill-conditioned BᵀWB)
-
-Solved via KKT system:
-```
-[ Q   Aᵀ ] [ x ]   [ -c ]
-[ A   0  ] [ μ ] = [  b ]
-```
-
-After KKT solve, the solution is projected onto the constraint manifold to ensure exact constraint satisfaction:
-```
-x = x - Aᵀ(AAᵀ)⁻¹(Ax - b)
-```
-This corrects numerical drift when λ is large and the data fitting term dominates.
-
-**Key files:**
-- `CGBezierBathymetrySmoother` - CG quintic solver with C² continuity
-- `CGCubicBezierBathymetrySmoother` - CG cubic solver with C¹ continuity
-- `CGLinearBezierBathymetrySmoother` - CG linear solver with C⁰ continuity
-- `BezierBasis2D` - Quintic tensor-product Bernstein basis evaluation
-- `CubicBezierBasis2D` - Cubic tensor-product Bernstein basis evaluation
-- `LinearBezierBasis2D` - Linear tensor-product Bernstein basis evaluation
-- `ThinPlateHessian` - Curvature regularization energy `E = ∫[(z_uu + z_vv)² + 2z_uv²]`
-- `BezierDataFittingAssembler` - Least-squares data fitting term
-
-**Configuration (`CGBezierSmootherConfig`):**
-- `lambda` - Data fitting weight (0 = pure thin plate/soap film, higher = closer to data)
-- `gradient_weight` - First derivative penalty (slope smoothing)
-- `enable_natural_bc` - Enable natural boundary conditions (default: true)
-- `enable_boundary_dirichlet` - Pin boundary corner DOFs to input data (default: false, mutually exclusive with natural BC)
-
-**Boundary Conditions:**
-
-The biharmonic (thin plate) equation requires two boundary conditions. Two options are available:
-
-1. **Natural boundary conditions** (default, `enable_natural_bc = true`):
-   - Enforces zero normal curvature at all boundary DOFs: z_nn = 0
-   - Formula: z_nn = nx² · z_xx + 2·nx·ny · z_xy + ny² · z_yy = 0
-   - For axis-aligned boundaries:
-     - Left/right edges (n = (±1, 0)): z_xx = 0
-     - Bottom/top edges (n = (0, ±1)): z_yy = 0
-   - Domain corners get TWO constraints (z_xx = 0 AND z_yy = 0) since they lie on two edges
-   - This is the standard "natural spline" or "free edge" boundary condition
-   - Results in smoother boundary behavior without forced values
-   - The surface is determined by data fitting + C² continuity + smoothness energy
-
-2. **Dirichlet boundary conditions** (`enable_boundary_dirichlet = true`, `enable_natural_bc = false`):
-   - Pins boundary corner DOFs to match input bathymetry data
-   - Applied only at 4 domain corner vertices (not interior edge DOFs)
-   - Preserves C² constraints at shared boundary vertices
-   - May introduce boundary oscillations if data is noisy
-
-Natural BCs are preferred for most applications as they produce smoother surfaces and avoid boundary artifacts.
-
-**DOF Structure (36 per element):**
-
-Control point indexing: `dof = i + 6*j` where i,j ∈ {0,1,2,3,4,5}
-
-```
-Parameter space (u,v) ∈ [0,1]²:
-  j=5: [5]  [11] [17] [23] [29] [35]   ← top edge (v=1)
-  j=4: [4]  [10] [16] [22] [28] [34]
-  j=3: [3]  [9]  [15] [21] [27] [33]
-  j=2: [2]  [8]  [14] [20] [26] [32]
-  j=1: [1]  [7]  [13] [19] [25] [31]
-  j=0: [0]  [6]  [12] [18] [24] [30]   ← bottom edge (v=0)
-       ↑                         ↑
-     left                      right
-    (u=0)                      (u=1)
-```
-
-- Edge 0 (left, u=0): DOFs [0, 1, 2, 3, 4, 5]
-- Edge 1 (right, u=1): DOFs [30, 31, 32, 33, 34, 35]
-- Edge 2 (bottom, v=0): DOFs [0, 6, 12, 18, 24, 30]
-- Edge 3 (top, v=1): DOFs [5, 11, 17, 23, 29, 35]
-
-### Non-conforming Mesh Constraints (Hanging Nodes)
-
-For adaptive mesh refinement with 2:1 size ratios, "hanging nodes" occur where fine element edges meet coarse element edges. The DOF manager automatically generates hanging node constraints to ensure C⁰ continuity across non-conforming interfaces using de Casteljau subdivision.
-
-```
-Non-conforming T-junction:
-+---------------+-------+
-|               |   F1  |
-|     Coarse    *-------+    * = hanging node
-|               |   F0  |
-+---------------+-------+
-```
-
-The fine element edge DOFs are constrained to interpolate the coarse element's Bezier curve via de Casteljau subdivision weights.
-
-**Thin plate scaling for physical coordinates**: The energy must account for element size (dx, dy):
-- `scale_uu_uu = dy/dx³` (for z_uu² term)
-- `scale_vv_vv = dx/dy³` (for z_vv² term)
-- `scale_uu_vv = 1/(dx·dy)` (for cross term)
-- `scale_uv_uv = 2/(dx·dy)` (for z_uv² term)
-
-### CG Bezier Bathymetry Smoother (`bathymetry/cg_bezier_bathymetry_smoother.hpp`)
-
-Shares DOFs at element boundaries for automatic C⁰ continuity. Explicit constraints enforce C¹/C² derivative continuity.
-
-**Edge Derivative Constraints (`CGBezierSmootherConfig`):**
-
-Edge constraints enforce C²/C¹ continuity along shared element edges at Gauss quadrature points:
-
-| Option | Description |
-|--------|-------------|
-| `enable_edge_constraints` | Enable edge derivative constraints (z_n, z_nn matching at Gauss points) |
-| `edge_ngauss` | Number of Gauss points per edge (default: 4) |
-
-**Recommended Configuration:**
-
-```cpp
-CGBezierSmootherConfig config;
-config.lambda = 1.0;
-config.enable_edge_constraints = true;  // 896 constraints for 8×8 mesh
-config.edge_ngauss = 4;                 // 4 Gauss points per edge
-```
-
-Edge constraints directly address normal derivative discontinuities along element boundaries where kinks occur.
-
-**DOF Sharing:**
-```
-For quintic Bezier (6×6 = 36 DOFs per element):
-  - Corner DOFs (4): shared by all elements meeting at vertex
-  - Edge DOFs (4 per edge, excluding corners): shared by 2 elements
-  - Interior DOFs (16): unique per element
-
-For 8×8 uniform mesh: 1681 total DOFs (vs 2304 without sharing)
-```
-
-### CG Cubic Bezier Bathymetry Smoother (`bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp`)
-
-Continuous Galerkin variant using cubic (degree 3) Bezier with C¹ continuity. Lower DOF count than quintic, suitable when C² continuity is not required.
-
-**Key Properties:**
-- Cubic Bezier: 4×4 = 16 DOFs per element (vs 36 for quintic)
-- C¹ continuity via edge derivative constraints
-- Shared DOFs at element boundaries (CG assembly)
-
-**Configuration (`CGCubicBezierSmootherConfig`):**
+**Key Configuration (`CGBezierSmootherConfig`):**
 - `lambda` - Data fitting weight
-- `gradient_weight` - First derivative penalty
-- `enable_c1_edge_constraints` - Enable C¹ edge derivative constraints (z_n matching at Gauss points)
-- `edge_ngauss` - Number of Gauss points per edge (default: 4)
+- `enable_edge_constraints` / `edge_ngauss` - C¹/C² edge derivative constraints
+- `enable_natural_bc` - Zero normal curvature at boundaries (default, preferred)
+- `enable_boundary_dirichlet` - Pin corners to data (can cause oscillations)
 
-**Usage:**
-```cpp
-CGCubicBezierSmootherConfig config;
-config.lambda = 1.0;
-config.enable_c1_edge_constraints = true;
-
-CGCubicBezierBathymetrySmoother smoother(quadtree, config);
-smoother.set_bathymetry_data(source);
-smoother.solve();
-```
-
-### Adaptive CG Bezier Smoother
-
-Error-driven adaptive mesh refinement coupled with CG Bezier smoothing. Iteratively refines elements where fitting error exceeds threshold while maintaining continuity.
-
-**Available Variants:**
-- `AdaptiveCGBezierSmoother` - Adaptive quintic (C² continuity)
-- `AdaptiveCGCubicBezierSmoother` - Adaptive cubic (C¹ continuity)
-
-**Algorithm:**
-1. Solve CG Bezier smoothing on current mesh
-2. Estimate L2 error per element: `||z_data - z_bezier||_L2`
-3. Mark elements where `normalized_error > threshold`
-4. Refine marked elements (with 2:1 balancing)
-5. Re-solve until `error < tolerance` everywhere OR max iterations/elements reached
-
-**Configuration (`AdaptiveCGBezierConfig`):**
-- `error_threshold` - Stop when max error < threshold (default: 0.1m)
-- `max_iterations` - Maximum adaptation iterations (default: 10)
-- `max_elements` - Maximum number of elements (default: 10000)
-- `refine_fraction` - Fraction of elements to refine per iteration (default: 0.2)
-- `smoother_config` - Underlying CGBezierSmootherConfig
-
-**Usage:**
-```cpp
-AdaptiveCGBezierConfig config;
-config.error_threshold = 0.5;  // 0.5 meter threshold
-
-AdaptiveCGBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
-smoother.set_bathymetry_data(geotiff_source);
-auto result = smoother.solve_adaptive();
-```
+**Non-conforming meshes:** Hanging node constraints via de Casteljau subdivision ensure continuity at 2:1 T-junctions.
 
 ## Testing
 
@@ -419,11 +206,3 @@ Run specific tests with gtest filter: `./build/tests/drifter_integration_tests -
 
 Required: Eigen3, Boost (Geometry), MPI, OpenMP, GTest
 Optional: GDAL (geospatial), VTK, zarrs_ffi (Zarr output)
-
-
-## Instructions for claude from user:
-
-- Always separate i/o code from algorithmic code
-- Never add "Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>" to git commit messages
-- Always output per element intepolations to vtk
-- Never output to an uniform global mesh to vtk 

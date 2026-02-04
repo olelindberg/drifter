@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace drifter {
 
@@ -267,101 +268,110 @@ void CGLinearBezierBathymetrySmoother::solve_unconstrained() {
 }
 
 void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
-  Index num_dofs = dof_manager_->num_global_dofs();
-  Index num_constraints = dof_manager_->num_constraints();
+  // Use constraint elimination instead of KKT system.
+  // For hanging node constraints x_slave = sum(w_i * x_master_i),
+  // we eliminate slave DOFs and solve a smaller system on free DOFs only.
 
-  // Q = alpha * H + lambda * BtWB (alpha computed during assembly)
+  Index num_dofs = dof_manager_->num_global_dofs();
+  Index num_free = dof_manager_->num_free_dofs();
+
+  // Build lookup: slave_dof -> constraint index
+  std::unordered_map<Index, size_t> slave_to_constraint;
+  const auto &constraints = dof_manager_->constraints();
+  for (size_t ci = 0; ci < constraints.size(); ++ci) {
+    slave_to_constraint[constraints[ci].slave_dof] = ci;
+  }
+
+  // Build Q and c for all DOFs
   SpMat Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
   for (Index i = 0; i < num_dofs; ++i) {
     Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
   }
-
   VecX c = -config_.lambda * BtWd_global_;
 
-  // Build constraint matrix from hanging node constraints
-  std::vector<Eigen::Triplet<Real>> A_triplets;
-  A_triplets.reserve(num_constraints * 3);
-
-  Index row = 0;
-  for (const auto &hc : dof_manager_->constraints()) {
-    A_triplets.emplace_back(row, hc.slave_dof, 1.0);
+  // Helper: expand a global DOF to (free_index, weight) pairs
+  // Free DOF: returns {(free_idx, 1.0)}
+  // Slave DOF: returns {(master_free_idx, weight), ...}
+  auto expand_dof = [&](Index g) -> std::vector<std::pair<Index, Real>> {
+    Index f = dof_manager_->global_to_free(g);
+    if (f >= 0) {
+      return {{f, 1.0}};
+    }
+    // Slave DOF - expand to masters
+    auto it = slave_to_constraint.find(g);
+    if (it == slave_to_constraint.end()) {
+      return {};
+    }
+    const auto &hc = constraints[it->second];
+    std::vector<std::pair<Index, Real>> result;
     for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
-      A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
-    }
-    ++row;
-  }
-
-  SpMat A(num_constraints, num_dofs);
-  A.setFromTriplets(A_triplets.begin(), A_triplets.end());
-
-  // Build KKT system: [Q  A^T; A  0]
-  Index kkt_size = num_dofs + num_constraints;
-  std::vector<Eigen::Triplet<Real>> triplets;
-  triplets.reserve(Q.nonZeros() + 2 * A.nonZeros());
-
-  // Add Q block (top-left)
-  for (int k = 0; k < Q.outerSize(); ++k) {
-    for (SpMat::InnerIterator it(Q, k); it; ++it) {
-      triplets.emplace_back(it.row(), it.col(), it.value());
-    }
-  }
-
-  // Add A and A^T blocks in single loop
-  for (int k = 0; k < A.outerSize(); ++k) {
-    for (SpMat::InnerIterator it(A, k); it; ++it) {
-      triplets.emplace_back(num_dofs + it.row(), it.col(), it.value());  // A block
-      triplets.emplace_back(it.col(), num_dofs + it.row(), it.value());  // A^T block
-    }
-  }
-
-  SpMat KKT(kkt_size, kkt_size);
-  KKT.setFromTriplets(triplets.begin(), triplets.end());
-
-  // Small regularization on constraint block for numerical stability
-  Real constraint_reg = 1e-10;
-  for (Index i = num_dofs; i < kkt_size; ++i) {
-    KKT.coeffRef(i, i) -= constraint_reg;
-  }
-
-  VecX rhs(kkt_size);
-  rhs.head(num_dofs) = -c;
-  rhs.tail(num_constraints).setZero();
-
-  Eigen::SparseLU<SpMat> solver;
-  solver.compute(KKT);
-  if (solver.info() != Eigen::Success) {
-    throw std::runtime_error(
-        "CGLinearBezierBathymetrySmoother: KKT SparseLU decomposition "
-        "failed");
-  }
-
-  VecX sol = solver.solve(rhs);
-  if (solver.info() != Eigen::Success) {
-    throw std::runtime_error(
-        "CGLinearBezierBathymetrySmoother: KKT SparseLU solve failed");
-  }
-
-  solution_ = sol.head(num_dofs);
-
-  // Project onto constraint manifold for numerical precision
-  if (num_constraints > 0) {
-    VecX Ax = A * solution_;
-    SpMat AAt = A * A.transpose();
-
-    for (Index i = 0; i < num_constraints; ++i) {
-      AAt.coeffRef(i, i) += 1e-14;
-    }
-
-    Eigen::SparseLU<SpMat> projector;
-    projector.compute(AAt);
-
-    if (projector.info() == Eigen::Success) {
-      VecX lambda = projector.solve(Ax);
-      if (projector.info() == Eigen::Success) {
-        VecX correction = A.transpose() * lambda;
-        solution_ -= correction;
+      Index mf = dof_manager_->global_to_free(hc.master_dofs[i]);
+      if (mf >= 0) {
+        result.emplace_back(mf, hc.weights[i]);
       }
     }
+    return result;
+  };
+
+  // Build reduced system by condensing slave DOFs
+  std::vector<Eigen::Triplet<Real>> triplets;
+  triplets.reserve(Q.nonZeros());
+  VecX c_reduced = VecX::Zero(num_free);
+
+  // Condense Q matrix
+  for (int k = 0; k < Q.outerSize(); ++k) {
+    for (SpMat::InnerIterator it(Q, k); it; ++it) {
+      Index I = it.row();
+      Index J = it.col();
+      Real val = it.value();
+
+      auto I_expanded = expand_dof(I);
+      auto J_expanded = expand_dof(J);
+
+      for (const auto &[If, Iw] : I_expanded) {
+        for (const auto &[Jf, Jw] : J_expanded) {
+          triplets.emplace_back(If, Jf, val * Iw * Jw);
+        }
+      }
+    }
+  }
+
+  // Condense RHS vector
+  for (Index g = 0; g < num_dofs; ++g) {
+    auto g_expanded = expand_dof(g);
+    for (const auto &[gf, gw] : g_expanded) {
+      c_reduced(gf) += c(g) * gw;
+    }
+  }
+
+  SpMat Q_reduced(num_free, num_free);
+  Q_reduced.setFromTriplets(triplets.begin(), triplets.end());
+
+  // Solve reduced system
+  Eigen::SparseLU<SpMat> solver;
+  solver.compute(Q_reduced);
+  if (solver.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "CGLinearBezierBathymetrySmoother: SparseLU decomposition failed");
+  }
+
+  VecX x_free = solver.solve(-c_reduced);
+  if (solver.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "CGLinearBezierBathymetrySmoother: SparseLU solve failed");
+  }
+
+  // Back-substitute: free DOFs directly, slave DOFs from masters
+  solution_.setZero(num_dofs);
+  for (Index f = 0; f < num_free; ++f) {
+    solution_(dof_manager_->free_to_global(f)) = x_free(f);
+  }
+  for (const auto &hc : constraints) {
+    Real val = 0.0;
+    for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
+      val += hc.weights[i] * solution_(hc.master_dofs[i]);
+    }
+    solution_(hc.slave_dof) = val;
   }
 }
 
@@ -489,12 +499,14 @@ void CGLinearBezierBathymetrySmoother::write_vtk(const std::string &filename,
         "write_vtk()");
   }
 
-  // Use CG-aware VTK writer that deduplicates shared vertices at element
-  // boundaries, producing a properly connected mesh without visual gaps
+  // Use CG-aware VTK writer with DOF manager's quantization parameters
+  // This ensures consistent vertex deduplication between DOF sharing and VTK
   io::write_cg_bezier_surface_vtk(
       filename, *quadtree_,
       [this](Real x, Real y) { return evaluate(x, y); },
-      resolution > 0 ? resolution : 5, "elevation");
+      dof_manager_->xmin_domain(), dof_manager_->ymin_domain(),
+      dof_manager_->inv_quantization_tol(), resolution > 0 ? resolution : 6,
+      "elevation");
 }
 
 void CGLinearBezierBathymetrySmoother::write_control_points_vtk(
@@ -540,14 +552,19 @@ Real CGLinearBezierBathymetrySmoother::objective_value() const {
 }
 
 Real CGLinearBezierBathymetrySmoother::constraint_violation() const {
-  Index num_constraints = dof_manager_->num_constraints();
-
-  if (!solved_ || num_constraints == 0)
+  if (!solved_ || dof_manager_->num_constraints() == 0)
     return 0.0;
 
-  SpMat A = dof_manager_->build_constraint_matrix();
-  VecX violation = A * solution_;
-  return violation.norm();
+  // Compute violation directly from constraints without building sparse matrix
+  Real sum_sq = 0.0;
+  for (const auto &hc : dof_manager_->constraints()) {
+    Real val = solution_(hc.slave_dof);
+    for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
+      val -= hc.weights[i] * solution_(hc.master_dofs[i]);
+    }
+    sum_sq += val * val;
+  }
+  return std::sqrt(sum_sq);
 }
 
 } // namespace drifter
