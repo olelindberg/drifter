@@ -13,8 +13,8 @@
 #include "bathymetry/linear_bezier_basis_2d.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
-#include <map>
-#include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace drifter {
@@ -94,9 +94,9 @@ private:
 
   std::vector<std::vector<Index>> elem_to_global_;
   std::vector<Index> boundary_dofs_;
-  std::set<Index> boundary_dof_set_;
+  std::unordered_set<Index> boundary_dof_set_;
   std::vector<LinearHangingNodeConstraint> constraints_;
-  std::set<Index> constrained_dofs_;
+  std::unordered_set<Index> constrained_dofs_;
   std::vector<Index> global_to_free_;
   std::vector<Index> free_to_global_;
 
@@ -110,7 +110,18 @@ private:
 
   // Helpers
   Vec2 get_dof_position(Index elem, int local_dof) const;
-  std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;
+
+  struct PairHash {
+    size_t operator()(const std::pair<int64_t, int64_t> &p) const {
+      size_t h1 = std::hash<int64_t>{}(p.first);
+      size_t h2 = std::hash<int64_t>{}(p.second);
+      return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL + 0x517cc1b727220a95ULL +
+                   (h1 << 6) + (h1 >> 2));
+    }
+  };
+
+  std::unordered_map<std::pair<int64_t, int64_t>, Index, PairHash>
+      position_to_dof_;
   std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const;
   Index find_dof_at_position(const Vec2 &pos) const;
 
