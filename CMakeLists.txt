@@ -117,6 +117,7 @@ set(MESH_SOURCES
     src/mesh/geotiff_reader.cpp
     src/mesh/coastline_refinement.cpp
     src/mesh/seabed_surface.cpp
+    src/mesh/multi_source_bathymetry.cpp
 )
 
 set(BATHYMETRY_SOURCES

@@ -48,6 +48,8 @@ set(INTEGRATION_TESTS
     integration/test_adaptive_cg_linear_bezier_smoother.cpp
     # CG Bezier bathymetry smoother (quintic with triharmonic energy)
     integration/test_cg_triharmonic_bezier_bathymetry_smoother.cpp
+    # Multi-source bathymetry lookup
+    integration/test_multi_source_bathymetry.cpp
 )
 
 # Create unit test executable

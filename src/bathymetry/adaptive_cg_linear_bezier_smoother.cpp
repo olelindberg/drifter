@@ -10,6 +10,23 @@
 
 namespace drifter {
 
+namespace {
+const char *convergence_reason_string(ConvergenceReason reason) {
+  switch (reason) {
+  case ConvergenceReason::ErrorThreshold:
+    return "error below threshold";
+  case ConvergenceReason::MaxElements:
+    return "maximum elements reached";
+  case ConvergenceReason::MaxRefinementLevel:
+    return "maximum refinement level reached";
+  case ConvergenceReason::MaxIterations:
+    return "maximum iterations reached";
+  default:
+    return "unknown";
+  }
+}
+} // namespace
+
 // =============================================================================
 // Constructors
 // =============================================================================
@@ -105,6 +122,36 @@ void AdaptiveCGLinearBezierSmoother::set_bathymetry_data(
   bathy_func_ = std::move(bathy_func);
 }
 
+void AdaptiveCGLinearBezierSmoother::set_land_mask(
+    std::function<bool(Real, Real)> is_land_func) {
+  land_mask_func_ = std::move(is_land_func);
+}
+
+bool AdaptiveCGLinearBezierSmoother::is_element_on_land(Index elem) const {
+  if (!land_mask_func_)
+    return false;
+
+  const QuadBounds &bounds = quadtree_->element_bounds(elem);
+
+  // Check corners
+  if (!land_mask_func_(bounds.xmin, bounds.ymin))
+    return false;
+  if (!land_mask_func_(bounds.xmax, bounds.ymin))
+    return false;
+  if (!land_mask_func_(bounds.xmin, bounds.ymax))
+    return false;
+  if (!land_mask_func_(bounds.xmax, bounds.ymax))
+    return false;
+
+  // Check center
+  Real cx = 0.5 * (bounds.xmin + bounds.xmax);
+  Real cy = 0.5 * (bounds.ymin + bounds.ymax);
+  if (!land_mask_func_(cx, cy))
+    return false;
+
+  return true;
+}
+
 // =============================================================================
 // Internal: Smoother management
 // =============================================================================
@@ -148,8 +195,8 @@ void AdaptiveCGLinearBezierSmoother::apply_bathymetry_to_smoother() {
 // Error estimation
 // =============================================================================
 
-Real AdaptiveCGLinearBezierSmoother::compute_element_l2_error(
-    Index elem) const {
+void AdaptiveCGLinearBezierSmoother::compute_element_error_statistics(
+    Index elem, Real &l2_error, Real &mean_error, Real &std_error) const {
   if (!smoother_ || !smoother_->is_solved()) {
     throw std::runtime_error(
         "AdaptiveCGLinearBezierSmoother: must solve before computing errors");
@@ -158,9 +205,12 @@ Real AdaptiveCGLinearBezierSmoother::compute_element_l2_error(
   const QuadBounds &bounds = quadtree_->element_bounds(elem);
   Real dx = bounds.xmax - bounds.xmin;
   Real dy = bounds.ymax - bounds.ymin;
-
-  Real error_sq = 0.0;
   int ngauss = config_.ngauss_error;
+
+  // Accumulate weighted sums in a single pass
+  Real sum_error = 0.0;
+  Real sum_error_sq = 0.0;
+  Real total_weight = 0.0;
 
   // 2D Gauss-Legendre quadrature
   for (int j = 0; j < ngauss; ++j) {
@@ -179,15 +229,22 @@ Real AdaptiveCGLinearBezierSmoother::compute_element_l2_error(
       // CG linear Bezier approximation value
       Real z_bezier = smoother_->evaluate(x, y);
 
-      // Accumulate weighted squared difference
+      // Accumulate weighted error statistics
       Real diff = z_data - z_bezier;
-      error_sq += w * diff * diff;
+      sum_error += w * diff;
+      sum_error_sq += w * diff * diff;
+      total_weight += w;
     }
   }
 
+  // Weighted mean and variance using E[X²] - E[X]² formula
+  mean_error = sum_error / total_weight;
+  Real variance = (sum_error_sq / total_weight) - mean_error * mean_error;
+  std_error = std::sqrt(std::max(0.0, variance));
+
   // L2 error = sqrt(integral of diff^2 over element)
   // The quadrature weights sum to 1 on [0,1]^2, so multiply by area
-  return std::sqrt(error_sq * dx * dy);
+  l2_error = std::sqrt(sum_error_sq * dx * dy);
 }
 
 CGLinearElementErrorEstimate
@@ -195,15 +252,30 @@ AdaptiveCGLinearBezierSmoother::estimate_element_error(Index elem) const {
   CGLinearElementErrorEstimate result;
   result.element = elem;
 
+  // Skip refinement for land-only elements
+  if (is_element_on_land(elem)) {
+    result.l2_error = 0.0;
+    result.normalized_error = 0.0;
+    result.mean_error = 0.0;
+    result.std_error = 0.0;
+    result.should_refine = false;
+    return result;
+  }
+
   const QuadBounds &bounds = quadtree_->element_bounds(elem);
   Real dx = bounds.xmax - bounds.xmin;
   Real dy = bounds.ymax - bounds.ymin;
   Real area = dx * dy;
 
-  result.l2_error = compute_element_l2_error(elem);
-  // Normalize by sqrt(area) to get average error magnitude
+  // Compute all error statistics in one pass
+  compute_element_error_statistics(elem, result.l2_error, result.mean_error,
+                                   result.std_error);
+
+  // Normalize by sqrt(area) to get average error magnitude (RMS)
   result.normalized_error = result.l2_error / std::sqrt(area);
-  result.should_refine = (result.normalized_error > config_.error_threshold);
+
+  // Refinement decision based on selected metric
+  result.should_refine = (error_metric(result) > config_.error_threshold);
 
   return result;
 }
@@ -224,7 +296,7 @@ Real AdaptiveCGLinearBezierSmoother::max_error() const {
   auto errors = estimate_errors();
   Real max_err = 0.0;
   for (const auto &err : errors) {
-    max_err = std::max(max_err, err.normalized_error);
+    max_err = std::max(max_err, error_metric(err));
   }
   return max_err;
 }
@@ -233,7 +305,7 @@ Real AdaptiveCGLinearBezierSmoother::mean_error() const {
   auto errors = estimate_errors();
   Real sum_err = 0.0;
   for (const auto &err : errors) {
-    sum_err += err.normalized_error;
+    sum_err += error_metric(err);
   }
   return errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
 }
@@ -282,17 +354,19 @@ AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
     // Dorfler bulk marking with symmetry extension:
     // 1. Find cutoff via greedy accumulation of squared errors
     // 2. Include ALL elements at or above the cutoff error
+
     Real total_sq = 0.0;
     for (const auto &err : errors) {
-      total_sq += err.normalized_error * err.normalized_error;
+      Real metric = error_metric(err);
+      total_sq += metric * metric;
     }
 
     // Sort copy by error descending (stable for deterministic ordering)
     auto sorted = errors;
     std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const CGLinearElementErrorEstimate &a,
-                        const CGLinearElementErrorEstimate &b) {
-                       return a.normalized_error > b.normalized_error;
+                     [this](const CGLinearElementErrorEstimate &a,
+                            const CGLinearElementErrorEstimate &b) {
+                       return error_metric(a) > error_metric(b);
                      });
 
     // Greedy selection to find cutoff error
@@ -303,14 +377,15 @@ AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
     for (const auto &err : sorted) {
       if (accumulated >= target)
         break;
-      accumulated += err.normalized_error * err.normalized_error;
-      cutoff_error = err.normalized_error;
+      Real metric = error_metric(err);
+      accumulated += metric * metric;
+      cutoff_error = metric;
     }
 
     // Symmetry extension: include ALL elements at or above cutoff
-    Real threshold = cutoff_error * (1.0 - config_.symmetry_tolerance);
+    Real threshold_val = cutoff_error * (1.0 - config_.symmetry_tolerance);
     for (const auto &err : errors) {
-      if (err.normalized_error >= threshold) {
+      if (error_metric(err) >= threshold_val) {
         selected.push_back(err.element);
       }
     }
@@ -319,16 +394,18 @@ AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
 
   case MarkingStrategy::Dorfler: {
     // Standard Dorfler without symmetry extension
+
     Real total_sq = 0.0;
     for (const auto &err : errors) {
-      total_sq += err.normalized_error * err.normalized_error;
+      Real metric = error_metric(err);
+      total_sq += metric * metric;
     }
 
     auto sorted = errors;
     std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const CGLinearElementErrorEstimate &a,
-                        const CGLinearElementErrorEstimate &b) {
-                       return a.normalized_error > b.normalized_error;
+                     [this](const CGLinearElementErrorEstimate &a,
+                            const CGLinearElementErrorEstimate &b) {
+                       return error_metric(a) > error_metric(b);
                      });
 
     Real target = config_.dorfler_theta * total_sq;
@@ -338,21 +415,22 @@ AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
       if (accumulated >= target)
         break;
       selected.push_back(err.element);
-      accumulated += err.normalized_error * err.normalized_error;
+      accumulated += error_metric(err) * error_metric(err);
     }
     break;
   }
 
   case MarkingStrategy::RelativeThreshold: {
     // Refine all elements with error > alpha * max_error
+
     Real max_err = 0.0;
     for (const auto &err : errors) {
-      max_err = std::max(max_err, err.normalized_error);
+      max_err = std::max(max_err, error_metric(err));
     }
     Real threshold = config_.relative_alpha * max_err;
 
     for (const auto &err : errors) {
-      if (err.normalized_error > threshold) {
+      if (error_metric(err) > threshold) {
         selected.push_back(err.element);
       }
     }
@@ -362,11 +440,12 @@ AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
   case MarkingStrategy::FixedFraction:
   default: {
     // Legacy: top refine_fraction elements
+
     auto sorted = errors;
     std::sort(sorted.begin(), sorted.end(),
-              [](const CGLinearElementErrorEstimate &a,
-                 const CGLinearElementErrorEstimate &b) {
-                return a.normalized_error > b.normalized_error;
+              [this](const CGLinearElementErrorEstimate &a,
+                     const CGLinearElementErrorEstimate &b) {
+                return error_metric(a) > error_metric(b);
               });
     Index num = static_cast<Index>(
         std::ceil(config_.refine_fraction * static_cast<Real>(sorted.size())));
@@ -383,8 +462,9 @@ AdaptiveCGLinearBezierSmoother::select_elements_for_refinement(
     Real max_err = 0.0;
     Index max_elem = errors[0].element;
     for (const auto &err : errors) {
-      if (err.normalized_error > max_err) {
-        max_err = err.normalized_error;
+      Real metric = error_metric(err);
+      if (metric > max_err) {
+        max_err = metric;
         max_elem = err.element;
       }
     }
@@ -435,12 +515,13 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
     errors = estimate_errors();
   }
 
-  // Compute statistics
+  // Compute statistics using selected error metric
   Real max_err = 0.0;
   Real sum_err = 0.0;
   for (const auto &err : errors) {
-    max_err = std::max(max_err, err.normalized_error);
-    sum_err += err.normalized_error;
+    Real metric = error_metric(err);
+    max_err = std::max(max_err, metric);
+    sum_err += metric;
   }
 
   result.num_elements = quadtree_->num_elements();
@@ -453,8 +534,17 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
   bool max_elements_reached =
       (static_cast<int>(result.num_elements) >= config_.max_elements);
 
-  if (error_converged || max_elements_reached) {
+  if (error_converged) {
     result.converged = true;
+    result.convergence_reason = ConvergenceReason::ErrorThreshold;
+    result.elements_refined = 0;
+    profiles_.push_back(profile);
+    current_profile_ = nullptr;
+    return result;
+  }
+  if (max_elements_reached) {
+    result.converged = true;
+    result.convergence_reason = ConvergenceReason::MaxElements;
     result.elements_refined = 0;
     profiles_.push_back(profile);
     current_profile_ = nullptr;
@@ -482,6 +572,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
   if (valid_refine.empty()) {
     // Can't refine further due to level limit
     result.converged = true;
+    result.convergence_reason = ConvergenceReason::MaxRefinementLevel;
   } else {
     // refine_elements() internally times refinement_ms and rebuild_ms
     refine_elements(valid_refine);
@@ -516,9 +607,22 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::solve_adaptive() {
 
     if (result.converged) {
       if (config_.verbose) {
-        std::cout << "Converged after " << (iter + 1) << " iterations\n";
+        std::cout << "Converged after " << (iter + 1) << " iterations ("
+                  << convergence_reason_string(result.convergence_reason)
+                  << ")\n";
       }
       break;
+    }
+  }
+
+  // Handle max iterations case
+  if (!result.converged) {
+    result.convergence_reason = ConvergenceReason::MaxIterations;
+    if (config_.verbose) {
+      std::cout << "Stopped after " << config_.max_iterations
+                << " iterations ("
+                << convergence_reason_string(result.convergence_reason)
+                << ")\n";
     }
   }
 

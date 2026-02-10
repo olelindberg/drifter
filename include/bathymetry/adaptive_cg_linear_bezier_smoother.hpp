@@ -70,12 +70,31 @@ enum class MarkingStrategy {
   RelativeThreshold ///< All elements with error > alpha * max_error
 };
 
+/// @brief Error metric type for adaptive refinement decisions
+enum class ErrorMetricType {
+  NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area)
+  StdError         ///< Standard deviation of error within element
+};
+
+/// @brief Reason for adaptive convergence
+enum class ConvergenceReason {
+  NotConverged,       ///< Still iterating
+  ErrorThreshold,     ///< max_error <= error_threshold
+  MaxElements,        ///< num_elements >= max_elements
+  MaxRefinementLevel, ///< All marked elements at max level
+  MaxIterations       ///< Reached max_iterations
+};
+
 /// @brief Per-element error estimate for CG linear adaptive smoother
 struct CGLinearElementErrorEstimate {
   Index element;         ///< Element index
   Real l2_error;         ///< L2 error ||z_data - z_bezier||_L2
-  Real normalized_error; ///< Error normalized by sqrt(element area)
+  Real normalized_error; ///< Error normalized by sqrt(element area) (RMS)
   bool should_refine;    ///< Marked for refinement
+
+  // Statistical decomposition of error (RMS² = mean² + std²)
+  Real mean_error; ///< Signed weighted mean error: E[z_data - z_bezier]
+  Real std_error;  ///< Std dev around mean (captures local variability)
 };
 
 /// @brief Configuration for adaptive CG linear Bezier smoother
@@ -85,6 +104,9 @@ struct AdaptiveCGLinearBezierConfig {
   int max_iterations = 10;       ///< Maximum adaptation iterations
   int max_elements = 10000;      ///< Maximum number of elements
   int max_refinement_level = 10; ///< Maximum refinement level per axis
+
+  /// @brief Which error metric to use for refinement decisions
+  ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
 
   // Marking strategy selection
   MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
@@ -120,6 +142,8 @@ struct CGLinearAdaptationResult {
   Real mean_error;        ///< Mean normalized error across all elements
   Index elements_refined; ///< Number of elements refined in this iteration
   bool converged;         ///< True if stopping criteria met
+  ConvergenceReason convergence_reason =
+      ConvergenceReason::NotConverged; ///< Why convergence occurred
 };
 
 /// @brief Adaptive CG linear Bezier bathymetry smoother with error-driven
@@ -187,6 +211,11 @@ public:
   /// @brief Set bathymetry from function
   /// @param bathy_func Function (x, y) -> depth
   void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
+
+  /// @brief Set optional land mask function
+  /// @param is_land_func Returns true if (x,y) is on land
+  /// Elements entirely on land will not be refined
+  void set_land_mask(std::function<bool(Real, Real)> is_land_func);
 
   // =========================================================================
   // Adaptive solve
@@ -274,6 +303,9 @@ private:
   // Persistent bathymetry source
   std::function<Real(Real, Real)> bathy_func_;
 
+  // Optional land mask
+  std::function<bool(Real, Real)> land_mask_func_;
+
   // Current smoother (recreated after each refinement)
   std::unique_ptr<CGLinearBezierBathymetrySmoother> smoother_;
 
@@ -311,10 +343,28 @@ private:
   /// @param elements_to_refine Element indices to refine
   void refine_elements(const std::vector<Index> &elements_to_refine);
 
-  /// @brief Compute L2 error for element via Gauss quadrature
+  /// @brief Compute error statistics for element via Gauss quadrature
   /// @param elem Element index
-  /// @return L2 error ||z_data - z_bezier||_L2 over element
-  Real compute_element_l2_error(Index elem) const;
+  /// @param[out] l2_error L2 error ||z_data - z_bezier||_L2 over element
+  /// @param[out] mean_error Weighted mean error (signed)
+  /// @param[out] std_error Standard deviation around mean
+  void compute_element_error_statistics(Index elem, Real &l2_error,
+                                        Real &mean_error,
+                                        Real &std_error) const;
+
+  /// @brief Get the error metric value based on config
+  /// @param err Error estimate for an element
+  /// @return The selected metric value (normalized_error or std_error)
+  Real error_metric(const CGLinearElementErrorEstimate &err) const {
+    return (config_.error_metric_type == ErrorMetricType::StdError)
+               ? err.std_error
+               : err.normalized_error;
+  }
+
+  /// @brief Check if element is entirely on land
+  /// @param elem Element index
+  /// @return true if all sample points are on land
+  bool is_element_on_land(Index elem) const;
 
   /// @brief Print profiling report to stdout
   void print_profile_report() const;

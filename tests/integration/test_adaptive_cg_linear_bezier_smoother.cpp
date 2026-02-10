@@ -3,6 +3,7 @@
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include "test_integration_fixtures.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -226,6 +227,45 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, ErrorEstimationAfterSolve) {
   EXPECT_GT(max_err, 0.0);
 }
 
+TEST_F(AdaptiveCGLinearBezierSmootherTest, ErrorStatisticsIncludeMeanAndStd) {
+  // Test that mean_error and std_error are populated correctly
+  AdaptiveCGLinearBezierConfig config;
+  config.error_threshold = 10.0;
+  config.max_iterations = 1;
+  config.smoother_config.lambda = 10.0;
+
+  // Sinusoidal bathymetry creates known error patterns
+  auto bathy = [](Real x, Real y) {
+    return 100.0 + 20.0 * std::sin(0.1 * x) * std::cos(0.1 * y);
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+  smoother.set_bathymetry_data(bathy);
+  smoother.solve_adaptive();
+
+  auto errors = smoother.estimate_errors();
+  ASSERT_FALSE(errors.empty());
+
+  for (const auto &err : errors) {
+    // Mathematical relationship: RMS² = mean² + std²
+    // So std ≤ RMS always (allowing small numerical tolerance)
+    EXPECT_LE(err.std_error, err.normalized_error + 1e-10)
+        << "std_error should be <= normalized_error (RMS)";
+
+    // Sanity check: std_error should be non-negative
+    EXPECT_GE(err.std_error, 0.0);
+  }
+
+  // Print some statistics for debugging
+  Real max_std = 0.0, max_mean = 0.0;
+  for (const auto &err : errors) {
+    max_std = std::max(max_std, err.std_error);
+    max_mean = std::max(max_mean, std::abs(err.mean_error));
+  }
+  std::cout << "Max std_error: " << max_std
+            << ", Max |mean_error|: " << max_mean << "\n";
+}
+
 // =============================================================================
 // Continuity Tests
 // =============================================================================
@@ -377,9 +417,21 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, CGHasFewerDOFsThanDG) {
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest, AdaptiveGeoTiffRefinement) {
   // Kattegat test area
-  Real center_x = 4095238.0;  // EPSG:3034
-  Real center_y = 3344695.0;  // EPSG:3034
-  Real domain_size = 30000.0; // 30 km
+  // Real center_x = 4095238.0;  // EPSG:3034
+  // Real center_y = 3344695.0;  // EPSG:3034
+  Real center_x = 4093268;     // Anholt EPSG:3034
+  Real center_y = 3308000;     // Anholt EPSG:3034
+  Real domain_size = 100000.0; //
+
+  AdaptiveCGLinearBezierConfig config;
+  config.error_threshold = 1.0;
+  config.error_metric_type = ErrorMetricType::StdError;
+  config.max_iterations = 20;
+  config.max_elements = 10000;
+  config.smoother_config.lambda = 10.0;
+  config.max_refinement_level = 12;
+  config.verbose = true;
+  config.ngauss_error = 6;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -412,15 +464,14 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, AdaptiveGeoTiffRefinement) {
   std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
             << ymax << "]" << std::endl;
 
-  AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 5.0; // 5 meter threshold
-  config.max_iterations = 20;
-  config.max_elements = 10000;
-  config.smoother_config.lambda = 100.0;
-  config.verbose = true;
-
   AdaptiveCGLinearBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+
+  // Set land mask to skip refinement on land-only elements
+  auto is_land_func = [&surface](Real x, Real y) -> bool {
+    return surface.is_land(x, y);
+  };
+  smoother.set_land_mask(std::function<bool(Real, Real)>(is_land_func));
 
   auto start = std::chrono::high_resolution_clock::now();
   auto result = smoother.solve_adaptive();
@@ -439,27 +490,144 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, AdaptiveGeoTiffRefinement) {
 
   EXPECT_TRUE(smoother.is_solved());
 
-  // Write output for visualization with per-element error
+  // Write output for visualization with per-element error statistics
   std::string output_file = "/tmp/adaptive_cg_linear_bezier_kattegat";
   auto errors = smoother.estimate_errors();
-  std::vector<Real> element_errors(smoother.mesh().num_elements(), 0.0);
+  std::vector<Real> element_rms(smoother.mesh().num_elements(), 0.0);
+  std::vector<Real> element_mean(smoother.mesh().num_elements(), 0.0);
+  std::vector<Real> element_std(smoother.mesh().num_elements(), 0.0);
   for (const auto &e : errors) {
-    element_errors[e.element] = e.normalized_error;
+    element_rms[e.element] = e.normalized_error;
+    element_mean[e.element] = e.mean_error;
+    element_std[e.element] = e.std_error;
   }
   std::vector<Real> refinement_levels(smoother.mesh().num_elements(), 0.0);
   for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
     refinement_levels[i] =
         static_cast<Real>(smoother.mesh().element_level(i).max_level());
   }
+
   io::write_cg_bezier_surface_vtk(
       output_file, smoother.mesh(),
       [&smoother](Real x, Real y) { return smoother.evaluate(x, y); }, 6,
       "elevation",
-      {{"normalized_error", element_errors},
+      {{"rms_error", element_rms},
+       {"mean_error", element_mean},
+       {"std_error", element_std},
        {"refinement_level", refinement_levels}});
-  std::cout << "Output written to: " << output_file << ".vtu" << std::endl;
+
+  auto levels =
+      *std::max_element(refinement_levels.begin(), refinement_levels.end());
+  auto element_size_min = domain_size / std::pow(2.0, levels);
+
+  std::cout << "Number of levels         : " << levels << std::endl;
+  std::cout << "Size of smallest element : " << element_size_min << std::endl;
+  std::cout << "Output written to        : " << output_file << ".vtu"
+            << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+
+  // Write raw GeoTIFF at original pixel resolution within test area
+  double px_min_d, py_min_d, px_max_d, py_max_d;
+  bathy_ptr->world_to_pixel(xmin, ymax, px_min_d, py_min_d);
+  bathy_ptr->world_to_pixel(xmax, ymin, px_max_d, py_max_d);
+
+  int px_min = std::max(0, static_cast<int>(std::floor(px_min_d)));
+  int px_max =
+      std::min(bathy_ptr->sizex - 1, static_cast<int>(std::ceil(px_max_d)));
+  int py_min = std::max(0, static_cast<int>(std::floor(py_min_d)));
+  int py_max =
+      std::min(bathy_ptr->sizey - 1, static_cast<int>(std::ceil(py_max_d)));
+
+  int raw_nx = px_max - px_min + 1;
+  int raw_ny = py_max - py_min + 1;
+
+  std::cout << "\n=== Writing Raw GeoTIFF at Original Resolution ==="
+            << std::endl;
+  std::cout << "Pixel bounds: [" << px_min << ", " << px_max << "] x ["
+            << py_min << ", " << py_max << "]" << std::endl;
+  std::cout << "Grid size: " << raw_nx << " x " << raw_ny << " = "
+            << raw_nx * raw_ny << " pixels" << std::endl;
+  std::cout << "Pixel size: " << bathy_ptr->geotransform[1] << " x "
+            << std::abs(bathy_ptr->geotransform[5]) << " m" << std::endl;
+
+  std::string raw_output_file = "/tmp/raw_geotiff_kattegat.vtu";
+  std::ofstream raw_file(raw_output_file);
+
+  raw_file << "<?xml version=\"1.0\"?>\n";
+  raw_file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+              "byte_order=\"LittleEndian\">\n";
+  raw_file << "  <UnstructuredGrid>\n";
+
+  Index raw_num_points = raw_nx * raw_ny;
+  Index raw_num_cells = (raw_nx - 1) * (raw_ny - 1);
+
+  raw_file << "    <Piece NumberOfPoints=\"" << raw_num_points
+           << "\" NumberOfCells=\"" << raw_num_cells << "\">\n";
+
+  raw_file << "      <Points>\n";
+  raw_file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" "
+              "format=\"ascii\">\n";
+  for (int py = py_min; py <= py_max; ++py) {
+    for (int px = px_min; px <= px_max; ++px) {
+      double wx, wy;
+      bathy_ptr->pixel_to_world(px, py, wx, wy);
+      float z = -bathy_ptr->elevation[py * bathy_ptr->sizex + px];
+      raw_file << "          " << std::setprecision(10) << wx << " " << wy
+               << " " << z << "\n";
+    }
+  }
+  raw_file << "        </DataArray>\n";
+  raw_file << "      </Points>\n";
+
+  raw_file << "      <Cells>\n";
+  raw_file << "        <DataArray type=\"Int64\" Name=\"connectivity\" "
+              "format=\"ascii\">\n";
+  for (int j = 0; j < raw_ny - 1; ++j) {
+    for (int i = 0; i < raw_nx - 1; ++i) {
+      Index p0 = j * raw_nx + i;
+      Index p1 = j * raw_nx + (i + 1);
+      Index p2 = (j + 1) * raw_nx + (i + 1);
+      Index p3 = (j + 1) * raw_nx + i;
+      raw_file << "          " << p0 << " " << p1 << " " << p2 << " " << p3
+               << "\n";
+    }
+  }
+  raw_file << "        </DataArray>\n";
+  raw_file << "        <DataArray type=\"Int64\" Name=\"offsets\" "
+              "format=\"ascii\">\n";
+  for (Index c = 1; c <= raw_num_cells; ++c) {
+    raw_file << "          " << (c * 4) << "\n";
+  }
+  raw_file << "        </DataArray>\n";
+  raw_file << "        <DataArray type=\"UInt8\" Name=\"types\" "
+              "format=\"ascii\">\n";
+  for (Index c = 0; c < raw_num_cells; ++c) {
+    raw_file << "          9\n"; // VTK_QUAD
+  }
+  raw_file << "        </DataArray>\n";
+  raw_file << "      </Cells>\n";
+
+  raw_file << "      <PointData Scalars=\"elevation\">\n";
+  raw_file << "        <DataArray type=\"Float64\" Name=\"elevation\" "
+              "format=\"ascii\">\n";
+  for (int py = py_min; py <= py_max; ++py) {
+    for (int px = px_min; px <= px_max; ++px) {
+      float z = -bathy_ptr->elevation[py * bathy_ptr->sizex + px];
+      raw_file << "          " << std::setprecision(10) << z << "\n";
+    }
+  }
+  raw_file << "        </DataArray>\n";
+  raw_file << "      </PointData>\n";
+
+  raw_file << "    </Piece>\n";
+  raw_file << "  </UnstructuredGrid>\n";
+  raw_file << "</VTKFile>\n";
+
+  raw_file.close();
+
+  std::cout << "Raw GeoTIFF written to: " << raw_output_file << std::endl;
+  EXPECT_TRUE(std::filesystem::exists(raw_output_file));
 }
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest, WriteRawBathymetryVTK) {
