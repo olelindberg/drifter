@@ -4,9 +4,7 @@
 include(GoogleTest)
 
 # Common test utilities
-set(TEST_UTILS
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_utils.hpp
-)
+set(TEST_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/test_utils.hpp)
 
 # Unit tests
 set(UNIT_TESTS
@@ -27,7 +25,7 @@ set(UNIT_TESTS
     unit/test_biharmonic_assembler.cpp
     unit/test_bezier_basis_2d.cpp
     unit/test_thin_plate_hessian.cpp
-)
+    unit/test_area_of_interest.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS
@@ -49,45 +47,23 @@ set(INTEGRATION_TESTS
     # CG Bezier bathymetry smoother (quintic with triharmonic energy)
     integration/test_cg_triharmonic_bezier_bathymetry_smoother.cpp
     # Multi-source bathymetry lookup
-    integration/test_multi_source_bathymetry.cpp
-)
+    integration/test_multi_source_bathymetry.cpp)
 
 # Create unit test executable
-add_executable(drifter_unit_tests
-    ${UNIT_TESTS}
-)
+add_executable(drifter_unit_tests ${UNIT_TESTS})
 
-target_link_libraries(drifter_unit_tests PRIVATE
-    drifter_lib
-    GTest::gtest
-    GTest::gtest_main
-)
+target_link_libraries(drifter_unit_tests PRIVATE drifter_lib GTest::gtest GTest::gtest_main)
 
-target_include_directories(drifter_unit_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
+target_include_directories(drifter_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Create integration test executable
-add_executable(drifter_integration_tests
-    ${INTEGRATION_TESTS}
-)
+add_executable(drifter_integration_tests ${INTEGRATION_TESTS})
 
-target_link_libraries(drifter_integration_tests PRIVATE
-    drifter_lib
-    GTest::gtest
-    GTest::gtest_main
-)
+target_link_libraries(drifter_integration_tests PRIVATE drifter_lib GTest::gtest GTest::gtest_main)
 
-target_include_directories(drifter_integration_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
+target_include_directories(drifter_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Register tests with CTest
-gtest_discover_tests(drifter_unit_tests
-    PROPERTIES LABELS "unit"
-)
+gtest_discover_tests(drifter_unit_tests PROPERTIES LABELS "unit")
 
-gtest_discover_tests(drifter_integration_tests
-    PROPERTIES LABELS "integration"
-)
-
+gtest_discover_tests(drifter_integration_tests PROPERTIES LABELS "integration")

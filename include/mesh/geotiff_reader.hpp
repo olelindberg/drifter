@@ -24,6 +24,25 @@
 
 namespace drifter {
 
+/// @brief Lightweight metadata for a GeoTIFF file (bounds only, no raster data)
+///
+/// Used for on-demand tile loading - read bounds at startup, load full data
+/// later.
+struct BathymetryBounds {
+    Real xmin = 0, xmax = 0;
+    Real ymin = 0, ymax = 0;
+    float nodata_value = -9999.0f;
+    bool is_depth_positive = false;
+
+    /// Check if bounds are valid
+    bool is_valid() const { return xmin < xmax && ymin < ymax; }
+
+    /// Check if a point is inside the bounds
+    bool contains(double x, double y) const {
+        return x >= xmin && x <= xmax && y >= ymin && y <= ymax;
+    }
+};
+
 /// @brief Bathymetry data loaded from GeoTIFF
 struct BathymetryData {
     /// Elevation values (row-major: data[y * sizex + x])
@@ -37,7 +56,8 @@ struct BathymetryData {
 
     /// Geotransform (affine transformation from pixel to world coordinates)
     /// [0] = top-left X, [1] = pixel width, [2] = row rotation
-    /// [3] = top-left Y, [4] = column rotation, [5] = pixel height (usually negative)
+    /// [3] = top-left Y, [4] = column rotation, [5] = pixel height (usually
+    /// negative)
     std::array<double, 6> geotransform;
 
     /// WKT projection string
@@ -54,24 +74,28 @@ struct BathymetryData {
     Real xmin, xmax, ymin, ymax;
 
     /// Check if data is valid
-    bool is_valid() const { return sizex > 0 && sizey > 0 && !elevation.empty(); }
+    bool is_valid() const {
+        return sizex > 0 && sizey > 0 && !elevation.empty();
+    }
 
     /// Get elevation at pixel coordinates
     float at_pixel(int x, int y) const {
-        if (x < 0 || x >= sizex || y < 0 || y >= sizey) return nodata_value;
+        if (x < 0 || x >= sizex || y < 0 || y >= sizey)
+            return nodata_value;
         return elevation[y * sizex + x];
     }
 
     /// Convert pixel coordinates to world coordinates
-    void pixel_to_world(int px, int py, double& wx, double& wy) const {
+    void pixel_to_world(int px, int py, double &wx, double &wy) const {
         wx = geotransform[0] + px * geotransform[1] + py * geotransform[2];
         wy = geotransform[3] + px * geotransform[4] + py * geotransform[5];
     }
 
     /// Convert world coordinates to pixel coordinates (fractional)
-    void world_to_pixel(double wx, double wy, double& px, double& py) const {
+    void world_to_pixel(double wx, double wy, double &px, double &py) const {
         // Inverse of the geotransform
-        double det = geotransform[1] * geotransform[5] - geotransform[2] * geotransform[4];
+        double det = geotransform[1] * geotransform[5] -
+                     geotransform[2] * geotransform[4];
         if (std::abs(det) < 1e-15) {
             px = py = 0;
             return;
@@ -106,8 +130,8 @@ struct BathymetryData {
         float e11 = at_pixel(x1, y1);
 
         // Handle NoData values
-        if (e00 == nodata_value || e10 == nodata_value ||
-            e01 == nodata_value || e11 == nodata_value) {
+        if (e00 == nodata_value || e10 == nodata_value || e01 == nodata_value ||
+            e11 == nodata_value) {
             return nodata_value;
         }
 
@@ -116,11 +140,8 @@ struct BathymetryData {
         double fy = py - y0;
 
         return static_cast<float>(
-            (1 - fx) * (1 - fy) * e00 +
-            fx * (1 - fy) * e10 +
-            (1 - fx) * fy * e01 +
-            fx * fy * e11
-        );
+            (1 - fx) * (1 - fy) * e00 + fx * (1 - fy) * e10 +
+            (1 - fx) * fy * e01 + fx * fy * e11);
     }
 
     /// Check if a world coordinate is land or nodata
@@ -128,7 +149,7 @@ struct BathymetryData {
         float val = interpolate(wx, wy);
         // Check for NoData (using approximate comparison for float)
         if (std::abs(val - nodata_value) < 1e-6f || val > 1e30f) {
-            return true;  // NoData is treated as land
+            return true; // NoData is treated as land
         }
         if (is_depth_positive) {
             // Depth format: positive values are water, zero or negative is land
@@ -145,7 +166,7 @@ struct BathymetryData {
         float val = interpolate(wx, wy);
         // Check for NoData
         if (std::abs(val - nodata_value) < 1e-6f || val > 1e30f) {
-            return 0.0f;  // Land or invalid
+            return 0.0f; // Land or invalid
         }
         if (is_depth_positive) {
             // Values are already depth (positive = water)
@@ -166,13 +187,22 @@ public:
     /// @brief Load bathymetry from a GeoTIFF file
     /// @param filename Path to the GeoTIFF file
     /// @return Loaded bathymetry data
-    BathymetryData load(const std::string& filename);
+    BathymetryData load(const std::string &filename);
+
+    /// @brief Load only bounds/metadata from a GeoTIFF file (no raster data)
+    ///
+    /// This is much faster than load() and useful for on-demand tile loading
+    /// where we need to check bounds before deciding to load full data.
+    ///
+    /// @param filename Path to the GeoTIFF file
+    /// @return Lightweight bounds metadata
+    BathymetryBounds load_bounds_only(const std::string &filename);
 
     /// @brief Check if GDAL support is available
     static bool is_available();
 
     /// @brief Get last error message
-    const std::string& last_error() const { return error_message_; }
+    const std::string &last_error() const { return error_message_; }
 
 private:
     std::string error_message_;
@@ -194,7 +224,7 @@ public:
     /// Evaluate bathymetry gradient
     /// @param x, y World coordinates
     /// @param dh_dx, dh_dy Output gradients
-    void gradient(Real x, Real y, Real& dh_dx, Real& dh_dy) const;
+    void gradient(Real x, Real y, Real &dh_dx, Real &dh_dy) const;
 
     /// Check if location is water (depth > min_depth)
     bool is_water(Real x, Real y, Real min_depth = 1.0) const;
@@ -203,10 +233,10 @@ public:
     bool is_land(Real x, Real y) const;
 
     /// Get bounding box of the bathymetry data
-    void get_bounds(Real& xmin, Real& xmax, Real& ymin, Real& ymax) const;
+    void get_bounds(Real &xmin, Real &xmax, Real &ymin, Real &ymax) const;
 
     /// Get the underlying data
-    const BathymetryData& data() const { return *data_; }
+    const BathymetryData &data() const { return *data_; }
 
 private:
     std::shared_ptr<BathymetryData> data_;
@@ -223,8 +253,8 @@ public:
         Real ymin = 0, ymax = 0;
 
         /// Vertical bounds (sigma coordinates)
-        Real zmin = -1.0;  // Bottom (sigma = -1)
-        Real zmax = 0.0;   // Surface (sigma = 0)
+        Real zmin = -1.0; // Bottom (sigma = -1)
+        Real zmax = 0.0;  // Surface (sigma = 0)
 
         /// Base resolution
         int base_nx = 10;
@@ -237,20 +267,23 @@ public:
         int max_level_z = 3;
 
         /// Refinement criteria
-        Real coastline_distance = 5000.0;  // Refine within this distance of coastline
-        Real bathymetry_gradient_threshold = 0.01;  // Refine where gradient exceeds this
-        Real min_element_size = 100.0;     // Minimum element size (meters)
-        Real min_depth = 1.0;              // Minimum water depth to include
+        Real coastline_distance =
+            5000.0; // Refine within this distance of coastline
+        Real bathymetry_gradient_threshold =
+            0.01;                      // Refine where gradient exceeds this
+        Real min_element_size = 100.0; // Minimum element size (meters)
+        Real min_depth = 1.0;          // Minimum water depth to include
 
         /// Whether to mask land cells
         bool mask_land = true;
     };
 
     /// @brief Construct generator with bathymetry data
-    explicit BathymetryMeshGenerator(std::shared_ptr<BathymetryData> bathymetry);
+    explicit BathymetryMeshGenerator(
+        std::shared_ptr<BathymetryData> bathymetry);
 
     /// @brief Set configuration
-    void set_config(const Config& config);
+    void set_config(const Config &config);
 
     /// @brief Generate the mesh
     /// @return Vector of element bounds for water cells
@@ -261,26 +294,24 @@ public:
     /// @param order Polynomial order
     /// @return Bathymetry depths at DOF positions
     std::vector<VecX> compute_element_bathymetry(
-        const std::vector<ElementBounds>& elements,
-        int order) const;
+        const std::vector<ElementBounds> &elements, int order) const;
 
     /// @brief Get bathymetry gradients at element DOFs
     void compute_element_gradients(
-        const std::vector<ElementBounds>& elements,
-        int order,
-        std::vector<VecX>& dh_dx,
-        std::vector<VecX>& dh_dy) const;
+        const std::vector<ElementBounds> &elements, int order,
+        std::vector<VecX> &dh_dx, std::vector<VecX> &dh_dy) const;
 
     /// @brief Create refinement function for adaptive meshing
-    std::function<bool(const ElementBounds&)> create_refinement_function() const;
+    std::function<bool(const ElementBounds &)>
+    create_refinement_function() const;
 
 private:
     std::shared_ptr<BathymetryData> bathymetry_;
     Config config_;
 
-    bool should_refine(const ElementBounds& bounds) const;
-    bool is_near_coastline(const ElementBounds& bounds) const;
-    bool has_steep_gradient(const ElementBounds& bounds) const;
+    bool should_refine(const ElementBounds &bounds) const;
+    bool is_near_coastline(const ElementBounds &bounds) const;
+    bool has_steep_gradient(const ElementBounds &bounds) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

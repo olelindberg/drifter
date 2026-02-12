@@ -9,7 +9,8 @@ namespace drifter {
 // Using 1e8 with int64_t to support coordinates up to ~92,000,000
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGDofManager::CGDofManager(const QuadtreeAdapter& mesh, const LagrangeBasis2D& basis)
+CGDofManager::CGDofManager(
+    const QuadtreeAdapter &mesh, const LagrangeBasis2D &basis)
     : mesh_(mesh), basis_(basis) {
 
     Index num_elements = mesh_.num_elements();
@@ -43,7 +44,7 @@ CGDofManager::CGDofManager(const QuadtreeAdapter& mesh, const LagrangeBasis2D& b
     build_dof_mappings();
 }
 
-const std::vector<Index>& CGDofManager::element_dofs(Index elem) const {
+const std::vector<Index> &CGDofManager::element_dofs(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
         throw std::out_of_range("CGDofManager: element index out of range");
     }
@@ -72,33 +73,38 @@ Index CGDofManager::free_to_global(Index free_dof) const {
     return free_to_global_[free_dof];
 }
 
-std::pair<int64_t, int64_t> CGDofManager::quantize_position(const Vec2& pos) const {
+std::pair<int64_t, int64_t>
+CGDofManager::quantize_position(const Vec2 &pos) const {
     return std::make_pair(
         static_cast<int64_t>(std::round(pos(0) * POSITION_SCALE)),
-        static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE))
-    );
+        static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE)));
 }
 
 Vec2 CGDofManager::get_vertex_position(Index elem, int corner_id) const {
-    const auto& bounds = mesh_.element_bounds(elem);
+    const auto &bounds = mesh_.element_bounds(elem);
 
     // Corner ordering: 0=(-1,-1), 1=(+1,-1), 2=(-1,+1), 3=(+1,+1)
     switch (corner_id) {
-        case 0: return Vec2(bounds.xmin, bounds.ymin);
-        case 1: return Vec2(bounds.xmax, bounds.ymin);
-        case 2: return Vec2(bounds.xmin, bounds.ymax);
-        case 3: return Vec2(bounds.xmax, bounds.ymax);
-        default:
-            throw std::invalid_argument("Invalid corner ID");
+    case 0:
+        return Vec2(bounds.xmin, bounds.ymin);
+    case 1:
+        return Vec2(bounds.xmax, bounds.ymin);
+    case 2:
+        return Vec2(bounds.xmin, bounds.ymax);
+    case 3:
+        return Vec2(bounds.xmax, bounds.ymax);
+    default:
+        throw std::invalid_argument("Invalid corner ID");
     }
 }
 
-std::vector<Vec2> CGDofManager::get_edge_dof_positions(Index elem, int edge_id) const {
-    const auto& bounds = mesh_.element_bounds(elem);
+std::vector<Vec2>
+CGDofManager::get_edge_dof_positions(Index elem, int edge_id) const {
+    const auto &bounds = mesh_.element_bounds(elem);
     std::vector<Vec2> positions;
 
     // LGL nodes on [-1,1] - ALL nodes including endpoints
-    const VecX& nodes = basis_.nodes_1d();
+    const VecX &nodes = basis_.nodes_1d();
     int n1d = basis_.num_nodes_1d();
 
     // For each edge, compute the physical positions of the DOFs
@@ -111,34 +117,38 @@ std::vector<Vec2> CGDofManager::get_edge_dof_positions(Index elem, int edge_id) 
     for (int k = 0; k < n1d; ++k) {
         Vec2 pos;
         switch (edge_id) {
-            case 0:  // Left edge (x = xmin), j varies
-            {
-                Real eta = nodes(k);  // j index corresponds to eta
-                Real y = bounds.ymin + 0.5 * (eta + 1.0) * (bounds.ymax - bounds.ymin);
-                pos = Vec2(bounds.xmin, y);
-                break;
-            }
-            case 1:  // Right edge (x = xmax), j varies
-            {
-                Real eta = nodes(k);  // j index corresponds to eta
-                Real y = bounds.ymin + 0.5 * (eta + 1.0) * (bounds.ymax - bounds.ymin);
-                pos = Vec2(bounds.xmax, y);
-                break;
-            }
-            case 2:  // Bottom edge (y = ymin), i varies
-            {
-                Real xi = nodes(k);  // i index corresponds to xi
-                Real x = bounds.xmin + 0.5 * (xi + 1.0) * (bounds.xmax - bounds.xmin);
-                pos = Vec2(x, bounds.ymin);
-                break;
-            }
-            case 3:  // Top edge (y = ymax), i varies
-            {
-                Real xi = nodes(k);  // i index corresponds to xi
-                Real x = bounds.xmin + 0.5 * (xi + 1.0) * (bounds.xmax - bounds.xmin);
-                pos = Vec2(x, bounds.ymax);
-                break;
-            }
+        case 0: // Left edge (x = xmin), j varies
+        {
+            Real eta = nodes(k); // j index corresponds to eta
+            Real y =
+                bounds.ymin + 0.5 * (eta + 1.0) * (bounds.ymax - bounds.ymin);
+            pos = Vec2(bounds.xmin, y);
+            break;
+        }
+        case 1: // Right edge (x = xmax), j varies
+        {
+            Real eta = nodes(k); // j index corresponds to eta
+            Real y =
+                bounds.ymin + 0.5 * (eta + 1.0) * (bounds.ymax - bounds.ymin);
+            pos = Vec2(bounds.xmax, y);
+            break;
+        }
+        case 2: // Bottom edge (y = ymin), i varies
+        {
+            Real xi = nodes(k); // i index corresponds to xi
+            Real x =
+                bounds.xmin + 0.5 * (xi + 1.0) * (bounds.xmax - bounds.xmin);
+            pos = Vec2(x, bounds.ymin);
+            break;
+        }
+        case 3: // Top edge (y = ymax), i varies
+        {
+            Real xi = nodes(k); // i index corresponds to xi
+            Real x =
+                bounds.xmin + 0.5 * (xi + 1.0) * (bounds.xmax - bounds.xmin);
+            pos = Vec2(x, bounds.ymax);
+            break;
+        }
         }
         positions.push_back(pos);
     }
@@ -146,7 +156,7 @@ std::vector<Vec2> CGDofManager::get_edge_dof_positions(Index elem, int edge_id) 
     return positions;
 }
 
-Index CGDofManager::find_dof_at_position(const Vec2& pos, Real) const {
+Index CGDofManager::find_dof_at_position(const Vec2 &pos, Real) const {
     auto key = quantize_position(pos);
     auto it = position_to_dof_.find(key);
     if (it != position_to_dof_.end()) {
@@ -188,11 +198,12 @@ void CGDofManager::assign_edge_dofs() {
             std::vector<int> local_dofs = basis_.edge_dofs(edge);
             std::vector<Vec2> positions = get_edge_dof_positions(e, edge);
 
-            // edge_dofs returns all n1d DOFs on edge (including corners at index 0 and n1d-1)
-            // Skip corners (indices 0 and n1d-1) - they were assigned in assign_vertex_dofs
+            // edge_dofs returns all n1d DOFs on edge (including corners at
+            // index 0 and n1d-1) Skip corners (indices 0 and n1d-1) - they were
+            // assigned in assign_vertex_dofs
             for (size_t i = 1; i < local_dofs.size() - 1; ++i) {
                 int local_dof = local_dofs[i];
-                const Vec2& pos = positions[i];
+                const Vec2 &pos = positions[i];
 
                 // Check if DOF already exists
                 Index dof = find_dof_at_position(pos);
@@ -233,13 +244,26 @@ void CGDofManager::identify_boundary_dofs() {
         std::vector<int> local_dofs = basis_.edge_dofs(edge);
 
         // Also add corner DOFs
-        int c0, c1;  // Corners at edge endpoints
+        int c0, c1; // Corners at edge endpoints
         switch (edge) {
-            case 0: c0 = 0; c1 = 2; break;  // Left edge: corners 0, 2
-            case 1: c0 = 1; c1 = 3; break;  // Right edge: corners 1, 3
-            case 2: c0 = 0; c1 = 1; break;  // Bottom edge: corners 0, 1
-            case 3: c0 = 2; c1 = 3; break;  // Top edge: corners 2, 3
-            default: return;
+        case 0:
+            c0 = 0;
+            c1 = 2;
+            break; // Left edge: corners 0, 2
+        case 1:
+            c0 = 1;
+            c1 = 3;
+            break; // Right edge: corners 1, 3
+        case 2:
+            c0 = 0;
+            c1 = 1;
+            break; // Bottom edge: corners 0, 1
+        case 3:
+            c0 = 2;
+            c1 = 3;
+            break; // Top edge: corners 2, 3
+        default:
+            return;
         }
 
         local_dofs.push_back(basis_.corner_dof(c0));
@@ -262,27 +286,27 @@ void CGDofManager::detect_hanging_nodes() {
 
     hanging_edges_.clear();
 
-    mesh_.for_each_interior_edge([this](Index elem, int edge,
-                                        const EdgeNeighborInfo& info) {
-        if (info.type == EdgeNeighborInfo::Type::FineToCoarse) {
-            // This element is the finer one - its edge DOFs may be hanging
-            HangingEdgeInfo hanging;
-            hanging.fine_elem = elem;
-            hanging.fine_edge = edge;
-            hanging.coarse_elem = info.neighbor_elements[0];
-            hanging.coarse_edge = info.neighbor_edges[0];
-            hanging.subedge_index = info.subedge_index;
+    mesh_.for_each_interior_edge(
+        [this](Index elem, int edge, const EdgeNeighborInfo &info) {
+            if (info.type == EdgeNeighborInfo::Type::FineToCoarse) {
+                // This element is the finer one - its edge DOFs may be hanging
+                HangingEdgeInfo hanging;
+                hanging.fine_elem = elem;
+                hanging.fine_edge = edge;
+                hanging.coarse_elem = info.neighbor_elements[0];
+                hanging.coarse_edge = info.neighbor_edges[0];
+                hanging.subedge_index = info.subedge_index;
 
-            hanging_edges_.push_back(hanging);
-        }
-    });
+                hanging_edges_.push_back(hanging);
+            }
+        });
 }
 
 /// @brief Compute Lagrange basis function values at a point
 /// @param nodes 1D nodal positions
 /// @param t Evaluation point in [-1, 1]
 /// @return Vector of basis function values
-static VecX lagrange_basis(const VecX& nodes, Real t) {
+static VecX lagrange_basis(const VecX &nodes, Real t) {
     int n = static_cast<int>(nodes.size());
     VecX L(n);
 
@@ -311,37 +335,39 @@ void CGDofManager::build_c2_constraints() {
         return;
     }
 
-    const VecX& nodes = basis_.nodes_1d();
+    const VecX &nodes = basis_.nodes_1d();
     int n1d = basis_.num_nodes_1d();
 
-    for (const auto& hanging : hanging_edges_) {
+    for (const auto &hanging : hanging_edges_) {
         // Get DOFs on the fine edge (these are potential slave DOFs)
         std::vector<int> fine_local_dofs = basis_.edge_dofs(hanging.fine_edge);
 
         // Get DOFs on the coarse edge (these are master DOFs)
-        std::vector<int> coarse_local_dofs = basis_.edge_dofs(hanging.coarse_edge);
+        std::vector<int> coarse_local_dofs =
+            basis_.edge_dofs(hanging.coarse_edge);
 
         // Get physical positions of fine edge DOFs
-        std::vector<Vec2> fine_positions = get_edge_dof_positions(
-            hanging.fine_elem, hanging.fine_edge);
+        std::vector<Vec2> fine_positions =
+            get_edge_dof_positions(hanging.fine_elem, hanging.fine_edge);
 
         // Get physical positions of coarse edge DOFs
-        std::vector<Vec2> coarse_positions = get_edge_dof_positions(
-            hanging.coarse_elem, hanging.coarse_edge);
+        std::vector<Vec2> coarse_positions =
+            get_edge_dof_positions(hanging.coarse_elem, hanging.coarse_edge);
 
         // Determine which direction the edge runs in physical space
         // Edge 0/1 (left/right) run in y-direction
         // Edge 2/3 (bottom/top) run in x-direction
-        bool coarse_edge_runs_in_y = (hanging.coarse_edge == 0 || hanging.coarse_edge == 1);
+        bool coarse_edge_runs_in_y =
+            (hanging.coarse_edge == 0 || hanging.coarse_edge == 1);
 
         // Get the physical extent of the coarse edge
         Real coarse_start, coarse_end;
         if (coarse_edge_runs_in_y) {
-            coarse_start = coarse_positions.front()(1);  // y of first DOF
-            coarse_end = coarse_positions.back()(1);     // y of last DOF
+            coarse_start = coarse_positions.front()(1); // y of first DOF
+            coarse_end = coarse_positions.back()(1);    // y of last DOF
         } else {
-            coarse_start = coarse_positions.front()(0);  // x of first DOF
-            coarse_end = coarse_positions.back()(0);     // x of last DOF
+            coarse_start = coarse_positions.front()(0); // x of first DOF
+            coarse_end = coarse_positions.back()(0);    // x of last DOF
         }
         Real coarse_length = coarse_end - coarse_start;
 
@@ -351,14 +377,17 @@ void CGDofManager::build_c2_constraints() {
             Index fine_global = elem_to_global_[hanging.fine_elem][fine_local];
 
             // Get physical position of this fine DOF
-            const Vec2& fine_pos = fine_positions[i];
+            const Vec2 &fine_pos = fine_positions[i];
             Real fine_coord = coarse_edge_runs_in_y ? fine_pos(1) : fine_pos(0);
 
             // Map to parameter on coarse edge [-1, 1]
             // The fine element spans only HALF of the coarse edge
-            // subedge_index=0 means fine element is on the first half: coarse t in [-1, 0]
-            // subedge_index=1 means fine element is on the second half: coarse t in [0, 1]
-            Real t_coarse = -1.0 + 2.0 * (fine_coord - coarse_start) / coarse_length;
+            // subedge_index=0 means fine element is on the first half: coarse t
+            // in
+            // [-1, 0] subedge_index=1 means fine element is on the second half:
+            // coarse t in [0, 1]
+            Real t_coarse =
+                -1.0 + 2.0 * (fine_coord - coarse_start) / coarse_length;
 
             // Clamp to valid range (handle numerical errors at endpoints)
             t_coarse = std::max(-1.0, std::min(1.0, t_coarse));
@@ -392,7 +421,8 @@ void CGDofManager::build_c2_constraints() {
             for (size_t j = 0; j < coarse_local_dofs.size(); ++j) {
                 if (std::abs(weights(static_cast<int>(j))) > 1e-14) {
                     int coarse_local = coarse_local_dofs[j];
-                    Index coarse_global = elem_to_global_[hanging.coarse_elem][coarse_local];
+                    Index coarse_global =
+                        elem_to_global_[hanging.coarse_elem][coarse_local];
 
                     constraint.master_dofs.push_back(coarse_global);
                     constraint.weights.push_back(weights(static_cast<int>(j)));
@@ -403,7 +433,8 @@ void CGDofManager::build_c2_constraints() {
                 // Only add constraint if DOF not already constrained
                 // (can happen when multiple fine elements share the same DOF
                 // at the interface between two fine elements)
-                if (constrained_dofs_.find(fine_global) == constrained_dofs_.end()) {
+                if (constrained_dofs_.find(fine_global) ==
+                    constrained_dofs_.end()) {
                     constraints_.push_back(constraint);
                     constrained_dofs_.insert(fine_global);
                 }
@@ -451,12 +482,13 @@ SpMat CGDofManager::build_transformation_matrix() const {
     }
 
     // Constraint entries
-    for (const auto& constraint : constraints_) {
+    for (const auto &constraint : constraints_) {
         for (size_t i = 0; i < constraint.master_dofs.size(); ++i) {
             Index master = constraint.master_dofs[i];
             Index f = global_to_free_[master];
             if (f >= 0) {
-                triplets.emplace_back(constraint.slave_dof, f, constraint.weights[i]);
+                triplets.emplace_back(
+                    constraint.slave_dof, f, constraint.weights[i]);
             }
         }
     }
@@ -468,17 +500,17 @@ SpMat CGDofManager::build_transformation_matrix() const {
     return transformation_matrix_;
 }
 
-SpMat CGDofManager::transform_matrix(const SpMat& K) const {
+SpMat CGDofManager::transform_matrix(const SpMat &K) const {
     SpMat T = build_transformation_matrix();
     return T.transpose() * K * T;
 }
 
-VecX CGDofManager::transform_rhs(const VecX& f, const SpMat& K) const {
+VecX CGDofManager::transform_rhs(const VecX &f, const SpMat &K) const {
     SpMat T = build_transformation_matrix();
     VecX f_modified = f;
 
     // For Dirichlet constraints, modify RHS: f -= K * u_dirichlet
-    for (const auto& constraint : constraints_) {
+    for (const auto &constraint : constraints_) {
         if (constraint.master_dofs.empty()) {
             // This is a Dirichlet BC
             Index slave = constraint.slave_dof;
@@ -494,12 +526,12 @@ VecX CGDofManager::transform_rhs(const VecX& f, const SpMat& K) const {
     return T.transpose() * f_modified;
 }
 
-VecX CGDofManager::expand_solution(const VecX& u_free) const {
+VecX CGDofManager::expand_solution(const VecX &u_free) const {
     SpMat T = build_transformation_matrix();
     VecX u_global = T * u_free;
 
     // Set Dirichlet values directly
-    for (const auto& constraint : constraints_) {
+    for (const auto &constraint : constraints_) {
         if (constraint.master_dofs.empty()) {
             u_global(constraint.slave_dof) = constraint.rhs_value;
         }
@@ -509,16 +541,15 @@ VecX CGDofManager::expand_solution(const VecX& u_free) const {
 }
 
 std::vector<Index> CGDofManager::domain_corner_dofs() const {
-    const auto& domain = mesh_.domain_bounds();
+    const auto &domain = mesh_.domain_bounds();
     std::vector<Vec2> corner_positions = {
         {domain.xmin, domain.ymin},
         {domain.xmax, domain.ymin},
         {domain.xmin, domain.ymax},
-        {domain.xmax, domain.ymax}
-    };
+        {domain.xmax, domain.ymax}};
 
     std::vector<Index> dofs;
-    for (const auto& pos : corner_positions) {
+    for (const auto &pos : corner_positions) {
         Index dof = find_dof_at_position(pos);
         if (dof >= 0) {
             dofs.push_back(dof);
@@ -527,10 +558,12 @@ std::vector<Index> CGDofManager::domain_corner_dofs() const {
     return dofs;
 }
 
-void CGDofManager::apply_corner_dirichlet(const std::vector<Real>& corner_values) {
+void CGDofManager::apply_corner_dirichlet(
+    const std::vector<Real> &corner_values) {
     auto corner_dofs = domain_corner_dofs();
 
-    for (size_t i = 0; i < corner_dofs.size() && i < corner_values.size(); ++i) {
+    for (size_t i = 0; i < corner_dofs.size() && i < corner_values.size();
+         ++i) {
         apply_single_dirichlet(corner_dofs[i], corner_values[i]);
     }
 }
@@ -551,4 +584,4 @@ void CGDofManager::apply_single_dirichlet(Index dof, Real value) {
     }
 }
 
-}  // namespace drifter
+} // namespace drifter

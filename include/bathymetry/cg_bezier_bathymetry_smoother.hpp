@@ -3,10 +3,11 @@
 /// @file cg_bezier_bathymetry_smoother.hpp
 /// @brief CG Bezier bathymetry smoother with natural cross-element coupling
 ///
-/// Uses Continuous Galerkin assembly where DOFs at element boundaries are shared.
-/// This provides natural cross-element coupling through the energy functional,
-/// eliminating the need for explicit C² continuity constraints at conforming
-/// interfaces. Only hanging node constraints are needed for non-conforming meshes.
+/// Uses Continuous Galerkin assembly where DOFs at element boundaries are
+/// shared. This provides natural cross-element coupling through the energy
+/// functional, eliminating the need for explicit C² continuity constraints at
+/// conforming interfaces. Only hanging node constraints are needed for
+/// non-conforming meshes.
 ///
 /// Advantages over DG Bezier approach:
 ///   - Natural smoothing across element boundaries (no ridges)
@@ -61,7 +62,8 @@ struct CGBezierSmootherConfig {
     /// Enable edge derivative constraints at Gauss points along shared edges
     /// When enabled, normal derivatives (z_n and z_nn) are constrained to match
     /// at Gauss quadrature points along each conforming interior edge.
-    /// This complements vertex constraints by enforcing smoothness along entire edges.
+    /// This complements vertex constraints by enforcing smoothness along entire
+    /// edges.
     bool enable_edge_constraints = false;
 
     /// Number of Gauss points per edge for edge constraints (2, 3, or 4)
@@ -85,30 +87,30 @@ public:
     /// @brief Construct smoother for a quadtree mesh
     /// @param mesh 2D quadtree mesh
     /// @param config Configuration parameters
-    explicit CGBezierBathymetrySmoother(const QuadtreeAdapter& mesh,
-                                         const CGBezierSmootherConfig& config = {});
+    explicit CGBezierBathymetrySmoother(
+        const QuadtreeAdapter &mesh, const CGBezierSmootherConfig &config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
     /// @param octree 3D mesh
     /// @param config Configuration parameters
-    explicit CGBezierBathymetrySmoother(const OctreeAdapter& octree,
-                                         const CGBezierSmootherConfig& config = {});
+    explicit CGBezierBathymetrySmoother(
+        const OctreeAdapter &octree, const CGBezierSmootherConfig &config = {});
 
     // =========================================================================
     // Data input
     // =========================================================================
 
     /// @brief Set bathymetry data from a BathymetrySource
-    void set_bathymetry_data(const BathymetrySource& source);
+    void set_bathymetry_data(const BathymetrySource &source);
 
     /// @brief Set bathymetry data from a function
     void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
 
     /// @brief Set scattered XYZ data points
-    void set_scattered_points(const std::vector<Vec3>& points);
+    void set_scattered_points(const std::vector<Vec3> &points);
 
     /// @brief Set scattered data with weights
-    void set_scattered_points(const std::vector<BathymetryPoint>& points);
+    void set_scattered_points(const std::vector<BathymetryPoint> &points);
 
     // =========================================================================
     // Configuration
@@ -130,7 +132,7 @@ public:
     }
 
     /// @brief Get configuration
-    const CGBezierSmootherConfig& config() const { return config_; }
+    const CGBezierSmootherConfig &config() const { return config_; }
 
     // =========================================================================
     // Solve
@@ -160,7 +162,7 @@ public:
     Vec2 evaluate_gradient(Real x, Real y) const;
 
     /// @brief Get full solution vector (all global DOF values)
-    const VecX& solution() const { return solution_; }
+    const VecX &solution() const { return solution_; }
 
     /// @brief Get element control point values
     /// @param elem Element index
@@ -172,13 +174,13 @@ public:
     // =========================================================================
 
     /// @brief Transfer solution to SeabedSurface
-    void transfer_to_seabed(SeabedSurface& seabed) const;
+    void transfer_to_seabed(SeabedSurface &seabed) const;
 
     /// @brief Write smoothed bathymetry to VTK file
-    void write_vtk(const std::string& filename, int resolution = 10) const;
+    void write_vtk(const std::string &filename, int resolution = 10) const;
 
     /// @brief Write control points grid to VTK file
-    void write_control_points_vtk(const std::string& filename) const;
+    void write_control_points_vtk(const std::string &filename) const;
 
     // =========================================================================
     // Diagnostics
@@ -206,15 +208,15 @@ public:
     Index num_constraints() const { return dof_manager_->num_constraints(); }
 
     /// @brief Get the mesh
-    const QuadtreeAdapter& mesh() const { return *quadtree_; }
+    const QuadtreeAdapter &mesh() const { return *quadtree_; }
 
     /// @brief Get the DOF manager
-    const CGBezierDofManager& dof_manager() const { return *dof_manager_; }
+    const CGBezierDofManager &dof_manager() const { return *dof_manager_; }
 
 private:
     /// Mesh (owned or referenced)
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter* quadtree_ = nullptr;
+    const QuadtreeAdapter *quadtree_ = nullptr;
 
     /// Configuration
     CGBezierSmootherConfig config_;
@@ -260,4 +262,4 @@ private:
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

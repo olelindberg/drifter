@@ -3,13 +3,13 @@
 /// @file cg_cubic_bezier_bathymetry_smoother.hpp
 /// @brief CG cubic Bezier bathymetry smoother with C¹ continuity constraints
 ///
-/// Uses Continuous Galerkin assembly where DOFs at element boundaries are shared.
-/// Cubic Bezier (degree 3, 4×4 = 16 DOFs) with optional C¹ constraints.
+/// Uses Continuous Galerkin assembly where DOFs at element boundaries are
+/// shared. Cubic Bezier (degree 3, 4×4 = 16 DOFs) with optional C¹ constraints.
 
-#include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
-#include "bathymetry/quadtree_adapter.hpp"
+#include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "bathymetry/cubic_thin_plate_hessian.hpp"
+#include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/seabed_surface.hpp"
 #include <functional>
@@ -64,21 +64,23 @@ struct CGCubicBezierSmootherConfig {
 class CGCubicBezierBathymetrySmoother {
 public:
     /// @brief Construct smoother for a quadtree mesh
-    explicit CGCubicBezierBathymetrySmoother(const QuadtreeAdapter& mesh,
-                                              const CGCubicBezierSmootherConfig& config = {});
+    explicit CGCubicBezierBathymetrySmoother(
+        const QuadtreeAdapter &mesh,
+        const CGCubicBezierSmootherConfig &config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
-    explicit CGCubicBezierBathymetrySmoother(const OctreeAdapter& octree,
-                                              const CGCubicBezierSmootherConfig& config = {});
+    explicit CGCubicBezierBathymetrySmoother(
+        const OctreeAdapter &octree,
+        const CGCubicBezierSmootherConfig &config = {});
 
     // =========================================================================
     // Data input
     // =========================================================================
 
-    void set_bathymetry_data(const BathymetrySource& source);
+    void set_bathymetry_data(const BathymetrySource &source);
     void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
-    void set_scattered_points(const std::vector<Vec3>& points);
-    void set_scattered_points(const std::vector<BathymetryPoint>& points);
+    void set_scattered_points(const std::vector<Vec3> &points);
+    void set_scattered_points(const std::vector<BathymetryPoint> &points);
 
     // =========================================================================
     // Configuration
@@ -96,7 +98,7 @@ public:
         config_.upper_bound = std::nullopt;
     }
 
-    const CGCubicBezierSmootherConfig& config() const { return config_; }
+    const CGCubicBezierSmootherConfig &config() const { return config_; }
 
     // =========================================================================
     // Solve
@@ -111,7 +113,7 @@ public:
 
     Real evaluate(Real x, Real y) const;
     Vec2 evaluate_gradient(Real x, Real y) const;
-    const VecX& solution() const { return solution_; }
+    const VecX &solution() const { return solution_; }
 
     /// @brief Get element control point values
     /// @return 16 control point z-values for this element
@@ -121,9 +123,9 @@ public:
     // Transfer and output
     // =========================================================================
 
-    void transfer_to_seabed(SeabedSurface& seabed) const;
-    void write_vtk(const std::string& filename, int resolution = 8) const;
-    void write_control_points_vtk(const std::string& filename) const;
+    void transfer_to_seabed(SeabedSurface &seabed) const;
+    void write_vtk(const std::string &filename, int resolution = 8) const;
+    void write_control_points_vtk(const std::string &filename) const;
 
     // =========================================================================
     // Diagnostics
@@ -138,12 +140,12 @@ public:
     Index num_free_dofs() const { return dof_manager_->num_free_dofs(); }
     Index num_constraints() const { return dof_manager_->num_constraints(); }
 
-    const QuadtreeAdapter& mesh() const { return *quadtree_; }
-    const CGCubicBezierDofManager& dof_manager() const { return *dof_manager_; }
+    const QuadtreeAdapter &mesh() const { return *quadtree_; }
+    const CGCubicBezierDofManager &dof_manager() const { return *dof_manager_; }
 
 private:
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter* quadtree_ = nullptr;
+    const QuadtreeAdapter *quadtree_ = nullptr;
 
     CGCubicBezierSmootherConfig config_;
 
@@ -170,4 +172,4 @@ private:
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

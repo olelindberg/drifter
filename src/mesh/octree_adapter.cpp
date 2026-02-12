@@ -11,9 +11,8 @@ namespace drifter {
 // OctreeAdapter implementation
 // =============================================================================
 
-OctreeAdapter::OctreeAdapter(Real xmin, Real xmax,
-                             Real ymin, Real ymax,
-                             Real zmin, Real zmax) {
+OctreeAdapter::OctreeAdapter(
+    Real xmin, Real xmax, Real ymin, Real ymax, Real zmin, Real zmax) {
     domain_.xmin = xmin;
     domain_.xmax = xmax;
     domain_.ymin = ymin;
@@ -27,23 +26,32 @@ void OctreeAdapter::build_uniform(int nx, int ny, int nz) {
     int level_x = 0, level_y = 0, level_z = 0;
     int cx = 1, cy = 1, cz = 1;
 
-    while (cx < nx) { cx *= 2; ++level_x; }
-    while (cy < ny) { cy *= 2; ++level_y; }
-    while (cz < nz) { cz *= 2; ++level_z; }
+    while (cx < nx) {
+        cx *= 2;
+        ++level_x;
+    }
+    while (cy < ny) {
+        cy *= 2;
+        ++level_y;
+    }
+    while (cz < nz) {
+        cz *= 2;
+        ++level_z;
+    }
 
     // Create root node
     root_ = std::make_unique<OctreeNode>();
     root_->morton = 0;
     root_->level = DirectionalLevel(0, 0, 0);
     root_->bounds = domain_;
-    root_->mask = RefineMask::XYZ;  // Will refine in all directions
+    root_->mask = RefineMask::XYZ; // Will refine in all directions
 
     // Build tree to desired level
-    std::queue<OctreeNode*> work_queue;
+    std::queue<OctreeNode *> work_queue;
     work_queue.push(root_.get());
 
     while (!work_queue.empty()) {
-        OctreeNode* node = work_queue.front();
+        OctreeNode *node = work_queue.front();
         work_queue.pop();
 
         // Check if we need to refine further
@@ -52,20 +60,23 @@ void OctreeAdapter::build_uniform(int nx, int ny, int nz) {
         bool need_z = node->level.level_z < level_z;
 
         if (!need_x && !need_y && !need_z) {
-            continue;  // This is a leaf
+            continue; // This is a leaf
         }
 
         // Set refinement mask
         node->mask = RefineMask::NONE;
-        if (need_x) node->mask = node->mask | RefineMask::X;
-        if (need_y) node->mask = node->mask | RefineMask::Y;
-        if (need_z) node->mask = node->mask | RefineMask::Z;
+        if (need_x)
+            node->mask = node->mask | RefineMask::X;
+        if (need_y)
+            node->mask = node->mask | RefineMask::Y;
+        if (need_z)
+            node->mask = node->mask | RefineMask::Z;
 
         // Create children
         create_children(node);
 
         // Add children to work queue
-        for (auto& child : node->children) {
+        for (auto &child : node->children) {
             work_queue.push(child.get());
         }
     }
@@ -74,7 +85,7 @@ void OctreeAdapter::build_uniform(int nx, int ny, int nz) {
 }
 
 void OctreeAdapter::build_adaptive(
-    const std::function<bool(const ElementBounds&)>& refine_func,
+    const std::function<bool(const ElementBounds &)> &refine_func,
     int max_level_x, int max_level_y, int max_level_z) {
 
     // Create root node
@@ -84,16 +95,16 @@ void OctreeAdapter::build_adaptive(
     root_->bounds = domain_;
 
     // Adaptive refinement
-    std::queue<OctreeNode*> work_queue;
+    std::queue<OctreeNode *> work_queue;
     work_queue.push(root_.get());
 
     while (!work_queue.empty()) {
-        OctreeNode* node = work_queue.front();
+        OctreeNode *node = work_queue.front();
         work_queue.pop();
 
         // Check if we should refine
         if (!refine_func(node->bounds)) {
-            continue;  // Don't refine this node
+            continue; // Don't refine this node
         }
 
         // Check level limits
@@ -102,20 +113,23 @@ void OctreeAdapter::build_adaptive(
         bool can_z = node->level.level_z < max_level_z;
 
         if (!can_x && !can_y && !can_z) {
-            continue;  // At max level
+            continue; // At max level
         }
 
         // Set refinement mask (refine all directions that can be refined)
         node->mask = RefineMask::NONE;
-        if (can_x) node->mask = node->mask | RefineMask::X;
-        if (can_y) node->mask = node->mask | RefineMask::Y;
-        if (can_z) node->mask = node->mask | RefineMask::Z;
+        if (can_x)
+            node->mask = node->mask | RefineMask::X;
+        if (can_y)
+            node->mask = node->mask | RefineMask::Y;
+        if (can_z)
+            node->mask = node->mask | RefineMask::Z;
 
         // Create children
         create_children(node);
 
         // Add children to work queue
-        for (auto& child : node->children) {
+        for (auto &child : node->children) {
             work_queue.push(child.get());
         }
     }
@@ -131,13 +145,15 @@ void OctreeAdapter::balance() {
         changed = false;
 
         // Collect current leaves
-        std::vector<OctreeNode*> current_leaves = leaves_;
+        std::vector<OctreeNode *> current_leaves = leaves_;
 
-        for (OctreeNode* node : current_leaves) {
+        for (OctreeNode *node : current_leaves) {
             // Check all neighbors
             for (int face = 0; face < 6; ++face) {
-                OctreeNode* neighbor = find_neighbor_same_or_coarser(node, face);
-                if (!neighbor) continue;  // Boundary
+                OctreeNode *neighbor =
+                    find_neighbor_same_or_coarser(node, face);
+                if (!neighbor)
+                    continue; // Boundary
 
                 // Check 2:1 balance constraint per axis
                 DirectionalLevel diff;
@@ -147,9 +163,12 @@ void OctreeAdapter::balance() {
 
                 // If neighbor is more than 1 level coarser, refine it
                 RefineMask needed = RefineMask::NONE;
-                if (diff.level_x > 1) needed = needed | RefineMask::X;
-                if (diff.level_y > 1) needed = needed | RefineMask::Y;
-                if (diff.level_z > 1) needed = needed | RefineMask::Z;
+                if (diff.level_x > 1)
+                    needed = needed | RefineMask::X;
+                if (diff.level_y > 1)
+                    needed = needed | RefineMask::Y;
+                if (diff.level_z > 1)
+                    needed = needed | RefineMask::Z;
 
                 if (needed != RefineMask::NONE && neighbor->is_leaf()) {
                     neighbor->mask = needed;
@@ -165,16 +184,18 @@ void OctreeAdapter::balance() {
     }
 }
 
-void OctreeAdapter::refine(const std::vector<Index>& elements,
-                           const std::vector<RefineMask>& masks) {
+void OctreeAdapter::refine(
+    const std::vector<Index> &elements, const std::vector<RefineMask> &masks) {
     for (size_t i = 0; i < elements.size(); ++i) {
         Index elem = elements[i];
         RefineMask mask = masks[i];
 
-        if (elem < 0 || elem >= static_cast<Index>(leaves_.size())) continue;
+        if (elem < 0 || elem >= static_cast<Index>(leaves_.size()))
+            continue;
 
-        OctreeNode* node = leaves_[elem];
-        if (!node->is_leaf()) continue;
+        OctreeNode *node = leaves_[elem];
+        if (!node->is_leaf())
+            continue;
 
         node->mask = mask;
         create_children(node);
@@ -184,18 +205,20 @@ void OctreeAdapter::refine(const std::vector<Index>& elements,
     balance();
 }
 
-void OctreeAdapter::coarsen(const std::vector<Index>& parent_elements) {
+void OctreeAdapter::coarsen(const std::vector<Index> &parent_elements) {
     // Mark parents for coarsening
     for (Index elem : parent_elements) {
-        if (elem < 0 || elem >= static_cast<Index>(leaves_.size())) continue;
+        if (elem < 0 || elem >= static_cast<Index>(leaves_.size()))
+            continue;
 
-        OctreeNode* node = leaves_[elem];
-        if (!node->parent) continue;
+        OctreeNode *node = leaves_[elem];
+        if (!node->parent)
+            continue;
 
         // Check if all siblings are leaves
-        OctreeNode* parent = node->parent;
+        OctreeNode *parent = node->parent;
         bool all_leaves = true;
-        for (auto& child : parent->children) {
+        for (auto &child : parent->children) {
             if (!child->is_leaf()) {
                 all_leaves = false;
                 break;
@@ -211,7 +234,7 @@ void OctreeAdapter::coarsen(const std::vector<Index>& parent_elements) {
     rebuild_leaf_list();
 }
 
-const ElementBounds& OctreeAdapter::element_bounds(Index elem) const {
+const ElementBounds &OctreeAdapter::element_bounds(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(leaves_.size())) {
         throw std::out_of_range("Invalid element index");
     }
@@ -248,19 +271,31 @@ NeighborInfo OctreeAdapter::get_neighbor(Index elem, int face_id) const {
         return info;
     }
 
-    OctreeNode* node = leaves_[elem];
+    OctreeNode *node = leaves_[elem];
 
     // Check if at domain boundary
-    const ElementBounds& b = node->bounds;
+    const ElementBounds &b = node->bounds;
     bool at_boundary = false;
 
     switch (face_id) {
-        case 0: at_boundary = (b.xmin <= domain_.xmin + 1e-12); break;
-        case 1: at_boundary = (b.xmax >= domain_.xmax - 1e-12); break;
-        case 2: at_boundary = (b.ymin <= domain_.ymin + 1e-12); break;
-        case 3: at_boundary = (b.ymax >= domain_.ymax - 1e-12); break;
-        case 4: at_boundary = (b.zmin <= domain_.zmin + 1e-12); break;
-        case 5: at_boundary = (b.zmax >= domain_.zmax - 1e-12); break;
+    case 0:
+        at_boundary = (b.xmin <= domain_.xmin + 1e-12);
+        break;
+    case 1:
+        at_boundary = (b.xmax >= domain_.xmax - 1e-12);
+        break;
+    case 2:
+        at_boundary = (b.ymin <= domain_.ymin + 1e-12);
+        break;
+    case 3:
+        at_boundary = (b.ymax >= domain_.ymax - 1e-12);
+        break;
+    case 4:
+        at_boundary = (b.zmin <= domain_.zmin + 1e-12);
+        break;
+    case 5:
+        at_boundary = (b.zmax >= domain_.zmax - 1e-12);
+        break;
     }
 
     if (at_boundary) {
@@ -269,7 +304,7 @@ NeighborInfo OctreeAdapter::get_neighbor(Index elem, int face_id) const {
     }
 
     // Find neighbor(s)
-    OctreeNode* coarse_neighbor = find_neighbor_same_or_coarser(node, face_id);
+    OctreeNode *coarse_neighbor = find_neighbor_same_or_coarser(node, face_id);
 
     if (!coarse_neighbor) {
         info.type = FaceConnectionType::Boundary;
@@ -281,40 +316,52 @@ NeighborInfo OctreeAdapter::get_neighbor(Index elem, int face_id) const {
         DirectionalLevel node_level = node->level;
         DirectionalLevel neigh_level = coarse_neighbor->level;
 
-        // Determine connection type based on level differences in tangent directions
+        // Determine connection type based on level differences in tangent
+        // directions
         auto [t1, t2] = get_face_tangent_axes(face_id);
 
         int diff_t1 = 0, diff_t2 = 0;
-        if (t1 == 0) diff_t1 = node_level.level_x - neigh_level.level_x;
-        else if (t1 == 1) diff_t1 = node_level.level_y - neigh_level.level_y;
-        else diff_t1 = node_level.level_z - neigh_level.level_z;
+        if (t1 == 0)
+            diff_t1 = node_level.level_x - neigh_level.level_x;
+        else if (t1 == 1)
+            diff_t1 = node_level.level_y - neigh_level.level_y;
+        else
+            diff_t1 = node_level.level_z - neigh_level.level_z;
 
-        if (t2 == 0) diff_t2 = node_level.level_x - neigh_level.level_x;
-        else if (t2 == 1) diff_t2 = node_level.level_y - neigh_level.level_y;
-        else diff_t2 = node_level.level_z - neigh_level.level_z;
+        if (t2 == 0)
+            diff_t2 = node_level.level_x - neigh_level.level_x;
+        else if (t2 == 1)
+            diff_t2 = node_level.level_y - neigh_level.level_y;
+        else
+            diff_t2 = node_level.level_z - neigh_level.level_z;
 
         // We are finer, neighbor is coarser
         if (diff_t1 <= 0 && diff_t2 <= 0) {
             info.type = FaceConnectionType::SameLevel;
         } else {
-            // This shouldn't happen if we're a leaf looking at a coarser neighbor
+            // This shouldn't happen if we're a leaf looking at a coarser
+            // neighbor
             info.type = FaceConnectionType::SameLevel;
         }
 
         info.neighbor_elements.push_back(coarse_neighbor->leaf_index);
-        info.neighbor_faces.push_back((face_id % 2 == 0) ? face_id + 1 : face_id - 1);
+        info.neighbor_faces.push_back(
+            (face_id % 2 == 0) ? face_id + 1 : face_id - 1);
         info.subface_indices.push_back(0);
 
     } else {
         // Neighbor is refined - we need to find all fine neighbors
-        std::vector<OctreeNode*> fine_neighbors = find_fine_neighbors(node, face_id);
+        std::vector<OctreeNode *> fine_neighbors =
+            find_fine_neighbors(node, face_id);
 
         // Determine connection type
-        info.type = get_connection_type(node->level, fine_neighbors[0]->level, face_id);
+        info.type =
+            get_connection_type(node->level, fine_neighbors[0]->level, face_id);
 
         for (size_t i = 0; i < fine_neighbors.size(); ++i) {
             info.neighbor_elements.push_back(fine_neighbors[i]->leaf_index);
-            info.neighbor_faces.push_back((face_id % 2 == 0) ? face_id + 1 : face_id - 1);
+            info.neighbor_faces.push_back(
+                (face_id % 2 == 0) ? face_id + 1 : face_id - 1);
             info.subface_indices.push_back(static_cast<int>(i));
         }
     }
@@ -322,7 +369,8 @@ NeighborInfo OctreeAdapter::get_neighbor(Index elem, int face_id) const {
     return info;
 }
 
-std::array<NeighborInfo, 6> OctreeAdapter::get_face_neighbors(Index elem) const {
+std::array<NeighborInfo, 6>
+OctreeAdapter::get_face_neighbors(Index elem) const {
     std::array<NeighborInfo, 6> neighbors;
     for (int f = 0; f < 6; ++f) {
         neighbors[f] = get_neighbor(elem, f);
@@ -330,7 +378,8 @@ std::array<NeighborInfo, 6> OctreeAdapter::get_face_neighbors(Index elem) const 
     return neighbors;
 }
 
-std::vector<std::vector<FaceConnection>> OctreeAdapter::build_face_connections() const {
+std::vector<std::vector<FaceConnection>>
+OctreeAdapter::build_face_connections() const {
     std::vector<std::vector<FaceConnection>> connections(num_elements());
 
     for (Index e = 0; e < num_elements(); ++e) {
@@ -339,7 +388,7 @@ std::vector<std::vector<FaceConnection>> OctreeAdapter::build_face_connections()
         for (int f = 0; f < 6; ++f) {
             NeighborInfo info = get_neighbor(e, f);
 
-            FaceConnection& conn = connections[e][f];
+            FaceConnection &conn = connections[e][f];
             conn.type = info.type;
             conn.coarse_elem = e;
             conn.coarse_face_id = f;
@@ -352,24 +401,25 @@ std::vector<std::vector<FaceConnection>> OctreeAdapter::build_face_connections()
     return connections;
 }
 
-Index OctreeAdapter::find_element(const Vec3& p) const {
+Index OctreeAdapter::find_element(const Vec3 &p) const {
     if (!domain_.contains(p)) {
         return -1;
     }
 
     // Search from root
-    OctreeNode* node = root_.get();
+    OctreeNode *node = root_.get();
 
     while (!node->is_leaf()) {
         bool found = false;
-        for (auto& child : node->children) {
+        for (auto &child : node->children) {
             if (child->bounds.contains(p)) {
                 node = child.get();
                 found = true;
                 break;
             }
         }
-        if (!found) break;
+        if (!found)
+            break;
     }
 
     return node->is_leaf() ? node->leaf_index : -1;
@@ -382,15 +432,15 @@ std::vector<Index> OctreeAdapter::morton_order() const {
     }
 
     // Sort by Morton code
-    std::sort(order.begin(), order.end(),
-              [this](Index a, Index b) {
-                  return leaves_[a]->morton < leaves_[b]->morton;
-              });
+    std::sort(order.begin(), order.end(), [this](Index a, Index b) {
+        return leaves_[a]->morton < leaves_[b]->morton;
+    });
 
     return order;
 }
 
-std::vector<std::pair<Index, Index>> OctreeAdapter::morton_partition(int num_partitions) const {
+std::vector<std::pair<Index, Index>>
+OctreeAdapter::morton_partition(int num_partitions) const {
     std::vector<Index> order = morton_order();
     std::vector<std::pair<Index, Index>> partitions(num_partitions);
 
@@ -422,25 +472,27 @@ void OctreeAdapter::rebuild_leaf_list() {
     }
 }
 
-void OctreeAdapter::collect_leaves(OctreeNode* node, std::vector<OctreeNode*>& leaves) {
+void OctreeAdapter::collect_leaves(
+    OctreeNode *node, std::vector<OctreeNode *> &leaves) {
     if (node->is_leaf()) {
         leaves.push_back(node);
     } else {
-        for (auto& child : node->children) {
+        for (auto &child : node->children) {
             collect_leaves(child.get(), leaves);
         }
     }
 }
 
-void OctreeAdapter::build_lookup(OctreeNode* node) {
+void OctreeAdapter::build_lookup(OctreeNode *node) {
     morton_lookup_[node->morton] = node;
-    for (auto& child : node->children) {
+    for (auto &child : node->children) {
         build_lookup(child.get());
     }
 }
 
-void OctreeAdapter::create_children(OctreeNode* node) {
-    if (!node->children.empty()) return;
+void OctreeAdapter::create_children(OctreeNode *node) {
+    if (!node->children.empty())
+        return;
 
     bool ref_x = refines_x(node->mask);
     bool ref_y = refines_y(node->mask);
@@ -450,7 +502,7 @@ void OctreeAdapter::create_children(OctreeNode* node) {
     int ny = ref_y ? 2 : 1;
     int nz = ref_z ? 2 : 1;
 
-    const ElementBounds& b = node->bounds;
+    const ElementBounds &b = node->bounds;
     Real dx = (b.xmax - b.xmin) / nx;
     Real dy = (b.ymax - b.ymin) / ny;
     Real dz = (b.zmax - b.zmin) / nz;
@@ -485,36 +537,48 @@ void OctreeAdapter::create_children(OctreeNode* node) {
     }
 }
 
-OctreeNode* OctreeAdapter::find_neighbor_same_or_coarser(
-    OctreeNode* node, int face_id) const {
+OctreeNode *OctreeAdapter::find_neighbor_same_or_coarser(
+    OctreeNode *node, int face_id) const {
 
     // Use Morton code arithmetic to find neighbor
     // This is a simplified version - full implementation would use
     // SeaMesh's neighbor finding algorithm
 
     // For now, brute force search
-    const ElementBounds& b = node->bounds;
+    const ElementBounds &b = node->bounds;
     Vec3 neighbor_center;
 
     switch (face_id) {
-        case 0: neighbor_center = Vec3(b.xmin - 0.5 * (b.xmax - b.xmin),
-                                        0.5 * (b.ymin + b.ymax),
-                                        0.5 * (b.zmin + b.zmax)); break;
-        case 1: neighbor_center = Vec3(b.xmax + 0.5 * (b.xmax - b.xmin),
-                                        0.5 * (b.ymin + b.ymax),
-                                        0.5 * (b.zmin + b.zmax)); break;
-        case 2: neighbor_center = Vec3(0.5 * (b.xmin + b.xmax),
-                                        b.ymin - 0.5 * (b.ymax - b.ymin),
-                                        0.5 * (b.zmin + b.zmax)); break;
-        case 3: neighbor_center = Vec3(0.5 * (b.xmin + b.xmax),
-                                        b.ymax + 0.5 * (b.ymax - b.ymin),
-                                        0.5 * (b.zmin + b.zmax)); break;
-        case 4: neighbor_center = Vec3(0.5 * (b.xmin + b.xmax),
-                                        0.5 * (b.ymin + b.ymax),
-                                        b.zmin - 0.5 * (b.zmax - b.zmin)); break;
-        case 5: neighbor_center = Vec3(0.5 * (b.xmin + b.xmax),
-                                        0.5 * (b.ymin + b.ymax),
-                                        b.zmax + 0.5 * (b.zmax - b.zmin)); break;
+    case 0:
+        neighbor_center = Vec3(
+            b.xmin - 0.5 * (b.xmax - b.xmin), 0.5 * (b.ymin + b.ymax),
+            0.5 * (b.zmin + b.zmax));
+        break;
+    case 1:
+        neighbor_center = Vec3(
+            b.xmax + 0.5 * (b.xmax - b.xmin), 0.5 * (b.ymin + b.ymax),
+            0.5 * (b.zmin + b.zmax));
+        break;
+    case 2:
+        neighbor_center = Vec3(
+            0.5 * (b.xmin + b.xmax), b.ymin - 0.5 * (b.ymax - b.ymin),
+            0.5 * (b.zmin + b.zmax));
+        break;
+    case 3:
+        neighbor_center = Vec3(
+            0.5 * (b.xmin + b.xmax), b.ymax + 0.5 * (b.ymax - b.ymin),
+            0.5 * (b.zmin + b.zmax));
+        break;
+    case 4:
+        neighbor_center = Vec3(
+            0.5 * (b.xmin + b.xmax), 0.5 * (b.ymin + b.ymax),
+            b.zmin - 0.5 * (b.zmax - b.zmin));
+        break;
+    case 5:
+        neighbor_center = Vec3(
+            0.5 * (b.xmin + b.xmax), 0.5 * (b.ymin + b.ymax),
+            b.zmax + 0.5 * (b.zmax - b.zmin));
+        break;
     }
 
     // Search for element containing this point
@@ -522,61 +586,75 @@ OctreeNode* OctreeAdapter::find_neighbor_same_or_coarser(
         return nullptr;
     }
 
-    OctreeNode* current = root_.get();
+    OctreeNode *current = root_.get();
     while (!current->is_leaf()) {
         bool found = false;
-        for (auto& child : current->children) {
+        for (auto &child : current->children) {
             if (child->bounds.contains(neighbor_center)) {
                 current = child.get();
                 found = true;
                 break;
             }
         }
-        if (!found) break;
+        if (!found)
+            break;
     }
 
     return current;
 }
 
-std::vector<OctreeNode*> OctreeAdapter::find_fine_neighbors(
-    OctreeNode* node, int face_id) const {
+std::vector<OctreeNode *>
+OctreeAdapter::find_fine_neighbors(OctreeNode *node, int face_id) const {
 
-    std::vector<OctreeNode*> neighbors;
+    std::vector<OctreeNode *> neighbors;
 
     // Find the coarse neighbor first
-    OctreeNode* coarse = find_neighbor_same_or_coarser(node, face_id);
-    if (!coarse) return neighbors;
+    OctreeNode *coarse = find_neighbor_same_or_coarser(node, face_id);
+    if (!coarse)
+        return neighbors;
 
     // Collect all leaves that share the face
-    std::queue<OctreeNode*> work;
+    std::queue<OctreeNode *> work;
     work.push(coarse);
 
-    const ElementBounds& b = node->bounds;
+    const ElementBounds &b = node->bounds;
     Real tol = 1e-12;
 
     while (!work.empty()) {
-        OctreeNode* n = work.front();
+        OctreeNode *n = work.front();
         work.pop();
 
         if (n->is_leaf()) {
             // Check if this leaf shares the face
             bool shares_face = false;
-            const ElementBounds& nb = n->bounds;
+            const ElementBounds &nb = n->bounds;
 
             switch (face_id) {
-                case 0: shares_face = std::abs(nb.xmax - b.xmin) < tol; break;
-                case 1: shares_face = std::abs(nb.xmin - b.xmax) < tol; break;
-                case 2: shares_face = std::abs(nb.ymax - b.ymin) < tol; break;
-                case 3: shares_face = std::abs(nb.ymin - b.ymax) < tol; break;
-                case 4: shares_face = std::abs(nb.zmax - b.zmin) < tol; break;
-                case 5: shares_face = std::abs(nb.zmin - b.zmax) < tol; break;
+            case 0:
+                shares_face = std::abs(nb.xmax - b.xmin) < tol;
+                break;
+            case 1:
+                shares_face = std::abs(nb.xmin - b.xmax) < tol;
+                break;
+            case 2:
+                shares_face = std::abs(nb.ymax - b.ymin) < tol;
+                break;
+            case 3:
+                shares_face = std::abs(nb.ymin - b.ymax) < tol;
+                break;
+            case 4:
+                shares_face = std::abs(nb.zmax - b.zmin) < tol;
+                break;
+            case 5:
+                shares_face = std::abs(nb.zmin - b.zmax) < tol;
+                break;
             }
 
             if (shares_face) {
                 neighbors.push_back(n);
             }
         } else {
-            for (auto& child : n->children) {
+            for (auto &child : n->children) {
                 work.push(child.get());
             }
         }
@@ -592,9 +670,8 @@ std::vector<OctreeNode*> OctreeAdapter::find_fine_neighbors(
 namespace refinement_criteria {
 
 bool GradientCriterion::should_refine(
-    const VecX& solution,
-    const ElementBounds& bounds,
-    const DirectionalLevel& level) const {
+    const VecX &solution, const ElementBounds &bounds,
+    const DirectionalLevel &level) const {
 
     // Estimate gradient magnitude from solution variation
     Real max_val = solution.maxCoeff();
@@ -610,8 +687,7 @@ bool GradientCriterion::should_refine(
 }
 
 RefineMask GradientCriterion::refinement_mask(
-    const VecX& solution,
-    const ElementBounds& bounds) const {
+    const VecX &solution, const ElementBounds &bounds) const {
 
     // For simplicity, refine in all directions if gradient is high
     // A more sophisticated version would compute directional gradients
@@ -619,8 +695,7 @@ RefineMask GradientCriterion::refinement_mask(
 }
 
 bool BathymetryCriterion::should_refine(
-    const ElementBounds& bounds,
-    const DirectionalLevel& level) const {
+    const ElementBounds &bounds, const DirectionalLevel &level) const {
 
     // Sample bathymetry at corners and center
     std::vector<Real> h_values;
@@ -628,8 +703,8 @@ bool BathymetryCriterion::should_refine(
     h_values.push_back(bathymetry(bounds.xmax, bounds.ymin));
     h_values.push_back(bathymetry(bounds.xmin, bounds.ymax));
     h_values.push_back(bathymetry(bounds.xmax, bounds.ymax));
-    h_values.push_back(bathymetry(0.5 * (bounds.xmin + bounds.xmax),
-                                   0.5 * (bounds.ymin + bounds.ymax)));
+    h_values.push_back(bathymetry(
+        0.5 * (bounds.xmin + bounds.xmax), 0.5 * (bounds.ymin + bounds.ymax)));
 
     Real h_max = *std::max_element(h_values.begin(), h_values.end());
     Real h_min = *std::min_element(h_values.begin(), h_values.end());
@@ -638,10 +713,10 @@ bool BathymetryCriterion::should_refine(
 }
 
 bool CoastlineCriterion::should_refine(
-    const ElementBounds& bounds,
-    const DirectionalLevel& level) const {
+    const ElementBounds &bounds, const DirectionalLevel &level) const {
 
-    if (level.max_level() >= max_level) return false;
+    if (level.max_level() >= max_level)
+        return false;
 
     // Check if element contains coastline (transition from wet to dry)
     int n_samples = 4;
@@ -666,10 +741,9 @@ bool CoastlineCriterion::should_refine(
 }
 
 bool CombinedCriterion::should_refine(
-    const ElementBounds& bounds,
-    const DirectionalLevel& level) const {
+    const ElementBounds &bounds, const DirectionalLevel &level) const {
 
-    for (const auto& criterion : criteria) {
+    for (const auto &criterion : criteria) {
         if (criterion(bounds, level)) {
             return true;
         }
@@ -677,6 +751,6 @@ bool CombinedCriterion::should_refine(
     return false;
 }
 
-}  // namespace refinement_criteria
+} // namespace refinement_criteria
 
-}  // namespace drifter
+} // namespace drifter

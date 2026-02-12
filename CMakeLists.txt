@@ -118,6 +118,7 @@ set(MESH_SOURCES
     src/mesh/coastline_refinement.cpp
     src/mesh/seabed_surface.cpp
     src/mesh/multi_source_bathymetry.cpp
+    src/mesh/area_of_interest.cpp
 )
 
 set(BATHYMETRY_SOURCES

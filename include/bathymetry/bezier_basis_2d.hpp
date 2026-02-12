@@ -5,27 +5,28 @@
 ///
 /// This provides quintic (degree 5) Bezier basis functions on quadrilateral
 /// elements for smooth bathymetry representation with C^2 continuity.
-/// Uses analytic Bernstein polynomial evaluation without OpenCASCADE dependency.
+/// Uses analytic Bernstein polynomial evaluation without OpenCASCADE
+/// dependency.
 
 #include "core/types.hpp"
-#include <vector>
 #include <array>
+#include <vector>
 
 namespace drifter {
 
 /// @brief 2D tensor-product Bezier basis on reference element [0,1]^2
 ///
-/// Uses degree 5 Bezier (6 control points per direction), giving 36 DOFs per element.
-/// Provides basis function evaluation and derivatives up to 4th order for C^2
-/// constraint enforcement at element vertices.
+/// Uses degree 5 Bezier (6 control points per direction), giving 36 DOFs per
+/// element. Provides basis function evaluation and derivatives up to 4th order
+/// for C^2 constraint enforcement at element vertices.
 ///
 /// DOF indexing: dof = i + N1D * j where i is u-direction, j is v-direction
 /// Control points are uniformly spaced on [0,1]: u_i = i/5 for i=0..5
 class BezierBasis2D {
 public:
-    static constexpr int DEGREE = 5;    ///< Polynomial degree
-    static constexpr int N1D = 6;       ///< Control points per direction (degree + 1)
-    static constexpr int NDOF = 36;     ///< Total DOFs per element (6 x 6)
+    static constexpr int DEGREE = 5; ///< Polynomial degree
+    static constexpr int N1D = 6; ///< Control points per direction (degree + 1)
+    static constexpr int NDOF = 36; ///< Total DOFs per element (6 x 6)
 
     /// @brief Construct quintic Bezier basis
     BezierBasis2D();
@@ -53,7 +54,7 @@ public:
     static int dof_index(int i, int j) { return i + N1D * j; }
 
     /// Extract (i, j) from linear DOF index
-    static void dof_ij(int dof, int& i, int& j) {
+    static void dof_ij(int dof, int &i, int &j) {
         j = dof / N1D;
         i = dof % N1D;
     }
@@ -109,8 +110,8 @@ public:
     VecX evaluate_d2uv(Real u, Real v) const;
 
     /// Evaluate all second derivatives at once
-    void evaluate_second_derivatives(Real u, Real v,
-                                     VecX& d2u, VecX& d2v, VecX& d2uv) const;
+    void evaluate_second_derivatives(
+        Real u, Real v, VecX &d2u, VecX &d2v, VecX &d2uv) const;
 
     // =========================================================================
     // Higher derivatives (for C^2 constraints at vertices)
@@ -124,10 +125,10 @@ public:
     VecX evaluate_derivative(Real u, Real v, int nu, int nv) const;
 
     /// Third derivatives needed for C^2 constraints and triharmonic energy
-    VecX evaluate_d3uuu(Real u, Real v) const;   ///< d^3/du^3
-    VecX evaluate_d3uuv(Real u, Real v) const;   ///< d^3/du^2 dv
-    VecX evaluate_d3uvv(Real u, Real v) const;   ///< d^3/du dv^2
-    VecX evaluate_d3vvv(Real u, Real v) const;   ///< d^3/dv^3
+    VecX evaluate_d3uuu(Real u, Real v) const; ///< d^3/du^3
+    VecX evaluate_d3uuv(Real u, Real v) const; ///< d^3/du^2 dv
+    VecX evaluate_d3uvv(Real u, Real v) const; ///< d^3/du dv^2
+    VecX evaluate_d3vvv(Real u, Real v) const; ///< d^3/dv^3
 
     /// Fourth derivative d^4/du^2 dv^2 (needed for full C^2 constraints)
     VecX evaluate_d4uuvv(Real u, Real v) const;
@@ -137,7 +138,8 @@ public:
     // =========================================================================
 
     /// Evaluate k-th derivative of 1D Bernstein basis of degree n
-    /// Uses the relation: d^k B_{i,n} / dt^k = n!/(n-k)! * sum of lower degree Bernstein
+    /// Uses the relation: d^k B_{i,n} / dt^k = n!/(n-k)! * sum of lower degree
+    /// Bernstein
     /// @param n Degree
     /// @param t Parameter in [0, 1]
     /// @param k Derivative order
@@ -163,19 +165,21 @@ public:
     // Scalar interpolation
     // =========================================================================
 
-    /// Evaluate scalar field at (u,v) given control point values using de Casteljau
-    /// This is numerically stable and efficient for single-point evaluation
+    /// Evaluate scalar field at (u,v) given control point values using de
+    /// Casteljau This is numerically stable and efficient for single-point
+    /// evaluation
     /// @param coeffs 36 control point values indexed as i + 6*j
     /// @param u, v Parameters in [0, 1]^2
     /// @return Interpolated scalar value
-    Real evaluate_scalar(const VecX& coeffs, Real u, Real v) const;
+    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const;
 
     // =========================================================================
     // Corner and edge access (for constraint building)
     // =========================================================================
 
     /// Get DOF index for corner
-    /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1) in parameter space
+    /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1) in parameter
+    /// space
     int corner_dof(int corner_id) const;
 
     /// Get corner ID for a DOF index (inverse of corner_dof)
@@ -184,7 +188,8 @@ public:
     int dof_to_corner(int dof) const;
 
     /// Get DOF indices along an edge (6 DOFs)
-    /// @param edge_id 0: u=0 (left), 1: u=1 (right), 2: v=0 (bottom), 3: v=1 (top)
+    /// @param edge_id 0: u=0 (left), 1: u=1 (right), 2: v=0 (bottom), 3: v=1
+    /// (top)
     std::vector<int> edge_dofs(int edge_id) const;
 
     /// Get (u, v) parameter values at corner
@@ -197,11 +202,12 @@ public:
 
     /// @brief Compute Bezier extraction matrix for a sub-interval
     ///
-    /// For a degree-n Bezier curve on [0,1], this computes the (n+1)×(n+1) matrix S
-    /// such that new_ctrl_pts = S * original_ctrl_pts gives the control points
-    /// for the Bezier curve restricted to [t0, t1].
+    /// For a degree-n Bezier curve on [0,1], this computes the (n+1)×(n+1)
+    /// matrix S such that new_ctrl_pts = S * original_ctrl_pts gives the
+    /// control points for the Bezier curve restricted to [t0, t1].
     ///
-    /// Uses the de Casteljau subdivision algorithm. For the common 2:1 refinement case:
+    /// Uses the de Casteljau subdivision algorithm. For the common 2:1
+    /// refinement case:
     /// - [0, 0.5]: Left half subdivision (binomial coefficients / 2^k)
     /// - [0.5, 1]: Right half subdivision
     ///
@@ -212,7 +218,7 @@ public:
 
 private:
     /// Precomputed binomial coefficients C(n,k) for n <= 2*DEGREE
-    std::array<std::array<Real, 2*DEGREE+1>, 2*DEGREE+1> binomial_;
+    std::array<std::array<Real, 2 * DEGREE + 1>, 2 * DEGREE + 1> binomial_;
 
     /// Initialize binomial coefficient table
     void compute_binomial_coefficients();
@@ -221,4 +227,4 @@ private:
     Real binom(int n, int k) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

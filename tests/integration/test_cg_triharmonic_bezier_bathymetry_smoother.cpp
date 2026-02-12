@@ -492,11 +492,11 @@ TEST_F(CGTriharmonicSmootherTest, VTKOutput) {
         std::cout << "VTK output skipped: " << e.what() << std::endl;
     }
 
-    // Note: write_control_points_vtk adds .vtu extension automatically
-    std::string ctrl_base = tmp_dir + "/triharmonic_control_points";
+    // Note: write_control_points_vtk expects filename with extension
+    std::string ctrl_file = tmp_dir + "/triharmonic_control_points.vtu";
     try {
-        smoother.write_control_points_vtk(ctrl_base);
-        EXPECT_TRUE(std::filesystem::exists(ctrl_base + ".vtu"));
+        smoother.write_control_points_vtk(ctrl_file);
+        EXPECT_TRUE(std::filesystem::exists(ctrl_file));
     } catch (const std::exception& e) {
         std::cout << "Control points VTK output skipped: " << e.what() << std::endl;
     }

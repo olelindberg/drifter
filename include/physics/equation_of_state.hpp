@@ -2,8 +2,8 @@
 
 // Equation of State for Seawater
 //
-// Computes density as a function of temperature (T), salinity (S), and pressure (p).
-// Several formulations are provided:
+// Computes density as a function of temperature (T), salinity (S), and pressure
+// (p). Several formulations are provided:
 //
 // 1. Linear EOS (fast, for idealized cases):
 //    rho = rho_0 * (1 - alpha*(T - T0) + beta*(S - S0))
@@ -24,10 +24,10 @@ namespace drifter {
 
 /// @brief Equation of state type
 enum class EOSType {
-    Linear,          ///< Linear approximation
-    UNESCO,          ///< UNESCO 1983 (IES 80)
-    JackettMcDougall,///< Jackett & McDougall 1995
-    TEOS10           ///< TEOS-10 (if library available)
+    Linear,           ///< Linear approximation
+    UNESCO,           ///< UNESCO 1983 (IES 80)
+    JackettMcDougall, ///< Jackett & McDougall 1995
+    TEOS10            ///< TEOS-10 (if library available)
 };
 
 /// @brief Reference values for linear EOS
@@ -44,22 +44,24 @@ struct EOSReferenceValues {
 class EquationOfState {
 public:
     /// @brief Construct with specified type
-    explicit EquationOfState(EOSType type = EOSType::Linear,
-                             const EOSReferenceValues& ref = EOSReferenceValues())
+    explicit EquationOfState(
+        EOSType type = EOSType::Linear,
+        const EOSReferenceValues &ref = EOSReferenceValues())
         : type_(type), ref_(ref) {}
 
     /// @brief Set equation of state type
     void set_type(EOSType type) { type_ = type; }
 
     /// @brief Set reference values (for linear EOS)
-    void set_reference(const EOSReferenceValues& ref) { ref_ = ref; }
+    void set_reference(const EOSReferenceValues &ref) { ref_ = ref; }
 
     // =========================================================================
     // Density computation
     // =========================================================================
 
     /// @brief Compute in-situ density
-    /// @param T Temperature [°C] (potential or in-situ depending on formulation)
+    /// @param T Temperature [°C] (potential or in-situ depending on
+    /// formulation)
     /// @param S Salinity [PSU] (practical salinity)
     /// @param p Pressure [dbar] (0 at surface)
     /// @return Density [kg/m³]
@@ -72,10 +74,11 @@ public:
     Real potential_density(Real T, Real S) const;
 
     /// @brief Vectorized density computation
-    void density(const VecX& T, const VecX& S, const VecX& p, VecX& rho) const;
+    void density(const VecX &T, const VecX &S, const VecX &p, VecX &rho) const;
 
     /// @brief Vectorized density anomaly
-    void density_anomaly(const VecX& T, const VecX& S, const VecX& p, VecX& rho_anom) const;
+    void density_anomaly(
+        const VecX &T, const VecX &S, const VecX &p, VecX &rho_anom) const;
 
     // =========================================================================
     // Derivatives (for pressure gradient computation)
@@ -113,17 +116,17 @@ private:
 
 inline Real EquationOfState::density(Real T, Real S, Real p) const {
     switch (type_) {
-        case EOSType::Linear:
-            return density_linear(T, S, p);
-        case EOSType::UNESCO:
-            return density_unesco(T, S, p);
-        case EOSType::JackettMcDougall:
-            return density_jackett_mcdougall(T, S, p);
-        case EOSType::TEOS10:
-            // TEOS-10 would require external library
-            return density_unesco(T, S, p);
-        default:
-            return density_linear(T, S, p);
+    case EOSType::Linear:
+        return density_linear(T, S, p);
+    case EOSType::UNESCO:
+        return density_unesco(T, S, p);
+    case EOSType::JackettMcDougall:
+        return density_jackett_mcdougall(T, S, p);
+    case EOSType::TEOS10:
+        // TEOS-10 would require external library
+        return density_unesco(T, S, p);
+    default:
+        return density_linear(T, S, p);
     }
 }
 
@@ -136,8 +139,8 @@ inline Real EquationOfState::potential_density(Real T, Real S) const {
     return density(T, S, 0.0);
 }
 
-inline void EquationOfState::density(const VecX& T, const VecX& S, const VecX& p,
-                                      VecX& rho) const {
+inline void EquationOfState::density(
+    const VecX &T, const VecX &S, const VecX &p, VecX &rho) const {
     int n = static_cast<int>(T.size());
     rho.resize(n);
 
@@ -147,8 +150,8 @@ inline void EquationOfState::density(const VecX& T, const VecX& S, const VecX& p
     }
 }
 
-inline void EquationOfState::density_anomaly(const VecX& T, const VecX& S, const VecX& p,
-                                               VecX& rho_anom) const {
+inline void EquationOfState::density_anomaly(
+    const VecX &T, const VecX &S, const VecX &p, VecX &rho_anom) const {
     int n = static_cast<int>(T.size());
     rho_anom.resize(n);
 
@@ -160,7 +163,8 @@ inline void EquationOfState::density_anomaly(const VecX& T, const VecX& S, const
 
 inline Real EquationOfState::density_linear(Real T, Real S, Real /*p*/) const {
     // rho = rho_0 * (1 - alpha*(T - T0) + beta*(S - S0))
-    return ref_.rho_0 * (1.0 - ref_.alpha * (T - ref_.T0) + ref_.beta * (S - ref_.S0));
+    return ref_.rho_0 *
+           (1.0 - ref_.alpha * (T - ref_.T0) + ref_.beta * (S - ref_.S0));
 }
 
 inline Real EquationOfState::density_unesco(Real T, Real S, Real p) const {
@@ -168,7 +172,7 @@ inline Real EquationOfState::density_unesco(Real T, Real S, Real p) const {
     // Full polynomial expansion
     // NOTE: UNESCO coefficients expect pressure in bars (1 dbar = 0.1 bar)
     // Input p is in dbar, so convert to bars for the calculation
-    Real p_bar = p * 0.1;  // Convert dbar to bar
+    Real p_bar = p * 0.1; // Convert dbar to bar
 
     // Pure water density at atmospheric pressure
     Real T2 = T * T;
@@ -176,14 +180,14 @@ inline Real EquationOfState::density_unesco(Real T, Real S, Real p) const {
     Real T4 = T3 * T;
     Real T5 = T4 * T;
 
-    Real rho_0 = 999.842594 + 6.793952e-2 * T - 9.095290e-3 * T2
-               + 1.001685e-4 * T3 - 1.120083e-6 * T4 + 6.536332e-9 * T5;
+    Real rho_0 = 999.842594 + 6.793952e-2 * T - 9.095290e-3 * T2 +
+                 1.001685e-4 * T3 - 1.120083e-6 * T4 + 6.536332e-9 * T5;
 
     // Effect of salinity at atmospheric pressure
-    Real S15 = std::sqrt(S * S * S);  // S^(3/2)
+    Real S15 = std::sqrt(S * S * S); // S^(3/2)
 
-    Real A = 8.24493e-1 - 4.0899e-3 * T + 7.6438e-5 * T2
-           - 8.2467e-7 * T3 + 5.3875e-9 * T4;
+    Real A = 8.24493e-1 - 4.0899e-3 * T + 7.6438e-5 * T2 - 8.2467e-7 * T3 +
+             5.3875e-9 * T4;
     Real B = -5.72466e-3 + 1.0227e-4 * T - 1.6546e-6 * T2;
     Real C = 4.8314e-4;
 
@@ -197,8 +201,8 @@ inline Real EquationOfState::density_unesco(Real T, Real S, Real p) const {
     // K = secant bulk modulus (in bars)
 
     // K_w (pure water)
-    Real K_w = 19652.21 + 148.4206 * T - 2.327105 * T2
-             + 1.360477e-2 * T3 - 5.155288e-5 * T4;
+    Real K_w = 19652.21 + 148.4206 * T - 2.327105 * T2 + 1.360477e-2 * T3 -
+               5.155288e-5 * T4;
 
     // K_0 (at atmospheric pressure with salinity)
     Real K_0_A = 54.6746 - 0.603459 * T + 1.09987e-2 * T2 - 6.1670e-5 * T3;
@@ -221,11 +225,12 @@ inline Real EquationOfState::density_unesco(Real T, Real S, Real p) const {
     return rho_s0 / (1.0 - p_bar / K);
 }
 
-inline Real EquationOfState::density_jackett_mcdougall(Real T, Real S, Real p) const {
+inline Real
+EquationOfState::density_jackett_mcdougall(Real T, Real S, Real p) const {
     // Jackett & McDougall (1995) polynomial fit
     // Valid for: -2 <= T <= 40 °C, 0 <= S <= 42 PSU, 0 <= p <= 10000 dbar
     // NOTE: Coefficients expect pressure in bars (1 dbar = 0.1 bar)
-    Real p_bar = p * 0.1;  // Convert dbar to bar
+    Real p_bar = p * 0.1; // Convert dbar to bar
 
     Real T2 = T * T;
     Real T3 = T2 * T;
@@ -234,22 +239,23 @@ inline Real EquationOfState::density_jackett_mcdougall(Real T, Real S, Real p) c
     Real p2 = p_bar * p_bar;
 
     // Density at surface
-    Real rho_0 = 999.842594 + 6.793952e-2 * T - 9.09529e-3 * T2
-               + 1.001685e-4 * T3 - 1.120083e-6 * T4 + 6.536336e-9 * T4 * T
-               + (8.24493e-1 - 4.0899e-3 * T + 7.6438e-5 * T2
-                - 8.2467e-7 * T3 + 5.3875e-9 * T4) * S
-               + (-5.72466e-3 + 1.0227e-4 * T - 1.6546e-6 * T2) * S15
-               + 4.8314e-4 * S * S;
+    Real rho_0 = 999.842594 + 6.793952e-2 * T - 9.09529e-3 * T2 +
+                 1.001685e-4 * T3 - 1.120083e-6 * T4 + 6.536336e-9 * T4 * T +
+                 (8.24493e-1 - 4.0899e-3 * T + 7.6438e-5 * T2 - 8.2467e-7 * T3 +
+                  5.3875e-9 * T4) *
+                     S +
+                 (-5.72466e-3 + 1.0227e-4 * T - 1.6546e-6 * T2) * S15 +
+                 4.8314e-4 * S * S;
 
     if (p_bar <= 0.0) {
         return rho_0;
     }
 
     // Compressibility coefficients (simplified) - K in bars
-    Real K = 19652.21 + 148.4206 * T - 2.327105 * T2 + 1.360477e-2 * T3
-           + (54.6746 - 0.603459 * T + 1.09987e-2 * T2) * S
-           + (3.239908 + 1.43713e-3 * T + 1.16092e-4 * T2) * p_bar
-           + 8.50935e-5 * p2;
+    Real K = 19652.21 + 148.4206 * T - 2.327105 * T2 + 1.360477e-2 * T3 +
+             (54.6746 - 0.603459 * T + 1.09987e-2 * T2) * S +
+             (3.239908 + 1.43713e-3 * T + 1.16092e-4 * T2) * p_bar +
+             8.50935e-5 * p2;
 
     return rho_0 / (1.0 - p_bar / K);
 }
@@ -276,7 +282,7 @@ inline Real EquationOfState::haline_contraction(Real T, Real S, Real p) const {
 
 inline Real EquationOfState::compressibility(Real T, Real S, Real p) const {
     // Numerical differentiation
-    constexpr Real dp = 1.0;  // 1 dbar
+    constexpr Real dp = 1.0; // 1 dbar
     Real rho_plus = density(T, S, p + dp);
     Real rho_minus = density(T, S, std::max(0.0, p - dp));
     Real rho_center = density(T, S, p);
@@ -286,11 +292,11 @@ inline Real EquationOfState::compressibility(Real T, Real S, Real p) const {
 
 inline Real EquationOfState::sound_speed(Real T, Real S, Real p) const {
     // Approximate sound speed using Chen & Millero (1977)
-    // c = 1449.2 + 4.6*T - 0.055*T^2 + 0.00029*T^3 + (1.34 - 0.01*T)*(S - 35) + 0.016*p
+    // c = 1449.2 + 4.6*T - 0.055*T^2 + 0.00029*T^3 + (1.34 - 0.01*T)*(S - 35) +
+    // 0.016*p
 
-    Real c = 1449.2 + 4.6 * T - 0.055 * T * T + 0.00029 * T * T * T
-           + (1.34 - 0.01 * T) * (S - 35.0)
-           + 0.016 * p;
+    Real c = 1449.2 + 4.6 * T - 0.055 * T * T + 0.00029 * T * T * T +
+             (1.34 - 0.01 * T) * (S - 35.0) + 0.016 * p;
 
     return c;
 }
@@ -299,20 +305,18 @@ inline Real EquationOfState::sound_speed(Real T, Real S, Real p) const {
 /// @details Measures static stability of water column
 class BuoyancyFrequency {
 public:
-    explicit BuoyancyFrequency(const EquationOfState& eos, Real g = 9.81)
+    explicit BuoyancyFrequency(const EquationOfState &eos, Real g = 9.81)
         : eos_(eos), g_(g) {}
 
     /// @brief Compute N^2 from vertical density gradient
     /// @param drho_dz Vertical density gradient [kg/m^4]
     /// @param rho Local density [kg/m³]
     /// @return Buoyancy frequency squared [1/s²]
-    Real compute(Real drho_dz, Real rho) const {
-        return -g_ * drho_dz / rho;
-    }
+    Real compute(Real drho_dz, Real rho) const { return -g_ * drho_dz / rho; }
 
     /// @brief Compute N^2 profile from T, S profiles
-    void compute_profile(const VecX& T, const VecX& S, const VecX& z,
-                          VecX& N2) const {
+    void compute_profile(
+        const VecX &T, const VecX &S, const VecX &z, VecX &N2) const {
         int n = static_cast<int>(T.size());
         N2.resize(n);
 
@@ -338,8 +342,8 @@ public:
     }
 
 private:
-    const EquationOfState& eos_;
+    const EquationOfState &eos_;
     Real g_;
 };
 
-}  // namespace drifter
+} // namespace drifter

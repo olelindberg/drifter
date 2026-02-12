@@ -4,19 +4,20 @@
 /// @brief CG DOF management for cubic Bezier basis bathymetry smoothing
 ///
 /// Manages Continuous Galerkin (CG) degrees of freedom for cubic Bezier
-/// elements (degree 3, 4×4 = 16 DOFs per element). CG shares DOFs at interfaces:
+/// elements (degree 3, 4×4 = 16 DOFs per element). CG shares DOFs at
+/// interfaces:
 ///   - Corner DOFs: shared by all elements meeting at the vertex
 ///   - Edge DOFs: shared by the 2 elements on either side
 ///   - Interior DOFs: unique per element
 ///
 /// For C¹ continuity constraints (derivatives z_u, z_v, z_uv).
 
-#include "core/types.hpp"
-#include "bathymetry/quadtree_adapter.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
-#include <vector>
+#include "bathymetry/quadtree_adapter.hpp"
+#include "core/types.hpp"
 #include <map>
 #include <set>
+#include <vector>
 
 namespace drifter {
 
@@ -29,13 +30,14 @@ struct CubicHangingNodeConstraint {
 
 /// @brief C¹ edge derivative constraint for cubic elements
 ///
-/// Enforces matching of normal derivative z_n at Gauss points along shared edges.
+/// Enforces matching of normal derivative z_n at Gauss points along shared
+/// edges.
 struct CubicEdgeDerivativeConstraint {
     Index elem1, elem2;
     int edge1, edge2;
-    Real t;                         ///< Parameter position along edge (0 to 1)
-    int deriv_order;                ///< Always 1 for C¹
-    VecX coeffs1, coeffs2;          ///< Basis derivative coefficients (16 values each)
+    Real t;                ///< Parameter position along edge (0 to 1)
+    int deriv_order;       ///< Always 1 for C¹
+    VecX coeffs1, coeffs2; ///< Basis derivative coefficients (16 values each)
     Real scale1, scale2;
 };
 
@@ -47,7 +49,7 @@ class CGCubicBezierDofManager {
 public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh
-    CGCubicBezierDofManager(const QuadtreeAdapter& mesh);
+    CGCubicBezierDofManager(const QuadtreeAdapter &mesh);
 
     // =========================================================================
     // DOF queries
@@ -58,24 +60,27 @@ public:
     int num_element_dofs() const { return CubicBezierBasis2D::NDOF; }
 
     Index global_dof(Index elem, int local_dof) const;
-    const std::vector<Index>& element_dofs(Index elem) const;
-    const std::vector<std::vector<Index>>& all_element_dofs() const {
+    const std::vector<Index> &element_dofs(Index elem) const;
+    const std::vector<std::vector<Index>> &all_element_dofs() const {
         return elem_to_global_;
     }
 
     bool is_boundary_dof(Index dof) const;
-    const std::vector<Index>& boundary_dofs() const { return boundary_dofs_; }
+    const std::vector<Index> &boundary_dofs() const { return boundary_dofs_; }
 
     // =========================================================================
     // Constraint handling
     // =========================================================================
 
-    const std::vector<CubicHangingNodeConstraint>& constraints() const {
+    const std::vector<CubicHangingNodeConstraint> &constraints() const {
         return constraints_;
     }
-    Index num_constraints() const { return static_cast<Index>(constraints_.size()); }
+    Index num_constraints() const {
+        return static_cast<Index>(constraints_.size());
+    }
 
-    const std::vector<CubicEdgeDerivativeConstraint>& edge_derivative_constraints() const {
+    const std::vector<CubicEdgeDerivativeConstraint> &
+    edge_derivative_constraints() const {
         return edge_derivative_constraints_;
     }
     Index num_edge_derivative_constraints() const {
@@ -97,11 +102,11 @@ public:
     // Mesh and basis access
     // =========================================================================
 
-    const QuadtreeAdapter& mesh() const { return mesh_; }
-    const CubicBezierBasis2D& basis() const { return basis_; }
+    const QuadtreeAdapter &mesh() const { return mesh_; }
+    const CubicBezierBasis2D &basis() const { return basis_; }
 
 private:
-    const QuadtreeAdapter& mesh_;
+    const QuadtreeAdapter &mesh_;
     CubicBezierBasis2D basis_;
 
     Index num_global_dofs_ = 0;
@@ -130,8 +135,8 @@ private:
     // Helpers
     Vec2 get_dof_position(Index elem, int local_dof) const;
     std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;
-    std::pair<int64_t, int64_t> quantize_position(const Vec2& pos) const;
-    Index find_dof_at_position(const Vec2& pos) const;
+    std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const;
+    Index find_dof_at_position(const Vec2 &pos) const;
 
     bool is_corner_dof(int local_dof) const;
     bool is_edge_dof(int local_dof) const;
@@ -139,4 +144,4 @@ private:
     int get_edge_for_dof(int local_dof) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

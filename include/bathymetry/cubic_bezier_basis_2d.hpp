@@ -8,16 +8,16 @@
 /// Uses analytic Bernstein polynomial evaluation.
 
 #include "core/types.hpp"
-#include <vector>
 #include <array>
+#include <vector>
 
 namespace drifter {
 
 /// @brief 2D tensor-product cubic Bezier basis on reference element [0,1]^2
 ///
-/// Uses degree 3 Bezier (4 control points per direction), giving 16 DOFs per element.
-/// Provides basis function evaluation and derivatives up to 2nd order for thin plate
-/// energy and C¹ constraint enforcement at element vertices.
+/// Uses degree 3 Bezier (4 control points per direction), giving 16 DOFs per
+/// element. Provides basis function evaluation and derivatives up to 2nd order
+/// for thin plate energy and C¹ constraint enforcement at element vertices.
 ///
 /// DOF indexing: dof = i + N1D * j where i is u-direction, j is v-direction
 /// Control points are uniformly spaced on [0,1]: u_i = i/3 for i=0..3
@@ -34,9 +34,9 @@ namespace drifter {
 /// ```
 class CubicBezierBasis2D {
 public:
-    static constexpr int DEGREE = 3;    ///< Polynomial degree
-    static constexpr int N1D = 4;       ///< Control points per direction (degree + 1)
-    static constexpr int NDOF = 16;     ///< Total DOFs per element (4 x 4)
+    static constexpr int DEGREE = 3; ///< Polynomial degree
+    static constexpr int N1D = 4; ///< Control points per direction (degree + 1)
+    static constexpr int NDOF = 16; ///< Total DOFs per element (4 x 4)
 
     /// @brief Construct cubic Bezier basis
     CubicBezierBasis2D();
@@ -64,7 +64,7 @@ public:
     static int dof_index(int i, int j) { return i + N1D * j; }
 
     /// Extract (i, j) from linear DOF index
-    static void dof_ij(int dof, int& i, int& j) {
+    static void dof_ij(int dof, int &i, int &j) {
         j = dof / N1D;
         i = dof % N1D;
     }
@@ -120,8 +120,8 @@ public:
     VecX evaluate_d2uv(Real u, Real v) const;
 
     /// Evaluate all second derivatives at once
-    void evaluate_second_derivatives(Real u, Real v,
-                                     VecX& d2u, VecX& d2v, VecX& d2uv) const;
+    void evaluate_second_derivatives(
+        Real u, Real v, VecX &d2u, VecX &d2v, VecX &d2uv) const;
 
     // =========================================================================
     // Mixed partial (for C¹ constraint z_uv)
@@ -163,18 +163,20 @@ public:
     // Scalar interpolation
     // =========================================================================
 
-    /// Evaluate scalar field at (u,v) given control point values using de Casteljau
+    /// Evaluate scalar field at (u,v) given control point values using de
+    /// Casteljau
     /// @param coeffs 16 control point values indexed as i + 4*j
     /// @param u, v Parameters in [0, 1]^2
     /// @return Interpolated scalar value
-    Real evaluate_scalar(const VecX& coeffs, Real u, Real v) const;
+    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const;
 
     // =========================================================================
     // Corner and edge access (for constraint building)
     // =========================================================================
 
     /// Get DOF index for corner
-    /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1) in parameter space
+    /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1) in parameter
+    /// space
     int corner_dof(int corner_id) const;
 
     /// Get corner ID for a DOF index (inverse of corner_dof)
@@ -183,7 +185,8 @@ public:
     int dof_to_corner(int dof) const;
 
     /// Get DOF indices along an edge (4 DOFs)
-    /// @param edge_id 0: u=0 (left), 1: u=1 (right), 2: v=0 (bottom), 3: v=1 (top)
+    /// @param edge_id 0: u=0 (left), 1: u=1 (right), 2: v=0 (bottom), 3: v=1
+    /// (top)
     std::vector<int> edge_dofs(int edge_id) const;
 
     /// Get (u, v) parameter values at corner
@@ -205,7 +208,7 @@ public:
 
 private:
     /// Precomputed binomial coefficients C(n,k) for n <= 2*DEGREE
-    std::array<std::array<Real, 2*DEGREE+1>, 2*DEGREE+1> binomial_;
+    std::array<std::array<Real, 2 * DEGREE + 1>, 2 * DEGREE + 1> binomial_;
 
     /// Initialize binomial coefficient table
     void compute_binomial_coefficients();
@@ -214,4 +217,4 @@ private:
     Real binom(int n, int k) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

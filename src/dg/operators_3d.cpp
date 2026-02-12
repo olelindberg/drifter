@@ -10,18 +10,14 @@ namespace drifter {
 // =============================================================================
 
 DG3DElementOperator::DG3DElementOperator(
-    const HexahedronBasis& basis,
-    const GaussQuadrature3D& quad)
-    : basis_(basis)
-    , quad_(quad)
-    , face_quads_{{
-        FaceQuadrature(0, basis.order()),
-        FaceQuadrature(1, basis.order()),
-        FaceQuadrature(2, basis.order()),
-        FaceQuadrature(3, basis.order()),
-        FaceQuadrature(4, basis.order()),
-        FaceQuadrature(5, basis.order())
-    }} {
+    const HexahedronBasis &basis, const GaussQuadrature3D &quad)
+    : basis_(basis), quad_(quad), face_quads_{
+                                      {FaceQuadrature(0, basis.order()),
+                                       FaceQuadrature(1, basis.order()),
+                                       FaceQuadrature(2, basis.order()),
+                                       FaceQuadrature(3, basis.order()),
+                                       FaceQuadrature(4, basis.order()),
+                                       FaceQuadrature(5, basis.order())}} {
 
     int nq = quad.size();
     int ndof_lgl = basis.num_dofs_velocity();
@@ -52,23 +48,24 @@ DG3DElementOperator::DG3DElementOperator(
     }
 }
 
-void DG3DElementOperator::mass(const VecX& u, VecX& Mu, bool use_lgl) const {
-    const MatX& M = use_lgl ? basis_.mass_lgl() : basis_.mass_gl();
+void DG3DElementOperator::mass(const VecX &u, VecX &Mu, bool use_lgl) const {
+    const MatX &M = use_lgl ? basis_.mass_lgl() : basis_.mass_gl();
     Mu = M * u;
 }
 
-void DG3DElementOperator::mass_inv(const VecX& u, VecX& Minv_u, bool use_lgl) const {
-    const MatX& Minv = use_lgl ? basis_.mass_inv_lgl() : basis_.mass_inv_gl();
+void DG3DElementOperator::mass_inv(
+    const VecX &u, VecX &Minv_u, bool use_lgl) const {
+    const MatX &Minv = use_lgl ? basis_.mass_inv_lgl() : basis_.mass_inv_gl();
     Minv_u = Minv * u;
 }
 
 void DG3DElementOperator::gradient_reference(
-    const VecX& u, MatX& grad_u, bool use_lgl) const {
+    const VecX &u, MatX &grad_u, bool use_lgl) const {
 
     int ndof = use_lgl ? basis_.num_dofs_velocity() : basis_.num_dofs_tracer();
-    const MatX& D_xi = use_lgl ? basis_.D_xi_lgl() : basis_.D_xi_gl();
-    const MatX& D_eta = use_lgl ? basis_.D_eta_lgl() : basis_.D_eta_gl();
-    const MatX& D_zeta = use_lgl ? basis_.D_zeta_lgl() : basis_.D_zeta_gl();
+    const MatX &D_xi = use_lgl ? basis_.D_xi_lgl() : basis_.D_xi_gl();
+    const MatX &D_eta = use_lgl ? basis_.D_eta_lgl() : basis_.D_eta_gl();
+    const MatX &D_zeta = use_lgl ? basis_.D_zeta_lgl() : basis_.D_zeta_gl();
 
     grad_u.resize(ndof, 3);
     grad_u.col(0) = D_xi * u;
@@ -77,21 +74,18 @@ void DG3DElementOperator::gradient_reference(
 }
 
 void DG3DElementOperator::divergence_reference(
-    const std::array<VecX, 3>& flux, VecX& div_flux, bool use_lgl) const {
+    const std::array<VecX, 3> &flux, VecX &div_flux, bool use_lgl) const {
 
-    const MatX& D_xi = use_lgl ? basis_.D_xi_lgl() : basis_.D_xi_gl();
-    const MatX& D_eta = use_lgl ? basis_.D_eta_lgl() : basis_.D_eta_gl();
-    const MatX& D_zeta = use_lgl ? basis_.D_zeta_lgl() : basis_.D_zeta_gl();
+    const MatX &D_xi = use_lgl ? basis_.D_xi_lgl() : basis_.D_xi_gl();
+    const MatX &D_eta = use_lgl ? basis_.D_eta_lgl() : basis_.D_eta_gl();
+    const MatX &D_zeta = use_lgl ? basis_.D_zeta_lgl() : basis_.D_zeta_gl();
 
     div_flux = D_xi * flux[0] + D_eta * flux[1] + D_zeta * flux[2];
 }
 
 void DG3DElementOperator::volume_integral(
-    const VecX& U,
-    const PhysicalFluxFunc& physical_flux,
-    const std::vector<Mat3>& jacobian,
-    const VecX& det_J,
-    VecX& rhs,
+    const VecX &U, const PhysicalFluxFunc &physical_flux,
+    const std::vector<Mat3> &jacobian, const VecX &det_J, VecX &rhs,
     bool use_lgl) const {
 
     int ndof = use_lgl ? basis_.num_dofs_velocity() : basis_.num_dofs_tracer();
@@ -99,13 +93,16 @@ void DG3DElementOperator::volume_integral(
 
     rhs = VecX::Zero(ndof);
 
-    const MatX& phi = use_lgl ? phi_at_quad_lgl_ : phi_at_quad_gl_;
-    const std::array<MatX, 3>& dphi = use_lgl ? dphi_at_quad_lgl_ : dphi_at_quad_gl_;
+    const MatX &phi = use_lgl ? phi_at_quad_lgl_ : phi_at_quad_gl_;
+    const std::array<MatX, 3> &dphi =
+        use_lgl ? dphi_at_quad_lgl_ : dphi_at_quad_gl_;
 
     for (int q = 0; q < nq; ++q) {
         // Interpolate solution to quadrature point
-        VecX U_q = phi.row(q).transpose();  // This is just basis values, need to multiply
-        Real u_val = phi.row(q) * U;  // Scalar case
+        VecX U_q =
+            phi.row(q)
+                .transpose(); // This is just basis values, need to multiply
+        Real u_val = phi.row(q) * U; // Scalar case
 
         VecX U_at_q(1);
         U_at_q(0) = u_val;
@@ -126,26 +123,21 @@ void DG3DElementOperator::volume_integral(
             // Contract with flux: grad_phi . F (sum over spatial dimensions)
             Real contrib = 0.0;
             for (int d = 0; d < 3; ++d) {
-                contrib += grad_phi_phys(d) * F[d](0, 0);  // Scalar flux
+                contrib += grad_phi_phys(d) * F[d](0, 0); // Scalar flux
             }
-            rhs(i) -= w * contrib;  // Negative for RHS (integration by parts)
+            rhs(i) -= w * contrib; // Negative for RHS (integration by parts)
         }
     }
 }
 
 void DG3DElementOperator::face_integral(
-    int face_id,
-    const VecX& U_interior,
-    const VecX& U_exterior,
-    const Vec3& normal,
-    const NumericalFluxFunc& numerical_flux,
-    const VecX& face_jacobian,
-    VecX& rhs,
-    bool use_lgl) const {
+    int face_id, const VecX &U_interior, const VecX &U_exterior,
+    const Vec3 &normal, const NumericalFluxFunc &numerical_flux,
+    const VecX &face_jacobian, VecX &rhs, bool use_lgl) const {
 
-    const FaceQuadrature& fquad = face_quads_[face_id];
-    const MatX& interp = use_lgl ? basis_.interp_to_face_lgl(face_id)
-                                  : basis_.interp_to_face_gl(face_id);
+    const FaceQuadrature &fquad = face_quads_[face_id];
+    const MatX &interp = use_lgl ? basis_.interp_to_face_lgl(face_id)
+                                 : basis_.interp_to_face_gl(face_id);
 
     int ndof = use_lgl ? basis_.num_dofs_velocity() : basis_.num_dofs_tracer();
     int nfq = fquad.size();
@@ -176,11 +168,8 @@ void DG3DElementOperator::face_integral(
 // =============================================================================
 
 DG3DIntegration::DG3DIntegration(int order, bool use_mortar)
-    : order_(order)
-    , use_mortar_(use_mortar)
-    , basis_(order)
-    , quad_(order, QuadratureType::GaussLegendre)
-    , elem_op_(basis_, quad_) {
+    : order_(order), use_mortar_(use_mortar), basis_(order),
+      quad_(order, QuadratureType::GaussLegendre), elem_op_(basis_, quad_) {
 
     if (use_mortar_) {
         mortar_manager_ = std::make_unique<MortarInterfaceManager>(order);
@@ -188,12 +177,10 @@ DG3DIntegration::DG3DIntegration(int order, bool use_mortar)
 }
 
 void DG3DIntegration::gradient(
-    const std::vector<VecX>& U,
-    const std::vector<std::vector<FaceConnection>>& face_connections,
-    const std::vector<BoundaryCondition>& bc,
-    std::vector<VecX>& grad_U_x,
-    std::vector<VecX>& grad_U_y,
-    std::vector<VecX>& grad_U_z) const {
+    const std::vector<VecX> &U,
+    const std::vector<std::vector<FaceConnection>> &face_connections,
+    const std::vector<BoundaryCondition> &bc, std::vector<VecX> &grad_U_x,
+    std::vector<VecX> &grad_U_y, std::vector<VecX> &grad_U_z) const {
 
     size_t num_elems = U.size();
     int ndof = basis_.num_dofs_velocity();
@@ -202,8 +189,8 @@ void DG3DIntegration::gradient(
     grad_U_y.resize(num_elems);
     grad_U_z.resize(num_elems);
 
-    // Volume contribution (element-local, parallelizable)
-    #pragma omp parallel for
+// Volume contribution (element-local, parallelizable)
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         MatX grad_ref;
         elem_op_.gradient_reference(U[e], grad_ref, true);
@@ -218,25 +205,24 @@ void DG3DIntegration::gradient(
         elem_op_.mass_inv(grad_U_z[e], grad_U_z[e], true);
     }
 
-    // Surface contribution (requires neighbor data, handle sequentially for now)
+    // Surface contribution (requires neighbor data, handle sequentially for
+    // now)
     // TODO: Implement face flux contributions for gradient
 }
 
 void DG3DIntegration::divergence(
-    const std::vector<VecX>& F_x,
-    const std::vector<VecX>& F_y,
-    const std::vector<VecX>& F_z,
-    const std::vector<std::vector<FaceConnection>>& face_connections,
-    const NumericalFluxFunc& numerical_flux,
-    const std::vector<BoundaryCondition>& bc,
-    std::vector<VecX>& div_F) const {
+    const std::vector<VecX> &F_x, const std::vector<VecX> &F_y,
+    const std::vector<VecX> &F_z,
+    const std::vector<std::vector<FaceConnection>> &face_connections,
+    const NumericalFluxFunc &numerical_flux,
+    const std::vector<BoundaryCondition> &bc, std::vector<VecX> &div_F) const {
 
     size_t num_elems = F_x.size();
 
     div_F.resize(num_elems);
 
-    // Volume contribution
-    #pragma omp parallel for
+// Volume contribution
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         std::array<VecX, 3> flux = {F_x[e], F_y[e], F_z[e]};
         elem_op_.divergence_reference(flux, div_F[e], true);
@@ -250,13 +236,11 @@ void DG3DIntegration::divergence(
 }
 
 void DG3DIntegration::compute_rhs(
-    const std::vector<VecX>& U,
-    const PhysicalFluxFunc& physical_flux,
-    const NumericalFluxFunc& numerical_flux,
-    const std::function<VecX(const VecX&, const Vec3&)>& source_term,
-    const std::vector<std::vector<FaceConnection>>& face_connections,
-    const std::vector<BoundaryCondition>& bc,
-    std::vector<VecX>& rhs) const {
+    const std::vector<VecX> &U, const PhysicalFluxFunc &physical_flux,
+    const NumericalFluxFunc &numerical_flux,
+    const std::function<VecX(const VecX &, const Vec3 &)> &source_term,
+    const std::vector<std::vector<FaceConnection>> &face_connections,
+    const std::vector<BoundaryCondition> &bc, std::vector<VecX> &rhs) const {
 
     size_t num_elems = U.size();
     int ndof = basis_.num_dofs_velocity();
@@ -268,15 +252,16 @@ void DG3DIntegration::compute_rhs(
         rhs[e] = VecX::Zero(ndof);
     }
 
-    // Volume contribution (parallelizable over elements)
-    #pragma omp parallel for
+// Volume contribution (parallelizable over elements)
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         // For now, use identity Jacobian (reference element = physical element)
         std::vector<Mat3> jacobian(quad_.size(), Mat3::Identity());
         VecX det_J = VecX::Ones(quad_.size());
 
         VecX vol_contrib;
-        elem_op_.volume_integral(U[e], physical_flux, jacobian, det_J, vol_contrib, true);
+        elem_op_.volume_integral(
+            U[e], physical_flux, jacobian, det_J, vol_contrib, true);
         rhs[e] += vol_contrib;
     }
 
@@ -284,7 +269,7 @@ void DG3DIntegration::compute_rhs(
     for (size_t e = 0; e < num_elems; ++e) {
         for (int f = 0; f < 6; ++f) {
             if (f < static_cast<int>(face_connections[e].size())) {
-                const FaceConnection& conn = face_connections[e][f];
+                const FaceConnection &conn = face_connections[e][f];
 
                 if (conn.is_boundary()) {
                     // Boundary face
@@ -294,25 +279,24 @@ void DG3DIntegration::compute_rhs(
                     // TODO: Compute interface flux with neighbor
                 } else if (use_mortar_) {
                     // Non-conforming interface with mortar
-                    compute_interface_flux_nonconforming(conn, U, numerical_flux, rhs);
+                    compute_interface_flux_nonconforming(
+                        conn, U, numerical_flux, rhs);
                 }
             }
         }
     }
 
-    // Apply inverse mass matrix
-    #pragma omp parallel for
+// Apply inverse mass matrix
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         elem_op_.mass_inv(rhs[e], rhs[e], true);
     }
 }
 
 void DG3DIntegration::laplacian(
-    const std::vector<VecX>& U,
-    Real diffusivity,
-    const std::vector<std::vector<FaceConnection>>& face_connections,
-    const std::vector<BoundaryCondition>& bc,
-    std::vector<VecX>& lap_U) const {
+    const std::vector<VecX> &U, Real diffusivity,
+    const std::vector<std::vector<FaceConnection>> &face_connections,
+    const std::vector<BoundaryCondition> &bc, std::vector<VecX> &lap_U) const {
 
     // Compute gradient first
     std::vector<VecX> grad_x, grad_y, grad_z;
@@ -326,14 +310,16 @@ void DG3DIntegration::laplacian(
     }
 
     // Compute divergence of gradient
-    auto central_flux = [](const VecX& U_L, const VecX& U_R, const Vec3& n) {
+    auto central_flux = [](const VecX &U_L, const VecX &U_R, const Vec3 &n) {
         return 0.5 * (U_L + U_R);
     };
 
-    divergence(grad_x, grad_y, grad_z, face_connections, central_flux, bc, lap_U);
+    divergence(
+        grad_x, grad_y, grad_z, face_connections, central_flux, bc, lap_U);
 }
 
-void DG3DIntegration::register_nonconforming_interface(const FaceConnection& conn) {
+void DG3DIntegration::register_nonconforming_interface(
+    const FaceConnection &conn) {
     if (use_mortar_ && mortar_manager_) {
         mortar_manager_->register_interface(conn);
     }
@@ -346,25 +332,24 @@ void DG3DIntegration::build_mortar_operators() {
 }
 
 void DG3DIntegration::compute_interface_flux_conforming(
-    int elem_left, int face_left,
-    int elem_right, int face_right,
-    const VecX& U_left, const VecX& U_right,
-    const Vec3& normal,
-    const NumericalFluxFunc& numerical_flux,
-    VecX& rhs_left, VecX& rhs_right) const {
+    int elem_left, int face_left, int elem_right, int face_right,
+    const VecX &U_left, const VecX &U_right, const Vec3 &normal,
+    const NumericalFluxFunc &numerical_flux, VecX &rhs_left,
+    VecX &rhs_right) const {
 
     ConformingInterface iface(basis_, face_left, face_right);
 
     // Extract face DOFs
-    const MatX& interp_left = basis_.interp_to_face_lgl(face_left);
-    const MatX& interp_right = basis_.interp_to_face_lgl(face_right);
+    const MatX &interp_left = basis_.interp_to_face_lgl(face_left);
+    const MatX &interp_right = basis_.interp_to_face_lgl(face_right);
 
     VecX U_left_face = interp_left * U_left;
     VecX U_right_face = interp_right * U_right;
 
     VecX rhs_left_face, rhs_right_face;
-    iface.compute_flux(numerical_flux, U_left_face, U_right_face, normal,
-                       rhs_left_face, rhs_right_face);
+    iface.compute_flux(
+        numerical_flux, U_left_face, U_right_face, normal, rhs_left_face,
+        rhs_right_face);
 
     // Lift back to volume DOFs
     rhs_left = interp_left.transpose() * rhs_left_face;
@@ -372,20 +357,20 @@ void DG3DIntegration::compute_interface_flux_conforming(
 }
 
 void DG3DIntegration::compute_interface_flux_nonconforming(
-    const FaceConnection& conn,
-    const std::vector<VecX>& U,
-    const NumericalFluxFunc& numerical_flux,
-    std::vector<VecX>& rhs) const {
+    const FaceConnection &conn, const std::vector<VecX> &U,
+    const NumericalFluxFunc &numerical_flux, std::vector<VecX> &rhs) const {
 
-    if (!mortar_manager_) return;
+    if (!mortar_manager_)
+        return;
 
-    const MortarSpace* mortar = mortar_manager_->get_mortar(
-        conn.coarse_elem, conn.coarse_face_id);
+    const MortarSpace *mortar =
+        mortar_manager_->get_mortar(conn.coarse_elem, conn.coarse_face_id);
 
-    if (!mortar) return;
+    if (!mortar)
+        return;
 
     // Extract coarse face DOFs
-    const MatX& interp_coarse = basis_.interp_to_face_lgl(conn.coarse_face_id);
+    const MatX &interp_coarse = basis_.interp_to_face_lgl(conn.coarse_face_id);
     VecX U_coarse_face = interp_coarse * U[conn.coarse_elem];
 
     // Extract fine face DOFs
@@ -393,7 +378,7 @@ void DG3DIntegration::compute_interface_flux_nonconforming(
     for (size_t i = 0; i < conn.fine_elems.size(); ++i) {
         Index fine_elem = conn.fine_elems[i];
         int fine_face_id = conn.fine_face_ids[i];
-        const MatX& interp_fine = basis_.interp_to_face_lgl(fine_face_id);
+        const MatX &interp_fine = basis_.interp_to_face_lgl(fine_face_id);
         U_fine_faces[i] = interp_fine * U[fine_elem];
     }
 
@@ -405,8 +390,9 @@ void DG3DIntegration::compute_interface_flux_nonconforming(
     // Compute mortar flux
     VecX rhs_coarse_face;
     std::vector<VecX> rhs_fine_faces;
-    mortar->compute_mortar_flux(numerical_flux, U_coarse_face, U_fine_faces,
-                                 normal, rhs_coarse_face, rhs_fine_faces);
+    mortar->compute_mortar_flux(
+        numerical_flux, U_coarse_face, U_fine_faces, normal, rhs_coarse_face,
+        rhs_fine_faces);
 
     // Lift back to volume DOFs
     rhs[conn.coarse_elem] += interp_coarse.transpose() * rhs_coarse_face;
@@ -414,59 +400,54 @@ void DG3DIntegration::compute_interface_flux_nonconforming(
     for (size_t i = 0; i < conn.fine_elems.size(); ++i) {
         Index fine_elem = conn.fine_elems[i];
         int fine_face_id = conn.fine_face_ids[i];
-        const MatX& interp_fine = basis_.interp_to_face_lgl(fine_face_id);
+        const MatX &interp_fine = basis_.interp_to_face_lgl(fine_face_id);
         rhs[fine_elem] += interp_fine.transpose() * rhs_fine_faces[i];
     }
 }
 
 void DG3DIntegration::compute_boundary_flux(
-    int elem, int face_id,
-    const VecX& U_interior,
-    const Vec3& normal,
-    const BoundaryCondition& bc,
-    Real time,
-    const Vec3& face_center,
-    const NumericalFluxFunc& numerical_flux,
-    VecX& rhs) const {
+    int elem, int face_id, const VecX &U_interior, const Vec3 &normal,
+    const BoundaryCondition &bc, Real time, const Vec3 &face_center,
+    const NumericalFluxFunc &numerical_flux, VecX &rhs) const {
 
     // Extract face DOFs
-    const MatX& interp = basis_.interp_to_face_lgl(face_id);
+    const MatX &interp = basis_.interp_to_face_lgl(face_id);
     VecX U_face = interp * U_interior;
 
     // Compute exterior state based on BC type
-    VecX U_exterior = U_face;  // Default: mirror state
+    VecX U_exterior = U_face; // Default: mirror state
 
     switch (bc.type) {
-        case BCType::Dirichlet:
-            if (bc.value_func) {
-                U_exterior = bc.value_func(face_center, time);
-            }
-            break;
+    case BCType::Dirichlet:
+        if (bc.value_func) {
+            U_exterior = bc.value_func(face_center, time);
+        }
+        break;
 
-        case BCType::Neumann:
-            // For Neumann, use interior state (flux is specified separately)
-            U_exterior = U_face;
-            break;
+    case BCType::Neumann:
+        // For Neumann, use interior state (flux is specified separately)
+        U_exterior = U_face;
+        break;
 
-        case BCType::Outflow:
-            // Extrapolate interior state
-            U_exterior = U_face;
-            break;
+    case BCType::Outflow:
+        // Extrapolate interior state
+        U_exterior = U_face;
+        break;
 
-        case BCType::NoSlip:
-            // For velocity, negate to enforce u = 0
-            U_exterior = -U_face;
-            break;
+    case BCType::NoSlip:
+        // For velocity, negate to enforce u = 0
+        U_exterior = -U_face;
+        break;
 
-        case BCType::FreeSlip:
-            // Mirror normal component, keep tangential
-            // For scalar, just use interior
-            U_exterior = U_face;
-            break;
+    case BCType::FreeSlip:
+        // Mirror normal component, keep tangential
+        // For scalar, just use interior
+        U_exterior = U_face;
+        break;
 
-        default:
-            U_exterior = U_face;
-            break;
+    default:
+        U_exterior = U_face;
+        break;
     }
 
     // Compute numerical flux at face quadrature points
@@ -494,9 +475,8 @@ void DG3DIntegration::compute_boundary_flux(
 // =============================================================================
 
 GeometricFactors GeometricFactors::compute(
-    const HexahedronBasis& basis,
-    const GaussQuadrature3D& quad,
-    const std::vector<Vec3>& physical_nodes) {
+    const HexahedronBasis &basis, const GaussQuadrature3D &quad,
+    const std::vector<Vec3> &physical_nodes) {
 
     GeometricFactors gf;
     int nq = quad.size();
@@ -545,21 +525,13 @@ GeometricFactors GeometricFactors::compute(
 // =============================================================================
 
 SigmaCoordinateOperators::SigmaCoordinateOperators(
-    const HexahedronBasis& basis,
-    const GaussQuadrature3D& quad)
-    : basis_(basis), quad_(quad) {
-}
+    const HexahedronBasis &basis, const GaussQuadrature3D &quad)
+    : basis_(basis), quad_(quad) {}
 
 void SigmaCoordinateOperators::horizontal_gradient(
-    const VecX& U,
-    const VecX& eta,
-    const VecX& h,
-    const VecX& deta_dx,
-    const VecX& deta_dy,
-    const VecX& dh_dx,
-    const VecX& dh_dy,
-    VecX& dU_dx,
-    VecX& dU_dy) const {
+    const VecX &U, const VecX &eta, const VecX &h, const VecX &deta_dx,
+    const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy, VecX &dU_dx,
+    VecX &dU_dy) const {
 
     int ndof = basis_.num_dofs_velocity();
 
@@ -570,7 +542,8 @@ void SigmaCoordinateOperators::horizontal_gradient(
 
     // Apply sigma-coordinate transformation
     // du/dx|_z = du/dx|_sigma - (dsigma/dx) * du/dsigma
-    // dsigma/dx = -sigma/H * (deta/dx + dh/dx) - 1/H * dh/dx  (for sigma in [-1,0])
+    // dsigma/dx = -sigma/H * (deta/dx + dh/dx) - 1/H * dh/dx  (for sigma in
+    // [-1,0])
 
     dU_dx = dU_dxi;
     dU_dy = dU_deta;
@@ -583,10 +556,7 @@ void SigmaCoordinateOperators::horizontal_gradient(
 }
 
 void SigmaCoordinateOperators::vertical_gradient(
-    const VecX& U,
-    const VecX& eta,
-    const VecX& h,
-    VecX& dU_dz) const {
+    const VecX &U, const VecX &eta, const VecX &h, VecX &dU_dz) const {
 
     // dU/dz = (1/H) * dU/dsigma
     VecX dU_dsigma = basis_.D_zeta_lgl() * U;
@@ -598,11 +568,8 @@ void SigmaCoordinateOperators::vertical_gradient(
 }
 
 void SigmaCoordinateOperators::sigma_divergence(
-    const VecX& Hu,
-    const VecX& Hv,
-    const VecX& omega,
-    const VecX& H,
-    VecX& div) const {
+    const VecX &Hu, const VecX &Hv, const VecX &omega, const VecX &H,
+    VecX &div) const {
 
     // Divergence in sigma coordinates:
     // div = d(Hu)/dx + d(Hv)/dy + d(omega)/dsigma
@@ -615,26 +582,18 @@ void SigmaCoordinateOperators::sigma_divergence(
 }
 
 void SigmaCoordinateOperators::update_sigma_metrics(
-    const VecX& eta,
-    const VecX& h,
-    const VecX& deta_dx,
-    const VecX& deta_dy,
-    const VecX& dh_dx,
-    const VecX& dh_dy) {
+    const VecX &eta, const VecX &h, const VecX &deta_dx, const VecX &deta_dy,
+    const VecX &dh_dx, const VecX &dh_dy) {
 
     // Call the time-dependent version with zero time derivative
     VecX zero_dt = VecX::Zero(eta.size());
-    update_sigma_metrics_with_time(eta, h, deta_dx, deta_dy, dh_dx, dh_dy, zero_dt);
+    update_sigma_metrics_with_time(
+        eta, h, deta_dx, deta_dy, dh_dx, dh_dy, zero_dt);
 }
 
 void SigmaCoordinateOperators::update_sigma_metrics_with_time(
-    const VecX& eta,
-    const VecX& h,
-    const VecX& deta_dx,
-    const VecX& deta_dy,
-    const VecX& dh_dx,
-    const VecX& dh_dy,
-    const VecX& deta_dt) {
+    const VecX &eta, const VecX &h, const VecX &deta_dx, const VecX &deta_dy,
+    const VecX &dh_dx, const VecX &dh_dy, const VecX &deta_dt) {
 
     int ndof = static_cast<int>(eta.size());
     H_.resize(ndof);
@@ -645,14 +604,15 @@ void SigmaCoordinateOperators::update_sigma_metrics_with_time(
     sigma_.resize(ndof);
 
     // Get sigma values at DOF points
-    const auto& nodes = basis_.lgl_nodes();
+    const auto &nodes = basis_.lgl_nodes();
 
     for (int i = 0; i < ndof; ++i) {
         H_(i) = eta(i) + h(i);
         H_inv_(i) = (H_(i) > 1e-10) ? 1.0 / H_(i) : 0.0;
 
-        // Sigma value at this node (zeta coordinate in [-1,1] maps to sigma in [-1,0])
-        sigma_(i) = 0.5 * (nodes[i](2) - 1.0);  // Map [-1,1] -> [-1,0]
+        // Sigma value at this node (zeta coordinate in [-1,1] maps to sigma in
+        // [-1,0])
+        sigma_(i) = 0.5 * (nodes[i](2) - 1.0); // Map [-1,1] -> [-1,0]
 
         // dH/dx = deta/dx + dh/dx
         Real dH_dx = deta_dx(i) + dh_dx(i);
@@ -669,7 +629,7 @@ void SigmaCoordinateOperators::update_sigma_metrics_with_time(
 }
 
 void SigmaCoordinateOperators::ale_correction(
-    const VecX& U, const VecX& w_mesh, VecX& correction) const {
+    const VecX &U, const VecX &w_mesh, VecX &correction) const {
 
     // Compute dU/dz in sigma coordinates
     // dU/dz = H_inv * dU/dsigma
@@ -686,11 +646,8 @@ void SigmaCoordinateOperators::ale_correction(
 }
 
 void SigmaCoordinateOperators::material_derivative(
-    const VecX& U,
-    const VecX& dU_dt,
-    const VecX& u, const VecX& v,
-    const VecX& omega, const VecX& w_mesh,
-    VecX& material_deriv) const {
+    const VecX &U, const VecX &dU_dt, const VecX &u, const VecX &v,
+    const VecX &omega, const VecX &w_mesh, VecX &material_deriv) const {
 
     int ndof = static_cast<int>(U.size());
 
@@ -708,16 +665,15 @@ void SigmaCoordinateOperators::material_derivative(
 
         // Vertical gradient in sigma space
         // The effective sigma velocity in moving frame is:
-        // omega_eff = omega - w_mesh / H  (sigma velocity minus mesh motion contribution)
+        // omega_eff = omega - w_mesh / H  (sigma velocity minus mesh motion
+        // contribution)
         Real omega_eff = omega(i) - w_mesh(i) * H_inv_(i);
 
         // Full material derivative:
         // DU/Dt = dU/dt + u*dU/dx + v*dU/dy + omega_eff * dU/dsigma
-        material_deriv(i) = dU_dt(i)
-                          + u(i) * dU_dx
-                          + v(i) * dU_dy
-                          + omega_eff * dU_dsigma(i);
+        material_deriv(i) =
+            dU_dt(i) + u(i) * dU_dx + v(i) * dU_dy + omega_eff * dU_dsigma(i);
     }
 }
 
-}  // namespace drifter
+} // namespace drifter

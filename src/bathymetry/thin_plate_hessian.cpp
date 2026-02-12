@@ -5,12 +5,11 @@
 namespace drifter {
 
 ThinPlateHessian::ThinPlateHessian(int ngauss, Real gradient_weight)
-    : ngauss_(ngauss)
-    , gradient_weight_(gradient_weight)
-    , basis_(std::make_unique<BezierBasis2D>())
-{
+    : ngauss_(ngauss), gradient_weight_(gradient_weight),
+      basis_(std::make_unique<BezierBasis2D>()) {
     if (ngauss < 3) {
-        throw std::invalid_argument("ThinPlateHessian: need at least 3 Gauss points");
+        throw std::invalid_argument(
+            "ThinPlateHessian: need at least 3 Gauss points");
     }
 
     compute_gauss_quadrature();
@@ -25,28 +24,29 @@ void ThinPlateHessian::compute_gauss_quadrature() {
     // Otherwise compute using Newton's method on Legendre polynomials
 
     gauss_nodes_.resize(ngauss_);
-    VecX weights_ref(ngauss_);  // Weights on [-1, 1]
+    VecX weights_ref(ngauss_); // Weights on [-1, 1]
 
     // Gauss-Legendre nodes and weights for common orders
     if (ngauss_ == 3) {
-        gauss_nodes_ << 0.5 - std::sqrt(3.0/5.0)/2.0,
-                        0.5,
-                        0.5 + std::sqrt(3.0/5.0)/2.0;
-        weights_ref << 5.0/9.0, 8.0/9.0, 5.0/9.0;
+        gauss_nodes_ << 0.5 - std::sqrt(3.0 / 5.0) / 2.0, 0.5,
+            0.5 + std::sqrt(3.0 / 5.0) / 2.0;
+        weights_ref << 5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0;
     } else if (ngauss_ == 4) {
-        Real a = std::sqrt(3.0/7.0 - 2.0/7.0 * std::sqrt(6.0/5.0));
-        Real b = std::sqrt(3.0/7.0 + 2.0/7.0 * std::sqrt(6.0/5.0));
+        Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
         Real wa = (18.0 + std::sqrt(30.0)) / 36.0;
         Real wb = (18.0 - std::sqrt(30.0)) / 36.0;
-        gauss_nodes_ << (1.0 - b)/2.0, (1.0 - a)/2.0, (1.0 + a)/2.0, (1.0 + b)/2.0;
+        gauss_nodes_ << (1.0 - b) / 2.0, (1.0 - a) / 2.0, (1.0 + a) / 2.0,
+            (1.0 + b) / 2.0;
         weights_ref << wb, wa, wa, wb;
     } else if (ngauss_ == 5) {
-        Real a = std::sqrt(5.0 - 2.0*std::sqrt(10.0/7.0)) / 3.0;
-        Real b = std::sqrt(5.0 + 2.0*std::sqrt(10.0/7.0)) / 3.0;
-        Real wa = (322.0 + 13.0*std::sqrt(70.0)) / 900.0;
-        Real wb = (322.0 - 13.0*std::sqrt(70.0)) / 900.0;
-        gauss_nodes_ << (1.0 - b)/2.0, (1.0 - a)/2.0, 0.5, (1.0 + a)/2.0, (1.0 + b)/2.0;
-        weights_ref << wb, wa, 128.0/225.0, wa, wb;
+        Real a = std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0;
+        Real b = std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0;
+        Real wa = (322.0 + 13.0 * std::sqrt(70.0)) / 900.0;
+        Real wb = (322.0 - 13.0 * std::sqrt(70.0)) / 900.0;
+        gauss_nodes_ << (1.0 - b) / 2.0, (1.0 - a) / 2.0, 0.5, (1.0 + a) / 2.0,
+            (1.0 + b) / 2.0;
+        weights_ref << wb, wa, 128.0 / 225.0, wa, wb;
     } else if (ngauss_ == 6) {
         // 6-point Gauss-Legendre on [-1, 1]
         Real x1 = 0.6612093864662645;
@@ -57,16 +57,18 @@ void ThinPlateHessian::compute_gauss_quadrature() {
         Real w3 = 0.1713244923791704;
 
         // Map to [0, 1]: u = (x + 1) / 2
-        gauss_nodes_ << (1.0 - x3)/2.0, (1.0 - x1)/2.0, (1.0 - x2)/2.0,
-                        (1.0 + x2)/2.0, (1.0 + x1)/2.0, (1.0 + x3)/2.0;
+        gauss_nodes_ << (1.0 - x3) / 2.0, (1.0 - x1) / 2.0, (1.0 - x2) / 2.0,
+            (1.0 + x2) / 2.0, (1.0 + x1) / 2.0, (1.0 + x3) / 2.0;
         weights_ref << w3, w1, w2, w2, w1, w3;
     } else {
         // Generic computation using Newton iteration on Legendre polynomials
         // (For production, would use a more robust library routine)
-        throw std::invalid_argument("ThinPlateHessian: only ngauss 3-6 supported");
+        throw std::invalid_argument(
+            "ThinPlateHessian: only ngauss 3-6 supported");
     }
 
-    // Convert weights from [-1,1] to [0,1]: multiply by 0.5 (Jacobian of mapping)
+    // Convert weights from [-1,1] to [0,1]: multiply by 0.5 (Jacobian of
+    // mapping)
     gauss_weights_.resize(ngauss_ * ngauss_);
     for (int j = 0; j < ngauss_; ++j) {
         for (int i = 0; i < ngauss_; ++i) {
@@ -154,23 +156,26 @@ void ThinPlateHessian::build_hessian() {
     H_v_v_ = 0.5 * (H_v_v_ + H_v_v_.transpose());
 }
 
-Real ThinPlateHessian::energy(const VecX& coeffs) const {
+Real ThinPlateHessian::energy(const VecX &coeffs) const {
     if (coeffs.size() != BezierBasis2D::NDOF) {
-        throw std::invalid_argument("ThinPlateHessian::energy: coeffs must have 36 elements");
+        throw std::invalid_argument(
+            "ThinPlateHessian::energy: coeffs must have 36 elements");
     }
     return coeffs.transpose() * H_ * coeffs;
 }
 
-VecX ThinPlateHessian::gradient(const VecX& coeffs) const {
+VecX ThinPlateHessian::gradient(const VecX &coeffs) const {
     if (coeffs.size() != BezierBasis2D::NDOF) {
-        throw std::invalid_argument("ThinPlateHessian::gradient: coeffs must have 36 elements");
+        throw std::invalid_argument(
+            "ThinPlateHessian::gradient: coeffs must have 36 elements");
     }
     // Gradient of x^T H x is 2 H x (since H is symmetric)
     return 2.0 * H_ * coeffs;
 }
 
 MatX ThinPlateHessian::scaled_hessian(Real dx, Real dy) const {
-    // For a physical element with dimensions (dx, dy), the thin plate energy is:
+    // For a physical element with dimensions (dx, dy), the thin plate energy
+    // is:
     //
     // E_phys = integral_{physical} [(z_xx + z_yy)^2 + 2*z_xy^2] dx dy
     //
@@ -181,11 +186,14 @@ MatX ThinPlateHessian::scaled_hessian(Real dx, Real dy) const {
     //   z_xy = z_uv / (dx * dy)
     //   dx dy = dx * dy (Jacobian)
     //
-    // E_phys = integral_{[0,1]^2} [(z_uu/dx^2 + z_vv/dy^2)^2 + 2*(z_uv/(dx*dy))^2] * dx*dy du dv
-    //        = dx*dy * integral [(z_uu/dx^2 + z_vv/dy^2)^2 + 2*(z_uv)^2/(dx*dy)^2] du dv
+    // E_phys = integral_{[0,1]^2} [(z_uu/dx^2 + z_vv/dy^2)^2 +
+    // 2*(z_uv/(dx*dy))^2] * dx*dy du dv
+    //        = dx*dy * integral [(z_uu/dx^2 + z_vv/dy^2)^2 +
+    //        2*(z_uv)^2/(dx*dy)^2] du dv
     //
     // Let's expand:
-    //   (z_uu/dx^2 + z_vv/dy^2)^2 = z_uu^2/dx^4 + 2*z_uu*z_vv/(dx^2*dy^2) + z_vv^2/dy^4
+    //   (z_uu/dx^2 + z_vv/dy^2)^2 = z_uu^2/dx^4 + 2*z_uu*z_vv/(dx^2*dy^2) +
+    //   z_vv^2/dy^4
     //
     // E_phys = dx*dy * [ (1/dx^4)*integral[z_uu^2]
     //                  + 2/(dx^2*dy^2)*integral[z_uu*z_vv]
@@ -198,7 +206,8 @@ MatX ThinPlateHessian::scaled_hessian(Real dx, Real dy) const {
     //
     // Note: The cross term (H_uu_vv + H_uu_vv^T) has coefficient 1, not 2.
     // The factor of 2 in "2*z_uu*z_vv" from expanding (z_uu + z_vv)^2 is
-    // absorbed into the symmetrization: 2*c^T*H_uu_vv*c = c^T*(H_uu_vv+H_uu_vv^T)*c
+    // absorbed into the symmetrization: 2*c^T*H_uu_vv*c =
+    // c^T*(H_uu_vv+H_uu_vv^T)*c
     //
     // For physical scaling, we need:
     //   H_phys = (dy/dx^3) * H_uu_uu + (dx/dy^3) * H_vv_vv
@@ -240,10 +249,9 @@ MatX ThinPlateHessian::scaled_hessian(Real dx, Real dy) const {
     Real scale_uu_vv = 1.0 / (dx * dy);
     Real scale_uv_uv = 2.0 / (dx * dy);
 
-    MatX H_scaled = scale_uu_uu * H_uu_uu
-                  + scale_vv_vv * H_vv_vv
-                  + scale_uu_vv * (H_uu_vv + H_uu_vv.transpose())
-                  + scale_uv_uv * H_uv_uv;
+    MatX H_scaled = scale_uu_uu * H_uu_uu + scale_vv_vv * H_vv_vv +
+                    scale_uu_vv * (H_uu_vv + H_uu_vv.transpose()) +
+                    scale_uv_uv * H_uv_uv;
 
     // Add gradient penalty with proper physical scaling
     // Gradient energy: E_grad = integral[z_x^2 + z_y^2] dx dy
@@ -259,4 +267,4 @@ MatX ThinPlateHessian::scaled_hessian(Real dx, Real dy) const {
     return 0.5 * (H_scaled + H_scaled.transpose());
 }
 
-}  // namespace drifter
+} // namespace drifter

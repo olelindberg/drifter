@@ -16,8 +16,8 @@
 // Conversion from Lagrange to Bernstein:
 //   VecX bernstein_coeffs = lagrange_to_bernstein(order) * lagrange_coeffs;
 
-#include "core/types.hpp"
 #include "bathymetry/quintic_basis_2d.hpp"
+#include "core/types.hpp"
 #include <memory>
 #include <vector>
 
@@ -25,11 +25,14 @@ namespace drifter {
 
 /// @brief Compute binomial coefficient C(n, k)
 inline Real binomial(int n, int k) {
-    if (k < 0 || k > n) return 0.0;
-    if (k == 0 || k == n) return 1.0;
+    if (k < 0 || k > n)
+        return 0.0;
+    if (k == 0 || k == n)
+        return 1.0;
 
     // Use symmetry: C(n,k) = C(n, n-k)
-    if (k > n - k) k = n - k;
+    if (k > n - k)
+        k = n - k;
 
     Real result = 1.0;
     for (int i = 0; i < k; ++i) {
@@ -72,18 +75,19 @@ public:
     /// @return Vector of derivative values dB_i/dxi
     VecX evaluate_derivative(Real xi) const;
 
-    /// @brief Get conversion matrix from Lagrange (at LGL nodes) to Bernstein coefficients
+    /// @brief Get conversion matrix from Lagrange (at LGL nodes) to Bernstein
+    /// coefficients
     /// @return Matrix M such that bernstein_coeffs = M * lagrange_coeffs
-    const MatX& lagrange_to_bernstein_matrix() const { return L2B_; }
+    const MatX &lagrange_to_bernstein_matrix() const { return L2B_; }
 
     /// @brief Get conversion matrix from Bernstein to Lagrange coefficients
     /// @return Matrix M such that lagrange_coeffs = M * bernstein_coeffs
-    const MatX& bernstein_to_lagrange_matrix() const { return B2L_; }
+    const MatX &bernstein_to_lagrange_matrix() const { return B2L_; }
 
 private:
     int order_;
-    MatX L2B_;  // Lagrange to Bernstein conversion
-    MatX B2L_;  // Bernstein to Lagrange conversion
+    MatX L2B_; // Lagrange to Bernstein conversion
+    MatX B2L_; // Bernstein to Lagrange conversion
 
     void build_conversion_matrices();
 };
@@ -104,7 +108,7 @@ public:
     /// @brief Evaluate all 3D Bernstein basis functions at a point
     /// @param xi Reference coordinates (xi, eta, zeta) in [-1, 1]^3
     /// @return Vector of basis function values
-    VecX evaluate(const Vec3& xi) const;
+    VecX evaluate(const Vec3 &xi) const;
 
     /// @brief Evaluate on bottom face (zeta = -1), returning 2D basis values
     /// @param xi, eta Reference coordinates in [-1, 1]^2
@@ -112,25 +116,25 @@ public:
     VecX evaluate_bottom_face(Real xi, Real eta) const;
 
     /// @brief Get conversion matrix from 3D Lagrange to Bernstein
-    const MatX& lagrange_to_bernstein_matrix() const { return L2B_3d_; }
+    const MatX &lagrange_to_bernstein_matrix() const { return L2B_3d_; }
 
     /// @brief Access 1D basis
-    const BernsteinBasis1D& basis_1d() const { return basis_1d_; }
+    const BernsteinBasis1D &basis_1d() const { return basis_1d_; }
 
 private:
     int order_;
     int num_dofs_;
     BernsteinBasis1D basis_1d_;
-    MatX L2B_3d_;  // 3D Lagrange to Bernstein conversion
+    MatX L2B_3d_; // 3D Lagrange to Bernstein conversion
 
     void build_3d_conversion_matrix();
 };
 
 /// @brief Interpolation method for seabed surface
 enum class SeabedInterpolation {
-    Lagrange,   // Standard Lagrange interpolation (may overshoot)
-    Bernstein,  // Bernstein basis with convex hull property (bounded)
-    Quintic     // Quintic Lagrange basis (order 5) for C² continuity
+    Lagrange,  // Standard Lagrange interpolation (may overshoot)
+    Bernstein, // Bernstein basis with convex hull property (bounded)
+    Quintic    // Quintic Lagrange basis (order 5) for C² continuity
 };
 
 /// @brief Seabed interpolator with selectable basis
@@ -142,30 +146,32 @@ public:
     /// @brief Construct interpolator
     /// @param order Polynomial order
     /// @param method Interpolation method (Lagrange or Bernstein)
-    SeabedInterpolator(int order, SeabedInterpolation method = SeabedInterpolation::Bernstein);
+    SeabedInterpolator(
+        int order, SeabedInterpolation method = SeabedInterpolation::Bernstein);
 
     /// @brief Interpolate 3D coordinates on bottom face
     /// @param coords Interleaved coordinates [x0,y0,z0, x1,y1,z1, ...] at DOFs
     /// @param xi, eta Reference coordinates on bottom face [-1,1]^2
     /// @return Interpolated (x, y, z) point
-    Vec3 evaluate_point(const VecX& coords, Real xi, Real eta) const;
+    Vec3 evaluate_point(const VecX &coords, Real xi, Real eta) const;
 
     /// @brief Interpolate scalar field on bottom face
     /// @param data Scalar values at DOFs
     /// @param xi, eta Reference coordinates on bottom face [-1,1]^2
     /// @return Interpolated scalar value
-    Real evaluate_scalar(const VecX& data, Real xi, Real eta) const;
+    Real evaluate_scalar(const VecX &data, Real xi, Real eta) const;
 
-    /// @brief Evaluate 2D scalar field at a point (only bottom face, no z-dependence)
+    /// @brief Evaluate 2D scalar field at a point (only bottom face, no
+    /// z-dependence)
     /// @param data_2d Scalar values at 2D DOFs (n1d x n1d)
     /// @param xi, eta Reference coordinates [-1,1]^2
     /// @return Interpolated scalar value
-    Real evaluate_scalar_2d(const VecX& data_2d, Real xi, Real eta) const;
+    Real evaluate_scalar_2d(const VecX &data_2d, Real xi, Real eta) const;
 
     /// @brief Convert Lagrange DOF values to Bernstein control points
     /// @param lagrange_data Data at Lagrange DOF nodes
     /// @return Bernstein control point values
-    VecX to_bernstein(const VecX& lagrange_data) const;
+    VecX to_bernstein(const VecX &lagrange_data) const;
 
     /// @brief Get the interpolation method
     SeabedInterpolation method() const { return method_; }
@@ -174,7 +180,7 @@ public:
     int order() const { return order_; }
 
     /// @brief Get 1D LGL nodes
-    const VecX& lgl_nodes() const { return lgl_nodes_; }
+    const VecX &lgl_nodes() const { return lgl_nodes_; }
 
 private:
     int order_;
@@ -197,7 +203,6 @@ private:
     VecX evaluate_lagrange_1d(Real xi) const;
     VecX evaluate_lagrange_bottom_face(Real xi, Real eta) const;
 };
-
 
 // =============================================================================
 // Inline implementations
@@ -226,7 +231,7 @@ inline VecX BernsteinBasis1D::evaluate(Real xi) const {
 
         // B_{i,d} = t * B_{i-1,d-1} + (1-t) * B_{i,d-1}
         for (int i = 1; i < degree; ++i) {
-            curr[i] = t * prev[i-1] + one_minus_t * prev[i];
+            curr[i] = t * prev[i - 1] + one_minus_t * prev[i];
         }
 
         // B_{d,d} = t * B_{d-1,d-1}
@@ -264,7 +269,7 @@ inline VecX BernsteinBasis1D::evaluate_derivative(Real xi) const {
 
     // dB_{i,n}/dt = n * (B_{i-1,n-1} - B_{i,n-1})
     for (int i = 1; i < n; ++i) {
-        dB(i) = static_cast<Real>(n) * (B_lower(i-1) - B_lower(i));
+        dB(i) = static_cast<Real>(n) * (B_lower(i - 1) - B_lower(i));
     }
 
     // dB_{n,n}/dt = n * (B_{n-1,n-1} - 0) = n * B_{n-1,n-1}
@@ -276,4 +281,4 @@ inline VecX BernsteinBasis1D::evaluate_derivative(Real xi) const {
     return dB;
 }
 
-}  // namespace drifter
+} // namespace drifter

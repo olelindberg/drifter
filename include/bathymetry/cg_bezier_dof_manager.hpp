@@ -13,12 +13,12 @@
 /// For non-conforming meshes (hanging nodes), this class provides constraints
 /// that relate hanging DOFs to their coarse neighbors via Bezier interpolation.
 
-#include "core/types.hpp"
-#include "bathymetry/quadtree_adapter.hpp"
 #include "bathymetry/bezier_basis_2d.hpp"
-#include <vector>
+#include "bathymetry/quadtree_adapter.hpp"
+#include "core/types.hpp"
 #include <map>
 #include <set>
+#include <vector>
 
 namespace drifter {
 
@@ -37,11 +37,13 @@ struct HangingNodeConstraint {
     std::vector<Real> weights;
 };
 
-/// @brief Constraint for derivative continuity along shared edge at Gauss points
+/// @brief Constraint for derivative continuity along shared edge at Gauss
+/// points
 ///
 /// Enforces C¹/C² continuity along shared edges at Gauss quadrature points.
-/// This complements vertex constraints by ensuring smoothness along the entire edge,
-/// not just at corners. The normal derivative across the edge should match.
+/// This complements vertex constraints by ensuring smoothness along the entire
+/// edge, not just at corners. The normal derivative across the edge should
+/// match.
 struct EdgeDerivativeConstraint {
     /// Adjacent elements sharing the edge
     Index elem1, elem2;
@@ -74,7 +76,7 @@ class CGBezierDofManager {
 public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh
-    CGBezierDofManager(const QuadtreeAdapter& mesh);
+    CGBezierDofManager(const QuadtreeAdapter &mesh);
 
     // =========================================================================
     // DOF queries
@@ -95,10 +97,10 @@ public:
     Index global_dof(Index elem, int local_dof) const;
 
     /// Get all global DOF indices for an element
-    const std::vector<Index>& element_dofs(Index elem) const;
+    const std::vector<Index> &element_dofs(Index elem) const;
 
     /// Get local-to-global DOF mapping for all elements
-    const std::vector<std::vector<Index>>& all_element_dofs() const {
+    const std::vector<std::vector<Index>> &all_element_dofs() const {
         return elem_to_global_;
     }
 
@@ -106,22 +108,25 @@ public:
     bool is_boundary_dof(Index dof) const;
 
     /// Get all DOFs on domain boundary
-    const std::vector<Index>& boundary_dofs() const { return boundary_dofs_; }
+    const std::vector<Index> &boundary_dofs() const { return boundary_dofs_; }
 
     // =========================================================================
     // Constraint handling for non-conforming meshes
     // =========================================================================
 
     /// Get all hanging node constraints
-    const std::vector<HangingNodeConstraint>& constraints() const {
+    const std::vector<HangingNodeConstraint> &constraints() const {
         return constraints_;
     }
 
     /// Number of hanging node constraints
-    Index num_constraints() const { return static_cast<Index>(constraints_.size()); }
+    Index num_constraints() const {
+        return static_cast<Index>(constraints_.size());
+    }
 
     /// Get edge derivative constraints for C² continuity along edges
-    const std::vector<EdgeDerivativeConstraint>& edge_derivative_constraints() const {
+    const std::vector<EdgeDerivativeConstraint> &
+    edge_derivative_constraints() const {
         return edge_derivative_constraints_;
     }
 
@@ -131,7 +136,8 @@ public:
     }
 
     /// Build edge derivative constraints for C² continuity along shared edges
-    /// Enforces matching of normal derivatives at Gauss points along conforming edges.
+    /// Enforces matching of normal derivatives at Gauss points along conforming
+    /// edges.
     /// @param ngauss Number of Gauss points per edge (default: 4)
     void build_edge_derivative_constraints(int ngauss = 4);
 
@@ -154,13 +160,13 @@ public:
     // =========================================================================
 
     /// Get the mesh
-    const QuadtreeAdapter& mesh() const { return mesh_; }
+    const QuadtreeAdapter &mesh() const { return mesh_; }
 
     /// Get the Bezier basis
-    const BezierBasis2D& basis() const { return basis_; }
+    const BezierBasis2D &basis() const { return basis_; }
 
 private:
-    const QuadtreeAdapter& mesh_;
+    const QuadtreeAdapter &mesh_;
     BezierBasis2D basis_;
 
     /// Number of DOFs
@@ -231,10 +237,10 @@ private:
     std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;
 
     /// Convert position to quantized key for map lookup
-    std::pair<int64_t, int64_t> quantize_position(const Vec2& pos) const;
+    std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const;
 
     /// Find existing DOF at a position (or return -1)
-    Index find_dof_at_position(const Vec2& pos) const;
+    Index find_dof_at_position(const Vec2 &pos) const;
 
     /// Check if a local DOF is on a corner
     bool is_corner_dof(int local_dof) const;
@@ -249,4 +255,4 @@ private:
     int get_edge_for_dof(int local_dof) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

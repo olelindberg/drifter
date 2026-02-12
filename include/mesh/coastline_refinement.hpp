@@ -23,19 +23,19 @@ public:
     ~CoastlineReader();
 
     // Move-only (PIMPL)
-    CoastlineReader(const CoastlineReader&) = delete;
-    CoastlineReader& operator=(const CoastlineReader&) = delete;
-    CoastlineReader(CoastlineReader&&) noexcept;
-    CoastlineReader& operator=(CoastlineReader&&) noexcept;
+    CoastlineReader(const CoastlineReader &) = delete;
+    CoastlineReader &operator=(const CoastlineReader &) = delete;
+    CoastlineReader(CoastlineReader &&) noexcept;
+    CoastlineReader &operator=(CoastlineReader &&) noexcept;
 
     /// @brief Load land polygons from a GeoPackage file
     /// @param filename Path to the .gpkg file
     /// @param layer_name Layer name to read (e.g., "landpolygon_2500")
     /// @param target_srs Target spatial reference system (e.g., "EPSG:3034")
     /// @return true if successful
-    bool load(const std::string& filename,
-              const std::string& layer_name = "",
-              const std::string& target_srs = "");
+    bool load(
+        const std::string &filename, const std::string &layer_name = "",
+        const std::string &target_srs = "");
 
     /// @brief Get the number of polygons
     size_t num_polygons() const;
@@ -48,7 +48,7 @@ public:
 
     /// @brief Get bounding box of all polygons
     /// @param xmin, ymin, xmax, ymax Output parameters for bounds
-    void bounding_box(Real& xmin, Real& ymin, Real& xmax, Real& ymax) const;
+    void bounding_box(Real &xmin, Real &ymin, Real &xmax, Real &ymax) const;
 
     /// @brief Build coastline index from loaded polygons
     /// @return Shared pointer to the built index
@@ -58,7 +58,7 @@ public:
     static bool is_available();
 
     /// @brief Get last error message
-    const std::string& last_error() const;
+    const std::string &last_error() const;
 
 private:
     struct Impl;
@@ -72,10 +72,10 @@ public:
     ~CoastlineIndex();
 
     // Move-only (PIMPL)
-    CoastlineIndex(const CoastlineIndex&) = delete;
-    CoastlineIndex& operator=(const CoastlineIndex&) = delete;
-    CoastlineIndex(CoastlineIndex&&) noexcept;
-    CoastlineIndex& operator=(CoastlineIndex&&) noexcept;
+    CoastlineIndex(const CoastlineIndex &) = delete;
+    CoastlineIndex &operator=(const CoastlineIndex &) = delete;
+    CoastlineIndex(CoastlineIndex &&) noexcept;
+    CoastlineIndex &operator=(CoastlineIndex &&) noexcept;
 
     /// @brief Check if a box intersects any coastline segment
     bool intersects(Real xmin, Real ymin, Real xmax, Real ymax) const;
@@ -103,15 +103,15 @@ public:
     /// @param bounds Element bounds
     /// @param level Current refinement level
     /// @return true if element intersects coastline and level < max_level
-    bool should_refine(const ElementBounds& bounds, int level) const;
+    bool should_refine(const ElementBounds &bounds, int level) const;
 
     /// @brief Get refinement mask (which axes to refine)
     /// Refines in X and Y directions for coastline
-    RefineMask get_mask(const ElementBounds& bounds) const;
+    RefineMask get_mask(const ElementBounds &bounds) const;
 
 private:
     std::shared_ptr<CoastlineIndex> index_;
     int max_level_;
 };
 
-}  // namespace drifter
+} // namespace drifter

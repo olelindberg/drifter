@@ -5,14 +5,16 @@
 ///
 /// This provides quintic (order 5) basis functions on quadrilateral elements
 /// for the continuous Galerkin formulation of the biharmonic smoothing problem.
-/// Uses LGL (Legendre-Gauss-Lobatto) nodes for optimal interpolation properties.
+/// Uses LGL (Legendre-Gauss-Lobatto) nodes for optimal interpolation
+/// properties.
 
 #include "core/types.hpp"
 #include <vector>
 
 namespace drifter {
 
-/// @brief 2D tensor-product quintic Lagrange basis on reference element [-1,1]^2
+/// @brief 2D tensor-product quintic Lagrange basis on reference element
+/// [-1,1]^2
 ///
 /// Uses 6 LGL nodes per direction (order 5), giving 36 DOFs per element.
 /// Provides basis function evaluation, gradients, Laplacian, and Hessians
@@ -22,8 +24,8 @@ namespace drifter {
 class QuinticBasis2D {
 public:
     static constexpr int ORDER = 5;
-    static constexpr int N1D = 6;       ///< Nodes per direction (order + 1)
-    static constexpr int NDOF = 36;     ///< Total DOFs per element (6 x 6)
+    static constexpr int N1D = 6;   ///< Nodes per direction (order + 1)
+    static constexpr int NDOF = 36; ///< Total DOFs per element (6 x 6)
 
     /// @brief Construct quintic basis with LGL nodes
     QuinticBasis2D();
@@ -42,10 +44,10 @@ public:
     int num_dofs() const { return NDOF; }
 
     /// 1D LGL nodes in [-1, 1]
-    const VecX& nodes_1d() const { return nodes_; }
+    const VecX &nodes_1d() const { return nodes_; }
 
     /// 1D quadrature weights
-    const VecX& weights_1d() const { return weights_; }
+    const VecX &weights_1d() const { return weights_; }
 
     /// Get 2D node position for DOF index in reference coordinates
     /// @param dof DOF index (0 to 35)
@@ -62,7 +64,7 @@ public:
     static int dof_index(int i, int j) { return i + N1D * j; }
 
     /// Extract (i, j) from linear DOF index
-    static void dof_ij(int dof, int& i, int& j) {
+    static void dof_ij(int dof, int &i, int &j) {
         j = dof / N1D;
         i = dof % N1D;
     }
@@ -89,8 +91,9 @@ public:
     /// @param d2_dxi2 Output: d^2 phi / dxi^2 (36 values)
     /// @param d2_deta2 Output: d^2 phi / deta^2 (36 values)
     /// @param d2_dxideta Output: d^2 phi / dxi deta (36 values)
-    void evaluate_second_derivatives(Real xi, Real eta,
-                                     VecX& d2_dxi2, VecX& d2_deta2, VecX& d2_dxideta) const;
+    void evaluate_second_derivatives(
+        Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
+        VecX &d2_dxideta) const;
 
     /// Evaluate Hessian matrices of all basis functions at (xi, eta)
     /// @return Vector of 36 2x2 matrices: H[dof](i,j) = d^2 phi_dof / dx_i dx_j
@@ -101,10 +104,10 @@ public:
     // =========================================================================
 
     /// 1D first derivative matrix: D[i,j] = d(phi_j)/dxi at node i
-    const MatX& derivative_matrix_1d() const { return D_; }
+    const MatX &derivative_matrix_1d() const { return D_; }
 
     /// 1D second derivative matrix: D2[i,j] = d^2(phi_j)/dxi^2 at node i
-    const MatX& second_derivative_matrix_1d() const { return D2_; }
+    const MatX &second_derivative_matrix_1d() const { return D2_; }
 
     // =========================================================================
     // Quadrature (for integration)
@@ -112,7 +115,9 @@ public:
 
     /// 2D quadrature weights for tensor-product rule
     /// Weight for DOF (i,j) = weights_1d(i) * weights_1d(j)
-    Real quadrature_weight(int i, int j) const { return weights_(i) * weights_(j); }
+    Real quadrature_weight(int i, int j) const {
+        return weights_(i) * weights_(j);
+    }
 
     /// Total 2D quadrature weight for a DOF
     Real quadrature_weight(int dof) const {
@@ -126,7 +131,8 @@ public:
     // =========================================================================
 
     /// Get DOF indices on an edge
-    /// @param edge_id 0: xi=-1 (left), 1: xi=+1 (right), 2: eta=-1 (bottom), 3: eta=+1 (top)
+    /// @param edge_id 0: xi=-1 (left), 1: xi=+1 (right), 2: eta=-1 (bottom), 3:
+    /// eta=+1 (top)
     /// @return Vector of 6 DOF indices along the edge
     std::vector<int> edge_dofs(int edge_id) const;
 
@@ -144,11 +150,11 @@ public:
     std::vector<int> interior_dofs() const;
 
 private:
-    VecX nodes_;      ///< 6 LGL nodes in [-1, 1]
-    VecX weights_;    ///< LGL quadrature weights
-    VecX bary_;       ///< Barycentric weights for interpolation
-    MatX D_;          ///< 1D derivative matrix (6 x 6)
-    MatX D2_;         ///< 1D second derivative matrix (6 x 6)
+    VecX nodes_;   ///< 6 LGL nodes in [-1, 1]
+    VecX weights_; ///< LGL quadrature weights
+    VecX bary_;    ///< Barycentric weights for interpolation
+    MatX D_;       ///< 1D derivative matrix (6 x 6)
+    MatX D2_;      ///< 1D second derivative matrix (6 x 6)
 
     /// Compute LGL nodes and weights
     void compute_nodes_and_weights();
@@ -166,4 +172,4 @@ private:
     VecX evaluate_second_derivative_1d(Real xi) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

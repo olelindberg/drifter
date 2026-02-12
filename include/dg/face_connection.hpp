@@ -10,7 +10,8 @@
 namespace drifter {
 
 /// @brief Type of face connection between neighboring elements
-/// @details With directional (anisotropic) AMR, a coarse face can connect to 1-4 fine faces
+/// @details With directional (anisotropic) AMR, a coarse face can connect to
+/// 1-4 fine faces
 enum class FaceConnectionType : uint8_t {
     /// Conforming 1:1 connection (same level)
     SameLevel,
@@ -45,7 +46,8 @@ enum class FaceConnectionType : uint8_t {
 };
 
 /// @brief Describes how a coarse face connects to fine face(s)
-/// @details Used for mortar element flux computation at non-conforming interfaces
+/// @details Used for mortar element flux computation at non-conforming
+/// interfaces
 struct FaceConnection {
     /// Type of connection
     FaceConnectionType type = FaceConnectionType::Boundary;
@@ -74,31 +76,31 @@ struct FaceConnection {
     /// Number of fine faces
     int num_fine_faces() const {
         switch (type) {
-            case FaceConnectionType::SameLevel: return 1;
-            case FaceConnectionType::Fine2x1:
-            case FaceConnectionType::Fine1x2: return 2;
-            case FaceConnectionType::Fine3_2plus1:
-            case FaceConnectionType::Fine3_1plus2: return 3;
-            case FaceConnectionType::Fine2x2: return 4;
-            case FaceConnectionType::Boundary: return 0;
-            default: return 0;
+        case FaceConnectionType::SameLevel:
+            return 1;
+        case FaceConnectionType::Fine2x1:
+        case FaceConnectionType::Fine1x2:
+            return 2;
+        case FaceConnectionType::Fine3_2plus1:
+        case FaceConnectionType::Fine3_1plus2:
+            return 3;
+        case FaceConnectionType::Fine2x2:
+            return 4;
+        case FaceConnectionType::Boundary:
+            return 0;
+        default:
+            return 0;
         }
     }
 
     /// Check if this is a conforming (1:1) connection
-    bool is_conforming() const {
-        return type == FaceConnectionType::SameLevel;
-    }
+    bool is_conforming() const { return type == FaceConnectionType::SameLevel; }
 
     /// Check if this is a boundary face
-    bool is_boundary() const {
-        return type == FaceConnectionType::Boundary;
-    }
+    bool is_boundary() const { return type == FaceConnectionType::Boundary; }
 
     /// Check if this requires mortar element treatment
-    bool needs_mortar() const {
-        return !is_conforming() && !is_boundary();
-    }
+    bool needs_mortar() const { return !is_conforming() && !is_boundary(); }
 };
 
 /// @brief Get the face connection type from refinement levels
@@ -106,10 +108,8 @@ struct FaceConnection {
 /// @param fine_levels Directional levels of fine elements at face
 /// @param face_id Face ID (0-5) to determine tangent directions
 inline FaceConnectionType get_connection_type(
-    const DirectionalLevel& coarse_level,
-    const DirectionalLevel& fine_level,
-    int face_id)
-{
+    const DirectionalLevel &coarse_level, const DirectionalLevel &fine_level,
+    int face_id) {
     // Determine tangent directions for this face
     // Face 0,1 (X normal): tangent dirs are Y, Z
     // Face 2,3 (Y normal): tangent dirs are X, Z
@@ -118,18 +118,21 @@ inline FaceConnectionType get_connection_type(
     int diff_t1 = 0, diff_t2 = 0;
 
     switch (face_id) {
-        case 0: case 1:  // X-normal face
-            diff_t1 = fine_level.level_y - coarse_level.level_y;
-            diff_t2 = fine_level.level_z - coarse_level.level_z;
-            break;
-        case 2: case 3:  // Y-normal face
-            diff_t1 = fine_level.level_x - coarse_level.level_x;
-            diff_t2 = fine_level.level_z - coarse_level.level_z;
-            break;
-        case 4: case 5:  // Z-normal face
-            diff_t1 = fine_level.level_x - coarse_level.level_x;
-            diff_t2 = fine_level.level_y - coarse_level.level_y;
-            break;
+    case 0:
+    case 1: // X-normal face
+        diff_t1 = fine_level.level_y - coarse_level.level_y;
+        diff_t2 = fine_level.level_z - coarse_level.level_z;
+        break;
+    case 2:
+    case 3: // Y-normal face
+        diff_t1 = fine_level.level_x - coarse_level.level_x;
+        diff_t2 = fine_level.level_z - coarse_level.level_z;
+        break;
+    case 4:
+    case 5: // Z-normal face
+        diff_t1 = fine_level.level_x - coarse_level.level_x;
+        diff_t2 = fine_level.level_y - coarse_level.level_y;
+        break;
     }
 
     // Determine connection type based on level differences
@@ -142,9 +145,9 @@ inline FaceConnectionType get_connection_type(
     } else if (diff_t1 == 1 && diff_t2 == 1) {
         return FaceConnectionType::Fine2x2;
     } else {
-        // For 1:3 cases, we need additional logic based on which neighbors exist
-        // This requires examining the actual neighbor structure
-        // For now, return 2x2 as a conservative fallback
+        // For 1:3 cases, we need additional logic based on which neighbors
+        // exist This requires examining the actual neighbor structure For now,
+        // return 2x2 as a conservative fallback
         return FaceConnectionType::Fine2x2;
     }
 }
@@ -154,10 +157,17 @@ inline FaceConnectionType get_connection_type(
 /// @return Pair of axis indices (0=X, 1=Y, 2=Z) for tangent directions
 inline std::pair<int, int> get_face_tangent_axes(int face_id) {
     switch (face_id) {
-        case 0: case 1: return {1, 2};  // Y, Z for X-normal face
-        case 2: case 3: return {0, 2};  // X, Z for Y-normal face
-        case 4: case 5: return {0, 1};  // X, Y for Z-normal face
-        default: return {0, 1};
+    case 0:
+    case 1:
+        return {1, 2}; // Y, Z for X-normal face
+    case 2:
+    case 3:
+        return {0, 2}; // X, Z for Y-normal face
+    case 4:
+    case 5:
+        return {0, 1}; // X, Y for Z-normal face
+    default:
+        return {0, 1};
     }
 }
 
@@ -166,18 +176,23 @@ inline std::pair<int, int> get_face_tangent_axes(int face_id) {
 /// @return Axis index (0=X, 1=Y, 2=Z)
 inline int get_face_normal_axis(int face_id) {
     switch (face_id) {
-        case 0: case 1: return 0;  // X
-        case 2: case 3: return 1;  // Y
-        case 4: case 5: return 2;  // Z
-        default: return 0;
+    case 0:
+    case 1:
+        return 0; // X
+    case 2:
+    case 3:
+        return 1; // Y
+    case 4:
+    case 5:
+        return 2; // Z
+    default:
+        return 0;
     }
 }
 
 /// @brief Check if face is on positive side
 /// @param face_id Face ID (0-5)
 /// @return true if positive direction (1, 3, 5), false if negative (0, 2, 4)
-inline bool is_positive_face(int face_id) {
-    return (face_id % 2) == 1;
-}
+inline bool is_positive_face(int face_id) { return (face_id % 2) == 1; }
 
-}  // namespace drifter
+} // namespace drifter

@@ -16,45 +16,45 @@
 
 #include "core/types.hpp"
 #include "dg/basis_hexahedron.hpp"
-#include "dg/quadrature_3d.hpp"
 #include "dg/operators_3d.hpp"
-#include "physics/primitive_equations.hpp"
-#include "physics/mode_splitting.hpp"
+#include "dg/quadrature_3d.hpp"
 #include "physics/equation_of_state.hpp"
+#include "physics/mode_splitting.hpp"
+#include "physics/primitive_equations.hpp"
 #include "solver/time_stepper.hpp"
 #include <functional>
 #include <memory>
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace drifter {
 
 /// @brief Simulation configuration parameters
 struct SimulationConfig {
     // Time stepping
-    Real t_start = 0.0;           ///< Start time [s]
-    Real t_end = 86400.0;         ///< End time [s] (default 1 day)
-    Real dt_initial = 10.0;       ///< Initial time step [s]
-    Real cfl = 0.5;               ///< CFL number
-    Real dt_min = 1e-6;           ///< Minimum time step [s]
-    Real dt_max = 3600.0;         ///< Maximum time step [s]
+    Real t_start = 0.0;     ///< Start time [s]
+    Real t_end = 86400.0;   ///< End time [s] (default 1 day)
+    Real dt_initial = 10.0; ///< Initial time step [s]
+    Real cfl = 0.5;         ///< CFL number
+    Real dt_min = 1e-6;     ///< Minimum time step [s]
+    Real dt_max = 3600.0;   ///< Maximum time step [s]
 
     // Mode splitting
     bool use_mode_splitting = true;
     int barotropic_subcycles = 30;
 
     // Output
-    Real output_interval = 3600.0;  ///< Output interval [s] (default 1 hour)
-    Real checkpoint_interval = 86400.0;  ///< Checkpoint interval [s]
+    Real output_interval = 3600.0; ///< Output interval [s] (default 1 hour)
+    Real checkpoint_interval = 86400.0; ///< Checkpoint interval [s]
     std::string output_prefix = "drifter";
 
     // Diagnostics
     bool compute_diagnostics = true;
-    Real diagnostic_interval = 600.0;  ///< Diagnostic interval [s]
+    Real diagnostic_interval = 600.0; ///< Diagnostic interval [s]
 
     // Solver options
     int polynomial_order = 3;
-    bool use_ssp_rk = true;  ///< Use SSP-RK3 (true) or classic RK4 (false)
+    bool use_ssp_rk = true; ///< Use SSP-RK3 (true) or classic RK4 (false)
 };
 
 /// @brief Diagnostic quantities for monitoring
@@ -72,15 +72,17 @@ struct SimulationDiagnostics {
 };
 
 /// @brief Callback types for user hooks
-using OutputCallback = std::function<void(Real time, const std::vector<PrimitiveState>& states)>;
-using DiagnosticCallback = std::function<void(const SimulationDiagnostics& diag)>;
+using OutputCallback =
+    std::function<void(Real time, const std::vector<PrimitiveState> &states)>;
+using DiagnosticCallback =
+    std::function<void(const SimulationDiagnostics &diag)>;
 
 /// @brief Main simulation driver
 class SimulationDriver {
 public:
     /// @brief Construct simulation driver
     /// @param config Simulation configuration
-    SimulationDriver(const SimulationConfig& config = SimulationConfig());
+    SimulationDriver(const SimulationConfig &config = SimulationConfig());
 
     /// @brief Initialize with mesh and initial conditions
     /// @param num_elements Number of elements
@@ -90,24 +92,23 @@ public:
     /// @param y_positions Y-coordinates at DOFs (for Coriolis)
     /// @param initial_states Initial primitive states
     void initialize(
-        int num_elements,
-        const std::vector<VecX>& bathymetry,
-        const std::vector<VecX>& dh_dx,
-        const std::vector<VecX>& dh_dy,
-        const std::vector<VecX>& y_positions,
-        const std::vector<PrimitiveState>& initial_states);
+        int num_elements, const std::vector<VecX> &bathymetry,
+        const std::vector<VecX> &dh_dx, const std::vector<VecX> &dh_dy,
+        const std::vector<VecX> &y_positions,
+        const std::vector<PrimitiveState> &initial_states);
 
     /// @brief Set Coriolis parameter
-    void set_coriolis(const CoriolisParameter& coriolis);
+    void set_coriolis(const CoriolisParameter &coriolis);
 
     /// @brief Set equation of state
-    void set_eos(const EquationOfState& eos);
+    void set_eos(const EquationOfState &eos);
 
     /// @brief Set boundary conditions
-    void set_boundary_conditions(const std::vector<BoundaryCondition>& bcs);
+    void set_boundary_conditions(const std::vector<BoundaryCondition> &bcs);
 
     /// @brief Set face connections for DG
-    void set_face_connections(const std::vector<std::vector<FaceConnection>>& connections);
+    void set_face_connections(
+        const std::vector<std::vector<FaceConnection>> &connections);
 
     /// @brief Register output callback
     void set_output_callback(OutputCallback callback);
@@ -136,10 +137,10 @@ public:
     Real current_dt() const { return dt_; }
 
     /// @brief Get current state
-    const std::vector<PrimitiveState>& current_state() const { return states_; }
+    const std::vector<PrimitiveState> &current_state() const { return states_; }
 
     /// @brief Get mutable state (for external forcing)
-    std::vector<PrimitiveState>& state() { return states_; }
+    std::vector<PrimitiveState> &state() { return states_; }
 
     /// @brief Check if simulation is complete
     bool is_complete() const { return time_ >= config_.t_end; }
@@ -155,7 +156,7 @@ public:
     int total_steps() const { return total_steps_; }
 
     /// @brief Get configuration
-    const SimulationConfig& config() const { return config_; }
+    const SimulationConfig &config() const { return config_; }
 
 private:
     SimulationConfig config_;
@@ -180,7 +181,7 @@ private:
     int num_elements_;
     int order_;
     std::vector<VecX> bathymetry_;
-    Real dx_min_;  // Minimum element size
+    Real dx_min_; // Minimum element size
 
     // Callbacks
     OutputCallback output_callback_;
@@ -195,13 +196,13 @@ private:
     Real compute_max_wave_speed() const;
 
     /// @brief Compute RHS for time stepping (wraps physics solvers)
-    void compute_rhs(Real t, const VecX& U, VecX& dUdt);
+    void compute_rhs(Real t, const VecX &U, VecX &dUdt);
 
     /// @brief Pack states into single vector
-    void pack_state(const std::vector<PrimitiveState>& states, VecX& U) const;
+    void pack_state(const std::vector<PrimitiveState> &states, VecX &U) const;
 
     /// @brief Unpack single vector into states
-    void unpack_state(const VecX& U, std::vector<PrimitiveState>& states) const;
+    void unpack_state(const VecX &U, std::vector<PrimitiveState> &states) const;
 
     /// @brief Handle output (called at output intervals)
     void do_output();
@@ -215,25 +216,19 @@ private:
 
 /// @brief Simple test case: quiescent ocean
 std::vector<PrimitiveState> create_quiescent_initial_condition(
-    int num_elements, int dofs_per_element,
-    Real initial_temperature = 15.0,
+    int num_elements, int dofs_per_element, Real initial_temperature = 15.0,
     Real initial_salinity = 35.0);
 
 /// @brief Test case: barotropic Kelvin wave
 std::vector<PrimitiveState> create_kelvin_wave_initial_condition(
     int num_elements, int dofs_per_element,
-    const std::vector<VecX>& x_positions,
-    const std::vector<VecX>& y_positions,
-    Real amplitude = 0.1,
-    Real wavelength = 100000.0,
-    Real depth = 100.0);
+    const std::vector<VecX> &x_positions, const std::vector<VecX> &y_positions,
+    Real amplitude = 0.1, Real wavelength = 100000.0, Real depth = 100.0);
 
 /// @brief Test case: lock exchange (gravity current)
 std::vector<PrimitiveState> create_lock_exchange_initial_condition(
     int num_elements, int dofs_per_element,
-    const std::vector<VecX>& x_positions,
-    Real T_cold = 10.0,
-    Real T_warm = 20.0,
-    Real x_interface = 0.5);
+    const std::vector<VecX> &x_positions, Real T_cold = 10.0,
+    Real T_warm = 20.0, Real x_interface = 0.5);
 
-}  // namespace drifter
+} // namespace drifter

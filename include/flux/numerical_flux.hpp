@@ -22,11 +22,12 @@ namespace drifter {
 
 /// @brief Numerical flux function signature
 /// F*(U_L, U_R, n) returns the numerical flux in direction n
-using NumericalFluxFunc = std::function<VecX(const VecX&, const VecX&, const Vec3&)>;
+using NumericalFluxFunc =
+    std::function<VecX(const VecX &, const VecX &, const Vec3 &)>;
 
 /// @brief Physical flux function (for advection-like equations)
 /// Returns flux tensor F(U) where F[d] is flux in direction d
-using PhysicalFluxFunc = std::function<Tensor3(const VecX&)>;
+using PhysicalFluxFunc = std::function<Tensor3(const VecX &)>;
 
 /// @brief Base class for numerical fluxes
 class NumericalFlux {
@@ -38,11 +39,12 @@ public:
     /// @param U_R Right state
     /// @param n Outward normal
     /// @return Numerical flux F*
-    virtual VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const = 0;
+    virtual VecX
+    flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const = 0;
 
     /// @brief Get function wrapper for this flux
     NumericalFluxFunc as_function() const {
-        return [this](const VecX& U_L, const VecX& U_R, const Vec3& n) {
+        return [this](const VecX &U_L, const VecX &U_R, const Vec3 &n) {
             return this->flux(U_L, U_R, n);
         };
     }
@@ -60,16 +62,19 @@ public:
     /// @param physical_flux Physical flux F(U)
     /// @param max_wave_speed Function to compute maximum wave speed
     /// @param num_vars Number of conserved variables
-    LaxFriedrichsFlux(PhysicalFluxFunc physical_flux,
-                       std::function<Real(const VecX&, const VecX&, const Vec3&)> max_wave_speed,
-                       int num_vars);
+    LaxFriedrichsFlux(
+        PhysicalFluxFunc physical_flux,
+        std::function<Real(const VecX &, const VecX &, const Vec3 &)>
+            max_wave_speed,
+        int num_vars);
 
-    VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const override;
+    VecX flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const override;
     int num_vars() const override { return num_vars_; }
 
 private:
     PhysicalFluxFunc physical_flux_;
-    std::function<Real(const VecX&, const VecX&, const Vec3&)> max_wave_speed_;
+    std::function<Real(const VecX &, const VecX &, const Vec3 &)>
+        max_wave_speed_;
     int num_vars_;
 };
 
@@ -79,7 +84,7 @@ class CentralFlux : public NumericalFlux {
 public:
     CentralFlux(PhysicalFluxFunc physical_flux, int num_vars);
 
-    VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const override;
+    VecX flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const override;
     int num_vars() const override { return num_vars_; }
 
 private:
@@ -93,12 +98,12 @@ class UpwindFlux : public NumericalFlux {
 public:
     /// @brief Construct upwind flux
     /// @param velocity Advection velocity
-    UpwindFlux(const Vec3& velocity);
+    UpwindFlux(const Vec3 &velocity);
 
-    VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const override;
+    VecX flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const override;
     int num_vars() const override { return 1; }
 
-    void set_velocity(const Vec3& velocity) { velocity_ = velocity; }
+    void set_velocity(const Vec3 &velocity) { velocity_ = velocity; }
 
 private:
     Vec3 velocity_;
@@ -113,8 +118,8 @@ public:
     /// @param g Gravitational acceleration
     ShallowWaterHLLCFlux(Real g = 9.81);
 
-    VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const override;
-    int num_vars() const override { return 3; }  // h, hu, hv
+    VecX flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const override;
+    int num_vars() const override { return 3; } // h, hu, hv
 
     /// @brief Set gravity
     void set_gravity(Real g) { g_ = g; }
@@ -123,8 +128,9 @@ private:
     Real g_;
 
     /// @brief Compute wave speeds for HLLC
-    void wave_speeds(Real h_L, Real u_L, Real h_R, Real u_R,
-                      Real& S_L, Real& S_R, Real& S_star) const;
+    void wave_speeds(
+        Real h_L, Real u_L, Real h_R, Real u_R, Real &S_L, Real &S_R,
+        Real &S_star) const;
 
     /// @brief Compute flux from primitive variables
     Vec3 physical_flux(Real h, Real u, Real v, Real g, Real nx, Real ny) const;
@@ -135,7 +141,7 @@ class ShallowWaterRoeFlux : public NumericalFlux {
 public:
     ShallowWaterRoeFlux(Real g = 9.81, Real entropy_fix = 0.1);
 
-    VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const override;
+    VecX flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const override;
     int num_vars() const override { return 3; }
 
 private:
@@ -143,29 +149,28 @@ private:
     Real entropy_fix_;
 
     /// @brief Roe-averaged values
-    void roe_average(Real h_L, Real u_L, Real v_L,
-                      Real h_R, Real u_R, Real v_R,
-                      Real& h_roe, Real& u_roe, Real& v_roe) const;
+    void roe_average(
+        Real h_L, Real u_L, Real v_L, Real h_R, Real u_R, Real v_R, Real &h_roe,
+        Real &u_roe, Real &v_roe) const;
 };
 
 /// @brief Local Lax-Friedrichs for general conservation laws
 /// @details Uses local maximum wave speed at each interface
-template <int NVARS>
-class LocalLaxFriedrichs : public NumericalFlux {
+template <int NVARS> class LocalLaxFriedrichs : public NumericalFlux {
 public:
     using StateVec = Eigen::Matrix<Real, NVARS, 1>;
-    using FluxMat = Eigen::Matrix<Real, NVARS, 3>;  // Flux in each direction
+    using FluxMat = Eigen::Matrix<Real, NVARS, 3>; // Flux in each direction
 
     /// @brief Physical flux function type
-    using PhysFluxFunc = std::function<FluxMat(const StateVec&)>;
+    using PhysFluxFunc = std::function<FluxMat(const StateVec &)>;
 
     /// @brief Maximum wave speed function type
-    using WaveSpeedFunc = std::function<Real(const StateVec&, const Vec3&)>;
+    using WaveSpeedFunc = std::function<Real(const StateVec &, const Vec3 &)>;
 
     LocalLaxFriedrichs(PhysFluxFunc physical_flux, WaveSpeedFunc max_wave_speed)
         : physical_flux_(physical_flux), max_wave_speed_(max_wave_speed) {}
 
-    VecX flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const override {
+    VecX flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const override {
         StateVec uL = U_L;
         StateVec uR = U_R;
 
@@ -195,7 +200,8 @@ private:
 class NumericalFluxFactory {
 public:
     /// @brief Create Lax-Friedrichs flux for shallow water
-    static std::unique_ptr<NumericalFlux> shallow_water_lax_friedrichs(Real g = 9.81);
+    static std::unique_ptr<NumericalFlux>
+    shallow_water_lax_friedrichs(Real g = 9.81);
 
     /// @brief Create HLLC flux for shallow water
     static std::unique_ptr<NumericalFlux> shallow_water_hllc(Real g = 9.81);
@@ -204,10 +210,12 @@ public:
     static std::unique_ptr<NumericalFlux> shallow_water_roe(Real g = 9.81);
 
     /// @brief Create upwind flux for advection
-    static std::unique_ptr<NumericalFlux> advection_upwind(const Vec3& velocity);
+    static std::unique_ptr<NumericalFlux>
+    advection_upwind(const Vec3 &velocity);
 
     /// @brief Create central flux for diffusion
-    static std::unique_ptr<NumericalFlux> central(PhysicalFluxFunc phys_flux, int nvars);
+    static std::unique_ptr<NumericalFlux>
+    central(PhysicalFluxFunc phys_flux, int nvars);
 };
 
 // =============================================================================
@@ -216,15 +224,14 @@ public:
 
 inline LaxFriedrichsFlux::LaxFriedrichsFlux(
     PhysicalFluxFunc physical_flux,
-    std::function<Real(const VecX&, const VecX&, const Vec3&)> max_wave_speed,
+    std::function<Real(const VecX &, const VecX &, const Vec3 &)>
+        max_wave_speed,
     int num_vars)
-    : physical_flux_(std::move(physical_flux))
-    , max_wave_speed_(std::move(max_wave_speed))
-    , num_vars_(num_vars)
-{
-}
+    : physical_flux_(std::move(physical_flux)),
+      max_wave_speed_(std::move(max_wave_speed)), num_vars_(num_vars) {}
 
-inline VecX LaxFriedrichsFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const {
+inline VecX
+LaxFriedrichsFlux::flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const {
     Tensor3 F_L = physical_flux_(U_L);
     Tensor3 F_R = physical_flux_(U_R);
 
@@ -244,11 +251,10 @@ inline VecX LaxFriedrichsFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3
 }
 
 inline CentralFlux::CentralFlux(PhysicalFluxFunc physical_flux, int num_vars)
-    : physical_flux_(std::move(physical_flux)), num_vars_(num_vars)
-{
-}
+    : physical_flux_(std::move(physical_flux)), num_vars_(num_vars) {}
 
-inline VecX CentralFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const {
+inline VecX
+CentralFlux::flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const {
     Tensor3 F_L = physical_flux_(U_L);
     Tensor3 F_R = physical_flux_(U_R);
 
@@ -265,9 +271,10 @@ inline VecX CentralFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3& n) c
     return 0.5 * (Fn_L + Fn_R);
 }
 
-inline UpwindFlux::UpwindFlux(const Vec3& velocity) : velocity_(velocity) {}
+inline UpwindFlux::UpwindFlux(const Vec3 &velocity) : velocity_(velocity) {}
 
-inline VecX UpwindFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const {
+inline VecX
+UpwindFlux::flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const {
     Real vn = velocity_.dot(n);
     VecX result(1);
     result(0) = vn * ((vn >= 0) ? U_L(0) : U_R(0));
@@ -276,7 +283,8 @@ inline VecX UpwindFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3& n) co
 
 inline ShallowWaterHLLCFlux::ShallowWaterHLLCFlux(Real g) : g_(g) {}
 
-inline VecX ShallowWaterHLLCFlux::flux(const VecX& U_L, const VecX& U_R, const Vec3& n) const {
+inline VecX ShallowWaterHLLCFlux::flux(
+    const VecX &U_L, const VecX &U_R, const Vec3 &n) const {
     // State: [h, hu, hv]
     Real h_L = U_L(0);
     Real hu_L = U_L(1);
@@ -288,8 +296,10 @@ inline VecX ShallowWaterHLLCFlux::flux(const VecX& U_L, const VecX& U_R, const V
 
     // Avoid division by zero
     Real h_min = 1e-10;
-    if (h_L < h_min) h_L = h_min;
-    if (h_R < h_min) h_R = h_min;
+    if (h_L < h_min)
+        h_L = h_min;
+    if (h_R < h_min)
+        h_R = h_min;
 
     Real u_L = hu_L / h_L;
     Real v_L = hv_L / h_L;
@@ -367,8 +377,8 @@ inline VecX ShallowWaterHLLCFlux::flux(const VecX& U_L, const VecX& U_R, const V
 }
 
 inline void ShallowWaterHLLCFlux::wave_speeds(
-    Real h_L, Real u_L, Real h_R, Real u_R,
-    Real& S_L, Real& S_R, Real& S_star) const {
+    Real h_L, Real u_L, Real h_R, Real u_R, Real &S_L, Real &S_R,
+    Real &S_star) const {
 
     Real c_L = std::sqrt(g_ * h_L);
     Real c_R = std::sqrt(g_ * h_R);
@@ -378,12 +388,13 @@ inline void ShallowWaterHLLCFlux::wave_speeds(
     S_R = std::max(u_L + c_L, u_R + c_R);
 
     // Contact wave speed using standard HLLC formula for shallow water
-    // S_star = [h_L*u_L*(S_L - u_L) - h_R*u_R*(S_R - u_R) + 0.5*g*(h_R^2 - h_L^2)]
+    // S_star = [h_L*u_L*(S_L - u_L) - h_R*u_R*(S_R - u_R) + 0.5*g*(h_R^2 -
+    // h_L^2)]
     //          / [h_L*(S_L - u_L) - h_R*(S_R - u_R)]
     Real denom = h_L * (S_L - u_L) - h_R * (S_R - u_R);
     if (std::abs(denom) > 1e-10) {
-        Real numer = h_L * u_L * (S_L - u_L) - h_R * u_R * (S_R - u_R)
-                   + 0.5 * g_ * (h_R * h_R - h_L * h_L);
+        Real numer = h_L * u_L * (S_L - u_L) - h_R * u_R * (S_R - u_R) +
+                     0.5 * g_ * (h_R * h_R - h_L * h_L);
         S_star = numer / denom;
     } else {
         S_star = 0.5 * (u_L + u_R);
@@ -401,4 +412,4 @@ inline Vec3 ShallowWaterHLLCFlux::physical_flux(
     return F;
 }
 
-}  // namespace drifter
+} // namespace drifter

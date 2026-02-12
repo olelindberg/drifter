@@ -1,5 +1,5 @@
 #include "bathymetry/quintic_basis_2d.hpp"
-#include "dg/basis_hexahedron.hpp"  // For compute_gauss_lobatto_nodes, etc.
+#include "dg/basis_hexahedron.hpp" // For compute_gauss_lobatto_nodes, etc.
 #include <cmath>
 #include <stdexcept>
 
@@ -117,12 +117,13 @@ VecX QuinticBasis2D::evaluate_second_derivative_1d(Real xi) const {
         d2phi = D2_.row(node_idx).transpose();
     } else {
         // Second derivative formula:
-        // l''_j(x) = l_j(x) * [(sum_{k!=j} 1/(x-x_k))^2 - sum_{k!=j} 1/(x-x_k)^2]
+        // l''_j(x) = l_j(x) * [(sum_{k!=j} 1/(x-x_k))^2 - sum_{k!=j}
+        // 1/(x-x_k)^2]
         VecX phi = evaluate_1d(xi);
 
         for (int j = 0; j < N1D; ++j) {
-            Real sum1 = 0.0;  // sum_{k!=j} 1/(x - x_k)
-            Real sum2 = 0.0;  // sum_{k!=j} 1/(x - x_k)^2
+            Real sum1 = 0.0; // sum_{k!=j} 1/(x - x_k)
+            Real sum2 = 0.0; // sum_{k!=j} 1/(x - x_k)^2
 
             for (int k = 0; k < N1D; ++k) {
                 if (k != j) {
@@ -164,17 +165,16 @@ MatX QuinticBasis2D::evaluate_gradient(Real xi, Real eta) const {
     for (int j = 0; j < N1D; ++j) {
         for (int i = 0; i < N1D; ++i) {
             int dof = dof_index(i, j);
-            grad(dof, 0) = dphi_xi(i) * phi_eta(j);   // d/dxi
-            grad(dof, 1) = phi_xi(i) * dphi_eta(j);   // d/deta
+            grad(dof, 0) = dphi_xi(i) * phi_eta(j); // d/dxi
+            grad(dof, 1) = phi_xi(i) * dphi_eta(j); // d/deta
         }
     }
 
     return grad;
 }
 
-void QuinticBasis2D::evaluate_second_derivatives(Real xi, Real eta,
-                                                  VecX& d2_dxi2, VecX& d2_deta2,
-                                                  VecX& d2_dxideta) const {
+void QuinticBasis2D::evaluate_second_derivatives(
+    Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2, VecX &d2_dxideta) const {
     VecX phi_xi = evaluate_1d(xi);
     VecX phi_eta = evaluate_1d(eta);
     VecX dphi_xi = evaluate_derivative_1d(xi);
@@ -223,28 +223,28 @@ std::vector<int> QuinticBasis2D::edge_dofs(int edge_id) const {
     std::vector<int> dofs(N1D);
 
     switch (edge_id) {
-        case 0:  // xi = -1 (left edge)
-            for (int j = 0; j < N1D; ++j) {
-                dofs[j] = dof_index(0, j);
-            }
-            break;
-        case 1:  // xi = +1 (right edge)
-            for (int j = 0; j < N1D; ++j) {
-                dofs[j] = dof_index(N1D - 1, j);
-            }
-            break;
-        case 2:  // eta = -1 (bottom edge)
-            for (int i = 0; i < N1D; ++i) {
-                dofs[i] = dof_index(i, 0);
-            }
-            break;
-        case 3:  // eta = +1 (top edge)
-            for (int i = 0; i < N1D; ++i) {
-                dofs[i] = dof_index(i, N1D - 1);
-            }
-            break;
-        default:
-            throw std::out_of_range("edge_id must be 0-3");
+    case 0: // xi = -1 (left edge)
+        for (int j = 0; j < N1D; ++j) {
+            dofs[j] = dof_index(0, j);
+        }
+        break;
+    case 1: // xi = +1 (right edge)
+        for (int j = 0; j < N1D; ++j) {
+            dofs[j] = dof_index(N1D - 1, j);
+        }
+        break;
+    case 2: // eta = -1 (bottom edge)
+        for (int i = 0; i < N1D; ++i) {
+            dofs[i] = dof_index(i, 0);
+        }
+        break;
+    case 3: // eta = +1 (top edge)
+        for (int i = 0; i < N1D; ++i) {
+            dofs[i] = dof_index(i, N1D - 1);
+        }
+        break;
+    default:
+        throw std::out_of_range("edge_id must be 0-3");
     }
 
     return dofs;
@@ -252,12 +252,16 @@ std::vector<int> QuinticBasis2D::edge_dofs(int edge_id) const {
 
 int QuinticBasis2D::corner_dof(int corner_id) const {
     switch (corner_id) {
-        case 0: return dof_index(0, 0);         // (-1, -1)
-        case 1: return dof_index(N1D - 1, 0);   // (+1, -1)
-        case 2: return dof_index(0, N1D - 1);   // (-1, +1)
-        case 3: return dof_index(N1D - 1, N1D - 1);  // (+1, +1)
-        default:
-            throw std::out_of_range("corner_id must be 0-3");
+    case 0:
+        return dof_index(0, 0); // (-1, -1)
+    case 1:
+        return dof_index(N1D - 1, 0); // (+1, -1)
+    case 2:
+        return dof_index(0, N1D - 1); // (-1, +1)
+    case 3:
+        return dof_index(N1D - 1, N1D - 1); // (+1, +1)
+    default:
+        throw std::out_of_range("corner_id must be 0-3");
     }
 }
 
@@ -269,7 +273,7 @@ bool QuinticBasis2D::is_boundary_dof(int dof) const {
 
 std::vector<int> QuinticBasis2D::interior_dofs() const {
     std::vector<int> interior;
-    interior.reserve((N1D - 2) * (N1D - 2));  // 4x4 = 16 for quintic
+    interior.reserve((N1D - 2) * (N1D - 2)); // 4x4 = 16 for quintic
 
     for (int j = 1; j < N1D - 1; ++j) {
         for (int i = 1; i < N1D - 1; ++i) {
@@ -280,4 +284,4 @@ std::vector<int> QuinticBasis2D::interior_dofs() const {
     return interior;
 }
 
-}  // namespace drifter
+} // namespace drifter

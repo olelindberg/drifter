@@ -1,13 +1,16 @@
 #pragma once
 
 /// @file lagrange_basis_2d.hpp
-/// @brief Flexible-order 2D tensor-product Lagrange basis for CG bathymetry smoothing
+/// @brief Flexible-order 2D tensor-product Lagrange basis for CG bathymetry
+/// smoothing
 ///
-/// This provides Lagrange basis functions on quadrilateral elements with configurable
-/// polynomial order for the continuous Galerkin formulation of the biharmonic smoothing.
-/// Uses LGL (Legendre-Gauss-Lobatto) nodes for optimal interpolation properties.
+/// This provides Lagrange basis functions on quadrilateral elements with
+/// configurable polynomial order for the continuous Galerkin formulation of the
+/// biharmonic smoothing. Uses LGL (Legendre-Gauss-Lobatto) nodes for optimal
+/// interpolation properties.
 ///
-/// Default order is 3 (bicubic), which is the minimum for biharmonic on rectangles.
+/// Default order is 3 (bicubic), which is the minimum for biharmonic on
+/// rectangles.
 
 #include "core/types.hpp"
 #include "dg/basis_hexahedron.hpp"
@@ -25,7 +28,8 @@ namespace drifter {
 class LagrangeBasis2D {
 public:
     /// @brief Construct Lagrange basis with specified order
-    /// @param order Polynomial order (default 3 = bicubic, minimum for biharmonic)
+    /// @param order Polynomial order (default 3 = bicubic, minimum for
+    /// biharmonic)
     explicit LagrangeBasis2D(int order = 3);
 
     // =========================================================================
@@ -46,10 +50,10 @@ public:
     // =========================================================================
 
     /// 1D LGL nodes in [-1, 1]
-    const VecX& nodes_1d() const { return basis_1d_.nodes; }
+    const VecX &nodes_1d() const { return basis_1d_.nodes; }
 
     /// 1D quadrature weights
-    const VecX& weights_1d() const { return basis_1d_.weights; }
+    const VecX &weights_1d() const { return basis_1d_.weights; }
 
     /// Get 2D node position for DOF index in reference coordinates
     /// @param dof DOF index (0 to ndof-1)
@@ -66,7 +70,7 @@ public:
     int dof_index(int i, int j) const { return i + n1d_ * j; }
 
     /// Extract (i, j) from linear DOF index
-    void dof_ij(int dof, int& i, int& j) const {
+    void dof_ij(int dof, int &i, int &j) const {
         j = dof / n1d_;
         i = dof % n1d_;
     }
@@ -93,11 +97,13 @@ public:
     /// @param d2_dxi2 Output: d^2 phi / dxi^2 (ndof values)
     /// @param d2_deta2 Output: d^2 phi / deta^2 (ndof values)
     /// @param d2_dxideta Output: d^2 phi / dxi deta (ndof values)
-    void evaluate_second_derivatives(Real xi, Real eta,
-                                     VecX& d2_dxi2, VecX& d2_deta2, VecX& d2_dxideta) const;
+    void evaluate_second_derivatives(
+        Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
+        VecX &d2_dxideta) const;
 
     /// Evaluate Hessian matrices of all basis functions at (xi, eta)
-    /// @return Vector of ndof 2x2 matrices: H[dof](i,j) = d^2 phi_dof / dx_i dx_j
+    /// @return Vector of ndof 2x2 matrices: H[dof](i,j) = d^2 phi_dof / dx_i
+    /// dx_j
     std::vector<Mat2> evaluate_hessian(Real xi, Real eta) const;
 
     // =========================================================================
@@ -105,10 +111,10 @@ public:
     // =========================================================================
 
     /// 1D first derivative matrix: D[i,j] = d(phi_j)/dxi at node i
-    const MatX& derivative_matrix_1d() const { return basis_1d_.D; }
+    const MatX &derivative_matrix_1d() const { return basis_1d_.D; }
 
     /// 1D second derivative matrix: D2[i,j] = d^2(phi_j)/dxi^2 at node i
-    const MatX& second_derivative_matrix_1d() const { return D2_; }
+    const MatX &second_derivative_matrix_1d() const { return D2_; }
 
     // =========================================================================
     // Quadrature (for integration)
@@ -132,7 +138,8 @@ public:
     // =========================================================================
 
     /// Get DOF indices on an edge
-    /// @param edge_id 0: xi=-1 (left), 1: xi=+1 (right), 2: eta=-1 (bottom), 3: eta=+1 (top)
+    /// @param edge_id 0: xi=-1 (left), 1: xi=+1 (right), 2: eta=-1 (bottom), 3:
+    /// eta=+1 (top)
     /// @return Vector of n1d DOF indices along the edge
     std::vector<int> edge_dofs(int edge_id) const;
 
@@ -160,14 +167,14 @@ public:
     VecX evaluate_normal_derivative_at_edge(int edge_id, Real t) const;
 
 private:
-    int order_;               ///< Polynomial order
-    int n1d_;                 ///< Nodes per direction (order + 1)
-    int ndof_;                ///< Total DOFs per element (n1d^2)
+    int order_;                ///< Polynomial order
+    int n1d_;                  ///< Nodes per direction (order + 1)
+    int ndof_;                 ///< Total DOFs per element (n1d^2)
     LagrangeBasis1D basis_1d_; ///< 1D LGL basis
-    MatX D2_;                 ///< 1D second derivative matrix
+    MatX D2_;                  ///< 1D second derivative matrix
 
     /// Evaluate 1D second derivative at arbitrary point
     VecX evaluate_second_derivative_1d(Real xi) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

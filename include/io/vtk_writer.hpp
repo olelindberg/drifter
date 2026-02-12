@@ -17,19 +17,19 @@
 //   writer.write_timestep(time, solution);
 
 #include "core/types.hpp"
-#include "mesh/octree_adapter.hpp"
 #include "dg/bernstein_basis.hpp"
+#include "mesh/octree_adapter.hpp"
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
-#include <map>
 
 // Forward declaration
 namespace drifter {
 struct BathymetryData;
 class SeabedInterpolator;
-}
+} // namespace drifter
 
 #ifdef DRIFTER_USE_MPI
 #include <mpi.h>
@@ -42,28 +42,24 @@ class HexahedronBasis;
 
 /// @brief VTK cell types
 enum class VTKCellType {
-    Hexahedron = 12,           // Linear hexahedron (8 nodes)
-    LagrangeHexahedron = 72,   // Higher-order Lagrange hexahedron
-    QuadraticHexahedron = 25   // Serendipity 20-node hex
+    Hexahedron = 12,         // Linear hexahedron (8 nodes)
+    LagrangeHexahedron = 72, // Higher-order Lagrange hexahedron
+    QuadraticHexahedron = 25 // Serendipity 20-node hex
 };
 
 /// @brief VTK data encoding
-enum class VTKEncoding {
-    ASCII,
-    Binary,
-    Base64
-};
+enum class VTKEncoding { ASCII, Binary, Base64 };
 
 /// @brief VTK output format
 enum class VTKFormat {
-    VTU,      // VTK UnstructuredGrid XML
-    PVTU      // Parallel VTU (one file per rank)
+    VTU, // VTK UnstructuredGrid XML
+    PVTU // Parallel VTU (one file per rank)
 };
 
 /// @brief Field data location
 enum class VTKDataLocation {
-    Point,    // Node-based data
-    Cell      // Element-based data
+    Point, // Node-based data
+    Cell   // Element-based data
 };
 
 /// @brief VTK field definition
@@ -80,9 +76,9 @@ public:
     /// @brief Construct writer with output basename
     /// @param basename Output path without extension (e.g., "output/solution")
     /// @param format Output format
-    VTKWriter(const std::string& basename,
-              VTKFormat format = VTKFormat::VTU,
-              VTKEncoding encoding = VTKEncoding::Binary);
+    VTKWriter(
+        const std::string &basename, VTKFormat format = VTKFormat::VTU,
+        VTKEncoding encoding = VTKEncoding::Binary);
 
     ~VTKWriter() = default;
 
@@ -90,23 +86,23 @@ public:
     void set_polynomial_order(int order);
 
     /// @brief Set mesh (must be called before write)
-    void set_mesh(const OctreeAdapter& mesh);
+    void set_mesh(const OctreeAdapter &mesh);
 
     /// @brief Add point data field
-    void add_point_data(const std::string& name, int num_components = 1);
+    void add_point_data(const std::string &name, int num_components = 1);
 
     /// @brief Add cell data field
-    void add_cell_data(const std::string& name, int num_components = 1);
+    void add_cell_data(const std::string &name, int num_components = 1);
 
     /// @brief Set point data values
-    void set_point_data(const std::string& name, const VecX& data);
-    void set_point_data(const std::string& name,
-                        const std::vector<VecX>& element_data);
+    void set_point_data(const std::string &name, const VecX &data);
+    void set_point_data(
+        const std::string &name, const std::vector<VecX> &element_data);
 
     /// @brief Set cell data values
-    void set_cell_data(const std::string& name, const VecX& data);
-    void set_cell_data(const std::string& name,
-                       const std::vector<Real>& element_values);
+    void set_cell_data(const std::string &name, const VecX &data);
+    void set_cell_data(
+        const std::string &name, const std::vector<Real> &element_values);
 
     /// @brief Write current state to file
     /// @param time_idx Timestep index (used in filename)
@@ -133,7 +129,7 @@ private:
     VTKEncoding encoding_;
     int order_ = 1;
 
-    const OctreeAdapter* mesh_ = nullptr;
+    const OctreeAdapter *mesh_ = nullptr;
     std::vector<Vec3> points_;
     std::vector<std::vector<Index>> cells_;
     std::vector<VTKCellType> cell_types_;
@@ -142,7 +138,7 @@ private:
     std::map<std::string, VTKField> cell_fields_;
 
     size_t time_idx_ = 0;
-    std::vector<std::pair<Real, std::string>> timesteps_;  // For PVD
+    std::vector<std::pair<Real, std::string>> timesteps_; // For PVD
 
 #ifdef DRIFTER_USE_MPI
     MPI_Comm comm_ = MPI_COMM_WORLD;
@@ -151,17 +147,20 @@ private:
 #endif
 
     void build_mesh_geometry();
-    void write_vtu(const std::string& filename, Real time);
-    void write_pvtu(const std::string& filename, Real time);
+    void write_vtu(const std::string &filename, Real time);
+    void write_pvtu(const std::string &filename, Real time);
     void write_pvd();
 
     // Encoding helpers
-    void write_data_array_ascii(std::ostream& out, const std::string& name,
-                                 int num_components, const std::vector<Real>& data);
-    void write_data_array_binary(std::ostream& out, const std::string& name,
-                                  int num_components, const std::vector<Real>& data);
-    void write_data_array_base64(std::ostream& out, const std::string& name,
-                                  int num_components, const std::vector<Real>& data);
+    void write_data_array_ascii(
+        std::ostream &out, const std::string &name, int num_components,
+        const std::vector<Real> &data);
+    void write_data_array_binary(
+        std::ostream &out, const std::string &name, int num_components,
+        const std::vector<Real> &data);
+    void write_data_array_base64(
+        std::ostream &out, const std::string &name, int num_components,
+        const std::vector<Real> &data);
 
     // VTK node ordering for high-order elements
     std::vector<int> get_vtk_node_ordering(int order) const;
@@ -170,14 +169,15 @@ private:
 /// @brief High-order VTK writer using Lagrange elements
 class HighOrderVTKWriter {
 public:
-    HighOrderVTKWriter(const std::string& basename, int polynomial_order);
+    HighOrderVTKWriter(const std::string &basename, int polynomial_order);
 
-    void set_mesh(const OctreeAdapter& mesh, const HexahedronBasis& basis);
+    void set_mesh(const OctreeAdapter &mesh, const HexahedronBasis &basis);
 
-    void add_scalar_field(const std::string& name);
-    void add_vector_field(const std::string& name);
+    void add_scalar_field(const std::string &name);
+    void add_vector_field(const std::string &name);
 
-    void set_field(const std::string& name, const std::vector<VecX>& element_data);
+    void
+    set_field(const std::string &name, const std::vector<VecX> &element_data);
 
     void write_timestep(Real time);
 
@@ -185,26 +185,27 @@ public:
 
 private:
     std::unique_ptr<VTKWriter> writer_;
-    const HexahedronBasis* basis_ = nullptr;
+    const HexahedronBasis *basis_ = nullptr;
     int order_;
 
     std::vector<int> vtk_ordering_;
 
     void compute_vtk_ordering();
-    void reorder_to_vtk(const VecX& dg_data, VecX& vtk_data) const;
+    void reorder_to_vtk(const VecX &dg_data, VecX &vtk_data) const;
 };
 
 /// @brief XDMF writer for HDF5-based output (lightweight wrapper)
 class XDMFWriter {
 public:
-    XDMFWriter(const std::string& basename);
+    XDMFWriter(const std::string &basename);
 
-    void set_mesh(const OctreeAdapter& mesh, int order);
+    void set_mesh(const OctreeAdapter &mesh, int order);
 
-    void add_attribute(const std::string& name, int num_components,
-                        const std::string& center = "Node");
+    void add_attribute(
+        const std::string &name, int num_components,
+        const std::string &center = "Node");
 
-    void write_timestep(Real time, const std::map<std::string, VecX>& fields);
+    void write_timestep(Real time, const std::map<std::string, VecX> &fields);
 
     void finalize();
 
@@ -213,7 +214,7 @@ private:
     std::string h5_filename_;
     std::string xdmf_filename_;
 
-    const OctreeAdapter* mesh_ = nullptr;
+    const OctreeAdapter *mesh_ = nullptr;
     int order_ = 1;
 
     std::vector<std::pair<Real, size_t>> timesteps_;
@@ -223,23 +224,23 @@ private:
     size_t num_cells_ = 0;
 
     void write_mesh_to_h5();
-    void write_field_to_h5(const std::string& name, size_t time_idx, const VecX& data);
+    void write_field_to_h5(
+        const std::string &name, size_t time_idx, const VecX &data);
     void update_xdmf();
 };
 
 /// @brief Ocean-specific VTK output with standard variables
 class OceanVTKWriter {
 public:
-    OceanVTKWriter(const std::string& basename, const OctreeAdapter& mesh,
-                    int polynomial_order);
+    OceanVTKWriter(
+        const std::string &basename, const OctreeAdapter &mesh,
+        int polynomial_order);
 
-    void write(Real time,
-               const std::vector<VecX>& eta,
-               const std::vector<VecX>& u,
-               const std::vector<VecX>& v,
-               const std::vector<VecX>& w,
-               const std::vector<VecX>& temperature,
-               const std::vector<VecX>& salinity);
+    void write(
+        Real time, const std::vector<VecX> &eta, const std::vector<VecX> &u,
+        const std::vector<VecX> &v, const std::vector<VecX> &w,
+        const std::vector<VecX> &temperature,
+        const std::vector<VecX> &salinity);
 
     void finalize();
 
@@ -249,12 +250,13 @@ private:
 };
 
 /// @brief High-resolution seabed surface VTK writer
-/// Extracts bottom faces from hexahedral elements and outputs them at high resolution
-/// by evaluating polynomials at many points on each face.
+/// Extracts bottom faces from hexahedral elements and outputs them at high
+/// resolution by evaluating polynomials at many points on each face.
 ///
 /// Supports two interpolation methods:
 /// - Lagrange: Standard high-order interpolation (may overshoot/undershoot)
-/// - Bernstein: Bounded interpolation with convex hull property (guaranteed bounded)
+/// - Bernstein: Bounded interpolation with convex hull property (guaranteed
+/// bounded)
 ///
 /// For seabed visualization, Bernstein interpolation is recommended to avoid
 /// spurious oscillations that can make the seabed appear above the surface.
@@ -262,24 +264,29 @@ class SeabedVTKWriter {
 public:
     /// @brief Construct writer with output path
     /// @param filename Output VTK filename (without extension)
-    /// @param method Interpolation method (default: Bernstein for bounded output)
+    /// @param method Interpolation method (default: Bernstein for bounded
+    /// output)
     /// @param format Output format (default: VTU for modern XML format)
-    SeabedVTKWriter(const std::string& filename,
-                    SeabedInterpolation method = SeabedInterpolation::Bernstein,
-                    VTKFormat format = VTKFormat::VTU);
+    SeabedVTKWriter(
+        const std::string &filename,
+        SeabedInterpolation method = SeabedInterpolation::Bernstein,
+        VTKFormat format = VTKFormat::VTU);
 
     /// @brief Set the mesh and element coordinates
     /// @param mesh The octree mesh adapter
     /// @param element_coords Physical coordinates at each element's DOF nodes
-    ///        (vector of size num_elements, each VecX has 3*num_dofs values: x,y,z interleaved)
+    ///        (vector of size num_elements, each VecX has 3*num_dofs values:
+    ///        x,y,z interleaved)
     /// @param order Polynomial order of the DG representation
-    void set_mesh(const OctreeAdapter& mesh,
-                  const std::vector<VecX>& element_coords,
-                  int order);
+    void set_mesh(
+        const OctreeAdapter &mesh, const std::vector<VecX> &element_coords,
+        int order);
 
     /// @brief Set output resolution (subdivisions per face)
-    /// @param resolution Number of subdivisions per dimension on each face (default: 10)
-    ///        Each bottom face will be subdivided into resolution x resolution quads
+    /// @param resolution Number of subdivisions per dimension on each face
+    /// (default: 10)
+    ///        Each bottom face will be subdivided into resolution x resolution
+    ///        quads
     void set_resolution(int resolution);
 
     /// @brief Set interpolation method
@@ -291,8 +298,10 @@ public:
 
     /// @brief Add scalar field data to output
     /// @param name Field name
-    /// @param element_data Data at each element's DOF nodes (same structure as element_coords)
-    void add_scalar_field(const std::string& name, const std::vector<VecX>& element_data);
+    /// @param element_data Data at each element's DOF nodes (same structure as
+    /// element_coords)
+    void add_scalar_field(
+        const std::string &name, const std::vector<VecX> &element_data);
 
     /// @brief Write the seabed surface to VTK file
     void write();
@@ -310,7 +319,7 @@ private:
     SeabedInterpolation method_;
     VTKFormat format_;
 
-    const OctreeAdapter* mesh_ = nullptr;
+    const OctreeAdapter *mesh_ = nullptr;
     std::vector<VecX> element_coords_;
 
     std::map<std::string, std::vector<VecX>> scalar_fields_;
@@ -322,14 +331,14 @@ private:
     mutable std::unique_ptr<SeabedInterpolator> interpolator_;
 
     // Get or create interpolator
-    const SeabedInterpolator& get_interpolator() const;
+    const SeabedInterpolator &get_interpolator() const;
 
     // Evaluate interpolated point/scalar on bottom face
-    Vec3 evaluate_point(const VecX& coords, Real xi, Real eta) const;
-    Real evaluate_scalar(const VecX& data, Real xi, Real eta) const;
+    Vec3 evaluate_point(const VecX &coords, Real xi, Real eta) const;
+    Real evaluate_scalar(const VecX &data, Real xi, Real eta) const;
 
     // Write using VTU format
     void write_vtu();
 };
 
-}  // namespace drifter
+} // namespace drifter

@@ -3,9 +3,10 @@
 /// @file cg_triharmonic_bezier_bathymetry_smoother.hpp
 /// @brief CG Bezier bathymetry smoother using triharmonic energy
 ///
-/// Uses Continuous Galerkin assembly where DOFs at element boundaries are shared.
-/// Minimizes triharmonic energy (|grad(Laplacian z)|^2) instead of biharmonic
-/// (thin plate) energy, producing surfaces with smoother curvature gradients.
+/// Uses Continuous Galerkin assembly where DOFs at element boundaries are
+/// shared. Minimizes triharmonic energy (|grad(Laplacian z)|^2) instead of
+/// biharmonic (thin plate) energy, producing surfaces with smoother curvature
+/// gradients.
 ///
 /// Key differences from biharmonic (thin plate) smoother:
 ///   - Uses third derivatives instead of second derivatives
@@ -13,7 +14,8 @@
 ///   - Quadratic and cubic functions have zero energy (not just linear)
 ///   - Better for bathymetry that requires gradual depth transitions
 ///
-/// Edge constraints are used for derivative continuity (not vertex constraints).
+/// Edge constraints are used for derivative continuity (not vertex
+/// constraints).
 
 #include "bathymetry/bezier_basis_2d.hpp"
 #include "bathymetry/cg_bezier_dof_manager.hpp"
@@ -80,38 +82,39 @@ struct CGTriharmonicBezierSmootherConfig {
 ///   - Hanging node constraints for non-conforming (AMR) meshes
 ///
 /// Compared to biharmonic (thin plate) smoother, triharmonic produces surfaces
-/// where the curvature changes more gradually, avoiding rapid curvature transitions.
+/// where the curvature changes more gradually, avoiding rapid curvature
+/// transitions.
 class CGTriharmonicBezierBathymetrySmoother {
 public:
     /// @brief Construct smoother for a quadtree mesh
     /// @param mesh 2D quadtree mesh
     /// @param config Configuration parameters
     explicit CGTriharmonicBezierBathymetrySmoother(
-        const QuadtreeAdapter& mesh,
-        const CGTriharmonicBezierSmootherConfig& config = {});
+        const QuadtreeAdapter &mesh,
+        const CGTriharmonicBezierSmootherConfig &config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
     /// @param octree 3D mesh
     /// @param config Configuration parameters
     explicit CGTriharmonicBezierBathymetrySmoother(
-        const OctreeAdapter& octree,
-        const CGTriharmonicBezierSmootherConfig& config = {});
+        const OctreeAdapter &octree,
+        const CGTriharmonicBezierSmootherConfig &config = {});
 
     // =========================================================================
     // Data input
     // =========================================================================
 
     /// @brief Set bathymetry data from a BathymetrySource
-    void set_bathymetry_data(const BathymetrySource& source);
+    void set_bathymetry_data(const BathymetrySource &source);
 
     /// @brief Set bathymetry data from a function
     void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
 
     /// @brief Set scattered XYZ data points
-    void set_scattered_points(const std::vector<Vec3>& points);
+    void set_scattered_points(const std::vector<Vec3> &points);
 
     /// @brief Set scattered data with weights
-    void set_scattered_points(const std::vector<BathymetryPoint>& points);
+    void set_scattered_points(const std::vector<BathymetryPoint> &points);
 
     // =========================================================================
     // Configuration
@@ -133,7 +136,7 @@ public:
     }
 
     /// @brief Get configuration
-    const CGTriharmonicBezierSmootherConfig& config() const { return config_; }
+    const CGTriharmonicBezierSmootherConfig &config() const { return config_; }
 
     // =========================================================================
     // Solve
@@ -163,7 +166,7 @@ public:
     Vec2 evaluate_gradient(Real x, Real y) const;
 
     /// @brief Get full solution vector (all global DOF values)
-    const VecX& solution() const { return solution_; }
+    const VecX &solution() const { return solution_; }
 
     /// @brief Get element control point values
     /// @param elem Element index
@@ -175,13 +178,13 @@ public:
     // =========================================================================
 
     /// @brief Transfer solution to SeabedSurface
-    void transfer_to_seabed(SeabedSurface& seabed) const;
+    void transfer_to_seabed(SeabedSurface &seabed) const;
 
     /// @brief Write smoothed bathymetry to VTK file
-    void write_vtk(const std::string& filename, int resolution = 10) const;
+    void write_vtk(const std::string &filename, int resolution = 10) const;
 
     /// @brief Write control points grid to VTK file
-    void write_control_points_vtk(const std::string& filename) const;
+    void write_control_points_vtk(const std::string &filename) const;
 
     // =========================================================================
     // Diagnostics
@@ -212,15 +215,15 @@ public:
     }
 
     /// @brief Get the mesh
-    const QuadtreeAdapter& mesh() const { return *quadtree_; }
+    const QuadtreeAdapter &mesh() const { return *quadtree_; }
 
     /// @brief Get the DOF manager
-    const CGBezierDofManager& dof_manager() const { return *dof_manager_; }
+    const CGBezierDofManager &dof_manager() const { return *dof_manager_; }
 
 private:
     /// Mesh (owned or referenced)
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter* quadtree_ = nullptr;
+    const QuadtreeAdapter *quadtree_ = nullptr;
 
     /// Configuration
     CGTriharmonicBezierSmootherConfig config_;
@@ -266,4 +269,4 @@ private:
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

@@ -19,22 +19,23 @@ namespace drifter {
 
 /// @brief Vertical stretching function types for sigma coordinates
 enum class SigmaStretchType {
-    Uniform,        ///< Uniform spacing in sigma
-    Surface,        ///< Enhanced resolution near surface (wind-driven mixing)
-    Bottom,         ///< Enhanced resolution near bottom (BBL)
-    SurfaceBottom,  ///< Enhanced at both surface and bottom (Song & Haidvogel)
-    ROMS            ///< ROMS-style stretching (UCLA ocean model)
+    Uniform,       ///< Uniform spacing in sigma
+    Surface,       ///< Enhanced resolution near surface (wind-driven mixing)
+    Bottom,        ///< Enhanced resolution near bottom (BBL)
+    SurfaceBottom, ///< Enhanced at both surface and bottom (Song & Haidvogel)
+    ROMS           ///< ROMS-style stretching (UCLA ocean model)
 };
 
 /// @brief Parameters for sigma stretching functions
 struct SigmaStretchParams {
-    Real theta_s = 5.0;   ///< Surface stretching parameter (0-10)
-    Real theta_b = 0.4;   ///< Bottom stretching parameter (0-1)
-    Real hc = 200.0;      ///< Critical depth (meters) for ROMS stretching
+    Real theta_s = 5.0; ///< Surface stretching parameter (0-10)
+    Real theta_b = 0.4; ///< Bottom stretching parameter (0-1)
+    Real hc = 200.0;    ///< Critical depth (meters) for ROMS stretching
 };
 
 /// @brief Sigma-coordinate transformation class
-/// @details Provides coordinate transforms, metric terms, and stretching functions
+/// @details Provides coordinate transforms, metric terms, and stretching
+/// functions
 class SigmaCoordinate {
 public:
     // =========================================================================
@@ -48,7 +49,8 @@ public:
     /// @return Sigma coordinate in [-1, 0]
     static Real z_to_sigma(Real z, Real eta, Real h) {
         const Real H = eta + h;
-        if (H < 1e-10) return -0.5;  // Degenerate case
+        if (H < 1e-10)
+            return -0.5; // Degenerate case
         return (z - eta) / H;
     }
 
@@ -63,18 +65,14 @@ public:
     }
 
     /// @brief Total water column depth
-    static Real total_depth(Real eta, Real h) {
-        return eta + h;
-    }
+    static Real total_depth(Real eta, Real h) { return eta + h; }
 
     // =========================================================================
     // Metric terms for transformed equations
     // =========================================================================
 
     /// @brief Jacobian dz/dsigma = H (total depth)
-    static Real dz_dsigma(Real eta, Real h) {
-        return eta + h;
-    }
+    static Real dz_dsigma(Real eta, Real h) { return eta + h; }
 
     /// @brief Inverse Jacobian dsigma/dz = 1/H
     static Real dsigma_dz(Real eta, Real h) {
@@ -85,10 +83,11 @@ public:
     /// @brief Horizontal metric term dsigma/dx at constant z
     /// @details For sigma = (z - eta) / H where H = eta + h:
     ///          dsigma/dx|_z = -(deta/dx + sigma * dH/dx) / H
-    static Real dsigma_dx(Real sigma, Real eta, Real h,
-                          Real deta_dx, Real dh_dx) {
+    static Real
+    dsigma_dx(Real sigma, Real eta, Real h, Real deta_dx, Real dh_dx) {
         const Real H = eta + h;
-        if (H < 1e-10) return 0.0;
+        if (H < 1e-10)
+            return 0.0;
         const Real dH_dx = deta_dx + dh_dx;
         return -(deta_dx + sigma * dH_dx) / H;
     }
@@ -96,10 +95,11 @@ public:
     /// @brief Horizontal metric term dsigma/dy at constant z
     /// @details For sigma = (z - eta) / H where H = eta + h:
     ///          dsigma/dy|_z = -(deta/dy + sigma * dH/dy) / H
-    static Real dsigma_dy(Real sigma, Real eta, Real h,
-                          Real deta_dy, Real dh_dy) {
+    static Real
+    dsigma_dy(Real sigma, Real eta, Real h, Real deta_dy, Real dh_dy) {
         const Real H = eta + h;
-        if (H < 1e-10) return 0.0;
+        if (H < 1e-10)
+            return 0.0;
         const Real dH_dy = deta_dy + dh_dy;
         return -(deta_dy + sigma * dH_dy) / H;
     }
@@ -108,7 +108,8 @@ public:
     /// @details dsigma/dt|_z = -(1/H) * deta/dt * (1 + sigma)
     static Real dsigma_dt(Real sigma, Real eta, Real h, Real deta_dt) {
         const Real H = eta + h;
-        if (H < 1e-10) return 0.0;
+        if (H < 1e-10)
+            return 0.0;
         return -(deta_dt * (1.0 + sigma)) / H;
     }
 
@@ -138,28 +139,31 @@ public:
     /// @param type Stretching type
     /// @param params Stretching parameters
     /// @return Stretched sigma value
-    static Real apply_stretching(Real sigma_uniform, SigmaStretchType type,
-                                 const SigmaStretchParams& params = SigmaStretchParams()) {
+    static Real apply_stretching(
+        Real sigma_uniform, SigmaStretchType type,
+        const SigmaStretchParams &params = SigmaStretchParams()) {
         switch (type) {
-            case SigmaStretchType::Uniform:
-                return sigma_uniform;
-            case SigmaStretchType::Surface:
-                return stretch_surface(sigma_uniform, params.theta_s);
-            case SigmaStretchType::Bottom:
-                return stretch_bottom(sigma_uniform, params.theta_b);
-            case SigmaStretchType::SurfaceBottom:
-                return stretch_song_haidvogel(sigma_uniform, params.theta_s, params.theta_b);
-            case SigmaStretchType::ROMS:
-                return stretch_roms(sigma_uniform, params.theta_s, params.theta_b);
-            default:
-                return sigma_uniform;
+        case SigmaStretchType::Uniform:
+            return sigma_uniform;
+        case SigmaStretchType::Surface:
+            return stretch_surface(sigma_uniform, params.theta_s);
+        case SigmaStretchType::Bottom:
+            return stretch_bottom(sigma_uniform, params.theta_b);
+        case SigmaStretchType::SurfaceBottom:
+            return stretch_song_haidvogel(
+                sigma_uniform, params.theta_s, params.theta_b);
+        case SigmaStretchType::ROMS:
+            return stretch_roms(sigma_uniform, params.theta_s, params.theta_b);
+        default:
+            return sigma_uniform;
         }
     }
 
     /// @brief Get derivative of stretched sigma with respect to uniform sigma
     /// @details Needed for Jacobian computation
-    static Real stretching_derivative(Real sigma_uniform, SigmaStretchType type,
-                                      const SigmaStretchParams& params = SigmaStretchParams()) {
+    static Real stretching_derivative(
+        Real sigma_uniform, SigmaStretchType type,
+        const SigmaStretchParams &params = SigmaStretchParams()) {
         // Use central difference for general case
         constexpr Real eps = 1e-6;
         Real sigma_plus = std::min(sigma_uniform + eps, 0.0);
@@ -174,8 +178,9 @@ public:
     /// @param type Stretching type
     /// @param params Stretching parameters
     /// @return Vector of sigma values from -1 to 0
-    static VecX generate_sigma_levels(int n, SigmaStretchType type,
-                                      const SigmaStretchParams& params = SigmaStretchParams()) {
+    static VecX generate_sigma_levels(
+        int n, SigmaStretchType type,
+        const SigmaStretchParams &params = SigmaStretchParams()) {
         VecX sigma(n);
         for (int k = 0; k < n; ++k) {
             // Uniform sigma from -1 to 0
@@ -190,14 +195,14 @@ public:
     // =========================================================================
 
     /// @brief Transform array of z values to sigma (same eta, h for all)
-    static void z_to_sigma_array(const VecX& z, Real eta, Real h, VecX& sigma) {
+    static void z_to_sigma_array(const VecX &z, Real eta, Real h, VecX &sigma) {
         const Real H = eta + h;
         const Real H_inv = (H > 1e-10) ? 1.0 / H : 0.0;
         sigma = (z.array() - eta) * H_inv;
     }
 
     /// @brief Transform array of sigma values to z
-    static void sigma_to_z_array(const VecX& sigma, Real eta, Real h, VecX& z) {
+    static void sigma_to_z_array(const VecX &sigma, Real eta, Real h, VecX &z) {
         const Real H = eta + h;
         z = eta + sigma.array() * H;
     }
@@ -208,14 +213,16 @@ public:
     /// @param h_horiz Bathymetry at 2D horizontal nodes (n_horiz)
     /// @param sigma_1d Sigma values at vertical nodes (n_vert)
     /// @param sigma_3d Output: sigma at all 3D nodes (n_horiz * n_vert)
-    static void compute_sigma_3d(const VecX& eta_horiz, const VecX& h_horiz,
-                                  const VecX& sigma_1d, VecX& sigma_3d) {
+    static void compute_sigma_3d(
+        const VecX &eta_horiz, const VecX &h_horiz, const VecX &sigma_1d,
+        VecX &sigma_3d) {
         const int n_horiz = static_cast<int>(eta_horiz.size());
         const int n_vert = static_cast<int>(sigma_1d.size());
         sigma_3d.resize(n_horiz * n_vert);
 
-        // Tensor product: sigma_3d(i,k) = sigma_1d(k) for all horizontal nodes i
-        // The actual z values depend on eta, h, but sigma itself is just the reference
+        // Tensor product: sigma_3d(i,k) = sigma_1d(k) for all horizontal nodes
+        // i The actual z values depend on eta, h, but sigma itself is just the
+        // reference
         for (int i = 0; i < n_horiz; ++i) {
             for (int k = 0; k < n_vert; ++k) {
                 sigma_3d(i * n_vert + k) = sigma_1d(k);
@@ -224,8 +231,9 @@ public:
     }
 
     /// @brief Compute physical z at all DOFs
-    static void compute_z_3d(const VecX& eta_horiz, const VecX& h_horiz,
-                              const VecX& sigma_1d, VecX& z_3d) {
+    static void compute_z_3d(
+        const VecX &eta_horiz, const VecX &h_horiz, const VecX &sigma_1d,
+        VecX &z_3d) {
         const int n_horiz = static_cast<int>(eta_horiz.size());
         const int n_vert = static_cast<int>(sigma_1d.size());
         z_3d.resize(n_horiz * n_vert);
@@ -246,17 +254,21 @@ private:
     /// @brief Surface-enhanced stretching (tanh-based)
     /// @details C(s) = sinh(theta_s * s) / sinh(theta_s)
     static Real stretch_surface(Real s, Real theta_s) {
-        if (theta_s < 1e-6) return s;
+        if (theta_s < 1e-6)
+            return s;
         return std::sinh(theta_s * s) / std::sinh(theta_s);
     }
 
     /// @brief Bottom-enhanced stretching
-    /// @details Uses exponential-type stretching that concentrates points near bottom (s=-1)
+    /// @details Uses exponential-type stretching that concentrates points near
+    /// bottom (s=-1)
     ///          C(s) = (exp(theta_b*(s+1)) - 1) / (exp(theta_b) - 1) - 1
     ///          Endpoints: C(-1) = -1, C(0) = 0
-    ///          For theta_b > 0: points are pushed toward bottom (C(s) < s for s in (-1, 0))
+    ///          For theta_b > 0: points are pushed toward bottom (C(s) < s for
+    ///          s in (-1, 0))
     static Real stretch_bottom(Real s, Real theta_b) {
-        if (theta_b < 1e-6) return s;
+        if (theta_b < 1e-6)
+            return s;
         // Exponential stretching that gives more resolution near bottom
         // At s=-1: (exp(0) - 1) / (exp(theta_b) - 1) - 1 = 0 - 1 = -1 ✓
         // At s=0: (exp(theta_b) - 1) / (exp(theta_b) - 1) - 1 = 1 - 1 = 0 ✓
@@ -273,7 +285,8 @@ private:
         // where b = (cosh(theta_s) - 1) / (cosh(theta_s) + 1) * theta_b
         const Real Cs = stretch_surface(s, theta_s);
 
-        if (theta_b < 1e-6) return Cs;
+        if (theta_b < 1e-6)
+            return Cs;
 
         const Real cosh_ts = std::cosh(theta_s);
         const Real b = theta_b * (cosh_ts - 1.0) / (cosh_ts + 1.0);
@@ -291,8 +304,8 @@ private:
 
         Real Csur = 0.0;
         if (theta_s > 0.0) {
-            const Real csrf = (1.0 - std::cosh(theta_s * s)) /
-                              (std::cosh(theta_s) - 1.0);
+            const Real csrf =
+                (1.0 - std::cosh(theta_s * s)) / (std::cosh(theta_s) - 1.0);
             Csur = csrf;
         } else {
             Csur = -s * s;
@@ -307,7 +320,7 @@ private:
         }
 
         // Weight surface and bottom
-        const Real weight = (s + 1.0);  // 0 at bottom, 1 at surface
+        const Real weight = (s + 1.0); // 0 at bottom, 1 at surface
         return weight * Csur + (1.0 - weight) * Cbot;
     }
 };
@@ -335,10 +348,10 @@ public:
     /// @param deta_dx, deta_dy Free surface gradients
     /// @param dh_dx, dh_dy Bathymetry gradients
     /// @param deta_dt Free surface time derivative
-    void update(const VecX& sigma, const VecX& eta, const VecX& h,
-                const VecX& deta_dx, const VecX& deta_dy,
-                const VecX& dh_dx, const VecX& dh_dy,
-                const VecX& deta_dt) {
+    void update(
+        const VecX &sigma, const VecX &eta, const VecX &h, const VecX &deta_dx,
+        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy,
+        const VecX &deta_dt) {
         const int n = static_cast<int>(sigma.size());
         resize(n);
 
@@ -349,25 +362,25 @@ public:
                 sigma(i), eta(i), h(i), deta_dx(i), dh_dx(i));
             dsigma_dy_(i) = SigmaCoordinate::dsigma_dy(
                 sigma(i), eta(i), h(i), deta_dy(i), dh_dy(i));
-            dsigma_dt_(i) = SigmaCoordinate::dsigma_dt(
-                sigma(i), eta(i), h(i), deta_dt(i));
+            dsigma_dt_(i) =
+                SigmaCoordinate::dsigma_dt(sigma(i), eta(i), h(i), deta_dt(i));
         }
     }
 
     /// @brief Update metrics without time derivative (steady state)
-    void update_steady(const VecX& sigma, const VecX& eta, const VecX& h,
-                       const VecX& deta_dx, const VecX& deta_dy,
-                       const VecX& dh_dx, const VecX& dh_dy) {
+    void update_steady(
+        const VecX &sigma, const VecX &eta, const VecX &h, const VecX &deta_dx,
+        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy) {
         VecX zero_dt = VecX::Zero(sigma.size());
         update(sigma, eta, h, deta_dx, deta_dy, dh_dx, dh_dy, zero_dt);
     }
 
     // Accessors
-    const VecX& dsigma_dx() const { return dsigma_dx_; }
-    const VecX& dsigma_dy() const { return dsigma_dy_; }
-    const VecX& dsigma_dt() const { return dsigma_dt_; }
-    const VecX& H() const { return H_; }
-    const VecX& H_inv() const { return H_inv_; }
+    const VecX &dsigma_dx() const { return dsigma_dx_; }
+    const VecX &dsigma_dy() const { return dsigma_dy_; }
+    const VecX &dsigma_dt() const { return dsigma_dt_; }
+    const VecX &H() const { return H_; }
+    const VecX &H_inv() const { return H_inv_; }
 
 private:
     VecX dsigma_dx_;
@@ -377,4 +390,4 @@ private:
     VecX H_inv_;
 };
 
-}  // namespace drifter
+} // namespace drifter

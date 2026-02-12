@@ -20,7 +20,7 @@ namespace drifter {
 /// @param x Evaluation point in [-1, 1]
 /// @param L Output: P_n(x)
 /// @param dL Output: P'_n(x)
-inline void legendre_poly_and_derivative(int n, Real x, Real& L, Real& dL) {
+inline void legendre_poly_and_derivative(int n, Real x, Real &L, Real &dL) {
     if (n == 0) {
         L = 1.0;
         dL = 0.0;
@@ -50,40 +50,41 @@ inline void legendre_poly_and_derivative(int n, Real x, Real& L, Real& dL) {
 /// @param n Number of nodes
 /// @param nodes Output: node positions in [-1, 1]
 /// @param weights Output: quadrature weights
-void compute_gauss_legendre_nodes(int n, VecX& nodes, VecX& weights);
+void compute_gauss_legendre_nodes(int n, VecX &nodes, VecX &weights);
 
 /// @brief Compute Legendre-Gauss-Lobatto (LGL) nodes and weights
 /// @details Includes endpoint nodes at -1 and +1
 /// @param n Number of nodes (order + 1)
 /// @param nodes Output: node positions in [-1, 1]
 /// @param weights Output: quadrature weights
-void compute_gauss_lobatto_nodes(int n, VecX& nodes, VecX& weights);
+void compute_gauss_lobatto_nodes(int n, VecX &nodes, VecX &weights);
 
 /// @brief Compute barycentric weights for Lagrange interpolation
 /// @param nodes Node positions
 /// @return Barycentric weights
-VecX compute_barycentric_weights(const VecX& nodes);
+VecX compute_barycentric_weights(const VecX &nodes);
 
 /// @brief Compute 1D derivative matrix for Lagrange interpolation
 /// @details D_ij = l'_j(x_i) where l_j is the j-th Lagrange basis function
 /// @param nodes Node positions
 /// @return Derivative matrix (n x n)
-MatX compute_derivative_matrix_1d(const VecX& nodes);
+MatX compute_derivative_matrix_1d(const VecX &nodes);
 
 /// @brief Compute 1D interpolation matrix from one grid to another
 /// @param from_nodes Source node positions
 /// @param to_nodes Target node positions
 /// @return Interpolation matrix (n_to x n_from)
-MatX compute_interpolation_matrix_1d(const VecX& from_nodes, const VecX& to_nodes);
+MatX compute_interpolation_matrix_1d(
+    const VecX &from_nodes, const VecX &to_nodes);
 
 /// @brief 1D Lagrange basis data for a single direction
 /// @details Contains nodes, weights, derivative matrix, and interpolation
 struct LagrangeBasis1D {
-    int order;            ///< Polynomial order (n_nodes - 1)
-    VecX nodes;           ///< Node positions in [-1, 1]
-    VecX weights;         ///< Quadrature weights
-    VecX bary_weights;    ///< Barycentric weights for interpolation
-    MatX D;               ///< Derivative matrix D_ij = l'_j(x_i)
+    int order;         ///< Polynomial order (n_nodes - 1)
+    VecX nodes;        ///< Node positions in [-1, 1]
+    VecX weights;      ///< Quadrature weights
+    VecX bary_weights; ///< Barycentric weights for interpolation
+    MatX D;            ///< Derivative matrix D_ij = l'_j(x_i)
 
     /// Construct LGL basis
     static LagrangeBasis1D create_lgl(int order);
@@ -109,9 +110,8 @@ public:
     /// @param order Polynomial order (same in all directions)
     /// @param lgl_for_velocity Use LGL nodes for velocity grid (default true)
     /// @param gl_for_tracers Use GL nodes for tracer grid (default true)
-    explicit HexahedronBasis(int order,
-                             bool lgl_for_velocity = true,
-                             bool gl_for_tracers = true);
+    explicit HexahedronBasis(
+        int order, bool lgl_for_velocity = true, bool gl_for_tracers = true);
 
     /// Polynomial order
     int order() const { return order_; }
@@ -133,80 +133,91 @@ public:
     // =========================================================================
 
     /// Get 1D LGL basis
-    const LagrangeBasis1D& lgl_basis_1d() const { return lgl_1d_; }
+    const LagrangeBasis1D &lgl_basis_1d() const { return lgl_1d_; }
 
     /// Get LGL nodes in reference element
-    const std::vector<Vec3>& lgl_nodes() const { return lgl_nodes_3d_; }
+    const std::vector<Vec3> &lgl_nodes() const { return lgl_nodes_3d_; }
 
     /// Differentiation matrix in xi direction (LGL grid)
-    const MatX& D_xi_lgl() const { return D_xi_lgl_; }
+    const MatX &D_xi_lgl() const { return D_xi_lgl_; }
 
     /// Differentiation matrix in eta direction (LGL grid)
-    const MatX& D_eta_lgl() const { return D_eta_lgl_; }
+    const MatX &D_eta_lgl() const { return D_eta_lgl_; }
 
     /// Differentiation matrix in zeta direction (LGL grid)
-    const MatX& D_zeta_lgl() const { return D_zeta_lgl_; }
+    const MatX &D_zeta_lgl() const { return D_zeta_lgl_; }
 
     /// Mass matrix on LGL grid (diagonal for tensor-product)
-    const MatX& mass_lgl() const { return mass_lgl_; }
+    const MatX &mass_lgl() const { return mass_lgl_; }
 
     /// Inverse mass matrix on LGL grid
-    const MatX& mass_inv_lgl() const { return mass_inv_lgl_; }
+    const MatX &mass_inv_lgl() const { return mass_inv_lgl_; }
 
     // =========================================================================
     // GL (tracer) grid operators
     // =========================================================================
 
     /// Get 1D GL basis
-    const LagrangeBasis1D& gl_basis_1d() const { return gl_1d_; }
+    const LagrangeBasis1D &gl_basis_1d() const { return gl_1d_; }
 
     /// Get GL nodes in reference element
-    const std::vector<Vec3>& gl_nodes() const { return gl_nodes_3d_; }
+    const std::vector<Vec3> &gl_nodes() const { return gl_nodes_3d_; }
 
     /// Differentiation matrix in xi direction (GL grid)
-    const MatX& D_xi_gl() const { return D_xi_gl_; }
+    const MatX &D_xi_gl() const { return D_xi_gl_; }
 
     /// Differentiation matrix in eta direction (GL grid)
-    const MatX& D_eta_gl() const { return D_eta_gl_; }
+    const MatX &D_eta_gl() const { return D_eta_gl_; }
 
     /// Differentiation matrix in zeta direction (GL grid)
-    const MatX& D_zeta_gl() const { return D_zeta_gl_; }
+    const MatX &D_zeta_gl() const { return D_zeta_gl_; }
 
     /// Mass matrix on GL grid (diagonal for tensor-product)
-    const MatX& mass_gl() const { return mass_gl_; }
+    const MatX &mass_gl() const { return mass_gl_; }
 
     /// Inverse mass matrix on GL grid
-    const MatX& mass_inv_gl() const { return mass_inv_gl_; }
+    const MatX &mass_inv_gl() const { return mass_inv_gl_; }
 
     // =========================================================================
     // Grid interpolation operators
     // =========================================================================
 
-    /// Interpolate from LGL to GL grid (for advection: u from LGL, apply to tracer on GL)
-    const MatX& lgl_to_gl() const { return lgl_to_gl_; }
+    /// Interpolate from LGL to GL grid (for advection: u from LGL, apply to
+    /// tracer on GL)
+    const MatX &lgl_to_gl() const { return lgl_to_gl_; }
 
     /// Interpolate from GL to LGL grid
-    const MatX& gl_to_lgl() const { return gl_to_lgl_; }
+    const MatX &gl_to_lgl() const { return gl_to_lgl_; }
 
     // =========================================================================
     // Face interpolation operators
     // =========================================================================
 
     /// Interpolation matrix from LGL volume nodes to face quadrature points
-    /// @param face_id Face ID (0-5): 0,1=xi faces, 2,3=eta faces, 4,5=zeta faces
-    const MatX& interp_to_face_lgl(int face_id) const { return interp_to_face_lgl_[face_id]; }
+    /// @param face_id Face ID (0-5): 0,1=xi faces, 2,3=eta faces, 4,5=zeta
+    /// faces
+    const MatX &interp_to_face_lgl(int face_id) const {
+        return interp_to_face_lgl_[face_id];
+    }
 
     /// Interpolation matrix from GL volume nodes to face quadrature points
     /// @param face_id Face ID (0-5)
-    const MatX& interp_to_face_gl(int face_id) const { return interp_to_face_gl_[face_id]; }
+    const MatX &interp_to_face_gl(int face_id) const {
+        return interp_to_face_gl_[face_id];
+    }
 
-    /// Get face quadrature nodes in 2D reference coordinates (tangent directions)
+    /// Get face quadrature nodes in 2D reference coordinates (tangent
+    /// directions)
     /// @param face_id Face ID (0-5)
-    const std::vector<Vec2>& face_quad_nodes(int face_id) const { return face_quad_nodes_[face_id]; }
+    const std::vector<Vec2> &face_quad_nodes(int face_id) const {
+        return face_quad_nodes_[face_id];
+    }
 
     /// Get face quadrature weights
     /// @param face_id Face ID (0-5)
-    const VecX& face_quad_weights(int face_id) const { return face_quad_weights_[face_id]; }
+    const VecX &face_quad_weights(int face_id) const {
+        return face_quad_weights_[face_id];
+    }
 
     // =========================================================================
     // Sub-face interpolation for non-conforming interfaces
@@ -218,9 +229,9 @@ public:
     /// @param conn_type Face connection type
     /// @param use_lgl Use LGL grid (true) or GL grid (false)
     /// @return Interpolation matrix from volume to sub-face quadrature points
-    MatX interp_to_subface(int face_id, int subface_idx,
-                           FaceConnectionType conn_type,
-                           bool use_lgl) const;
+    MatX interp_to_subface(
+        int face_id, int subface_idx, FaceConnectionType conn_type,
+        bool use_lgl) const;
 
     // =========================================================================
     // Evaluation at arbitrary points
@@ -229,18 +240,18 @@ public:
     /// Evaluate LGL basis functions at a point in reference coordinates
     /// @param xi Reference coordinates (xi, eta, zeta) in [-1, 1]^3
     /// @return Vector of basis function values (length = num_dofs_velocity)
-    VecX evaluate_lgl(const Vec3& xi) const;
+    VecX evaluate_lgl(const Vec3 &xi) const;
 
     /// Evaluate GL basis functions at a point in reference coordinates
-    VecX evaluate_gl(const Vec3& xi) const;
+    VecX evaluate_gl(const Vec3 &xi) const;
 
     /// Evaluate gradient of LGL basis functions at a point
     /// @param xi Reference coordinates
     /// @return Matrix (num_dofs x 3) with columns [dN/dxi, dN/deta, dN/dzeta]
-    MatX evaluate_gradient_lgl(const Vec3& xi) const;
+    MatX evaluate_gradient_lgl(const Vec3 &xi) const;
 
     /// Evaluate gradient of GL basis functions at a point
-    MatX evaluate_gradient_gl(const Vec3& xi) const;
+    MatX evaluate_gradient_gl(const Vec3 &xi) const;
 
     // =========================================================================
     // DOF indexing
@@ -255,7 +266,7 @@ public:
     }
 
     /// Extract (i, j, k) indices from linear DOF index
-    static void dof_indices(int dof, int order, int& i, int& j, int& k) {
+    static void dof_indices(int dof, int order, int &i, int &j, int &k) {
         int np = order + 1;
         k = dof / (np * np);
         int rem = dof % (np * np);
@@ -303,8 +314,10 @@ private:
     void build_face_interpolation();
 
     // Helper for tensor-product evaluation (eliminates LGL/GL duplication)
-    VecX evaluate_tensor_product(const Vec3& xi, const LagrangeBasis1D& basis_1d) const;
-    MatX evaluate_gradient_tensor_product(const Vec3& xi, const LagrangeBasis1D& basis_1d) const;
+    VecX evaluate_tensor_product(
+        const Vec3 &xi, const LagrangeBasis1D &basis_1d) const;
+    MatX evaluate_gradient_tensor_product(
+        const Vec3 &xi, const LagrangeBasis1D &basis_1d) const;
 };
 
 // =============================================================================
@@ -354,11 +367,12 @@ inline VecX LagrangeBasis1D::evaluate_derivative(Real xi) const {
     VecX phi = evaluate(xi);
 
     // Then compute derivatives using the formula:
-    // l'_j(x) = l_j(x) * sum_{k != j} 1/(x - x_k) - l_j(x) * sum_{k} 1/(x - x_k)
-    // Or use the derivative matrix: dphi = D * phi (at nodes)
+    // l'_j(x) = l_j(x) * sum_{k != j} 1/(x - x_k) - l_j(x) * sum_{k} 1/(x -
+    // x_k) Or use the derivative matrix: dphi = D * phi (at nodes)
 
     // For arbitrary points, use:
-    // l'_j(x) = (w_j / (x - x_j)) * (sum_k l_k(x)/(x - x_k) - l_j(x)/(x - x_j)) / sum
+    // l'_j(x) = (w_j / (x - x_j)) * (sum_k l_k(x)/(x - x_k) - l_j(x)/(x - x_j))
+    // / sum
 
     bool at_node = false;
     int node_idx = -1;
@@ -398,8 +412,8 @@ inline VecX LagrangeBasis1D::evaluate_derivative(Real xi) const {
     return dphi;
 }
 
-inline VecX HexahedronBasis::evaluate_tensor_product(const Vec3& xi,
-                                                      const LagrangeBasis1D& basis_1d) const {
+inline VecX HexahedronBasis::evaluate_tensor_product(
+    const Vec3 &xi, const LagrangeBasis1D &basis_1d) const {
     VecX phi_xi = basis_1d.evaluate(xi(0));
     VecX phi_eta = basis_1d.evaluate(xi(1));
     VecX phi_zeta = basis_1d.evaluate(xi(2));
@@ -420,16 +434,16 @@ inline VecX HexahedronBasis::evaluate_tensor_product(const Vec3& xi,
     return phi;
 }
 
-inline VecX HexahedronBasis::evaluate_lgl(const Vec3& xi) const {
+inline VecX HexahedronBasis::evaluate_lgl(const Vec3 &xi) const {
     return evaluate_tensor_product(xi, lgl_1d_);
 }
 
-inline VecX HexahedronBasis::evaluate_gl(const Vec3& xi) const {
+inline VecX HexahedronBasis::evaluate_gl(const Vec3 &xi) const {
     return evaluate_tensor_product(xi, gl_1d_);
 }
 
-inline MatX HexahedronBasis::evaluate_gradient_tensor_product(const Vec3& xi,
-                                                               const LagrangeBasis1D& basis_1d) const {
+inline MatX HexahedronBasis::evaluate_gradient_tensor_product(
+    const Vec3 &xi, const LagrangeBasis1D &basis_1d) const {
     VecX phi_xi = basis_1d.evaluate(xi(0));
     VecX phi_eta = basis_1d.evaluate(xi(1));
     VecX phi_zeta = basis_1d.evaluate(xi(2));
@@ -456,12 +470,12 @@ inline MatX HexahedronBasis::evaluate_gradient_tensor_product(const Vec3& xi,
     return grad;
 }
 
-inline MatX HexahedronBasis::evaluate_gradient_lgl(const Vec3& xi) const {
+inline MatX HexahedronBasis::evaluate_gradient_lgl(const Vec3 &xi) const {
     return evaluate_gradient_tensor_product(xi, lgl_1d_);
 }
 
-inline MatX HexahedronBasis::evaluate_gradient_gl(const Vec3& xi) const {
+inline MatX HexahedronBasis::evaluate_gradient_gl(const Vec3 &xi) const {
     return evaluate_gradient_tensor_product(xi, gl_1d_);
 }
 
-}  // namespace drifter
+} // namespace drifter

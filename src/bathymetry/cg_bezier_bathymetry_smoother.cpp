@@ -1,6 +1,6 @@
 #include "bathymetry/cg_bezier_bathymetry_smoother.hpp"
-#include "bathymetry/bezier_data_fitting.hpp"  // For BathymetrySource, BathymetryPoint
-#include "dg/basis_hexahedron.hpp"             // For compute_gauss_lobatto_nodes
+#include "bathymetry/bezier_data_fitting.hpp" // For BathymetrySource, BathymetryPoint
+#include "dg/basis_hexahedron.hpp"            // For compute_gauss_lobatto_nodes
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
@@ -18,7 +18,7 @@ namespace drifter {
 namespace {
 
 // Gauss-Legendre points and weights on [0, 1]
-void gauss_legendre_01(int n, std::vector<Real>& pts, std::vector<Real>& wts) {
+void gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
     pts.resize(n);
     wts.resize(n);
 
@@ -47,11 +47,15 @@ void gauss_legendre_01(int n, std::vector<Real>& pts, std::vector<Real>& wts) {
         wts[0] = wts[3] = 0.5 * wb;
         wts[1] = wts[2] = 0.5 * wa;
     } else if (n == 5) {
-        pts[0] = 0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
-        pts[1] = 0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[0] =
+            0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[1] =
+            0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
         pts[2] = 0.5;
-        pts[3] = 0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
-        pts[4] = 0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[3] =
+            0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[4] =
+            0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
         wts[0] = wts[4] = 0.5 * (322.0 - 13.0 * std::sqrt(70.0)) / 900.0;
         wts[1] = wts[3] = 0.5 * (322.0 + 13.0 * std::sqrt(70.0)) / 900.0;
         wts[2] = 0.5 * 128.0 / 225.0;
@@ -61,24 +65,25 @@ void gauss_legendre_01(int n, std::vector<Real>& pts, std::vector<Real>& wts) {
                0.61930959304160, 0.83060469323313, 0.96623475710158};
         wts = {0.08566224618959, 0.18038078652407, 0.23395696728635,
                0.23395696728635, 0.18038078652407, 0.08566224618959};
-        for (auto& w : wts) w *= 0.5;
+        for (auto &w : wts)
+            w *= 0.5;
     }
 }
 
-}  // anonymous namespace
+} // anonymous namespace
 
 // =============================================================================
 // Construction
 // =============================================================================
 
 CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
-    const QuadtreeAdapter& mesh, const CGBezierSmootherConfig& config)
+    const QuadtreeAdapter &mesh, const CGBezierSmootherConfig &config)
     : quadtree_(&mesh), config_(config) {
     init_components();
 }
 
 CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
-    const OctreeAdapter& octree, const CGBezierSmootherConfig& config)
+    const OctreeAdapter &octree, const CGBezierSmootherConfig &config)
     : config_(config) {
     // Create QuadtreeAdapter from octree bottom face
     quadtree_owned_ = std::make_unique<QuadtreeAdapter>(octree);
@@ -88,8 +93,8 @@ CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
 
 void CGBezierBathymetrySmoother::init_components() {
     basis_ = std::make_unique<BezierBasis2D>();
-    thin_plate_hessian_ = std::make_unique<ThinPlateHessian>(config_.ngauss_energy,
-                                                              config_.gradient_weight);
+    thin_plate_hessian_ = std::make_unique<ThinPlateHessian>(
+        config_.ngauss_energy, config_.gradient_weight);
     dof_manager_ = std::make_unique<CGBezierDofManager>(*quadtree_);
 
     // Build edge derivative constraints if enabled
@@ -105,8 +110,10 @@ void CGBezierBathymetrySmoother::init_components() {
 // Data input
 // =============================================================================
 
-void CGBezierBathymetrySmoother::set_bathymetry_data(const BathymetrySource& source) {
-    set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
+void CGBezierBathymetrySmoother::set_bathymetry_data(
+    const BathymetrySource &source) {
+    set_bathymetry_data(
+        [&source](Real x, Real y) { return source.evaluate(x, y); });
 }
 
 void CGBezierBathymetrySmoother::set_bathymetry_data(
@@ -116,17 +123,18 @@ void CGBezierBathymetrySmoother::set_bathymetry_data(
     data_set_ = true;
 }
 
-void CGBezierBathymetrySmoother::set_scattered_points(const std::vector<Vec3>& points) {
+void CGBezierBathymetrySmoother::set_scattered_points(
+    const std::vector<Vec3> &points) {
     std::vector<BathymetryPoint> bathy_points;
     bathy_points.reserve(points.size());
-    for (const auto& p : points) {
+    for (const auto &p : points) {
         bathy_points.emplace_back(p(0), p(1), p(2), 1.0);
     }
     set_scattered_points(bathy_points);
 }
 
 void CGBezierBathymetrySmoother::set_scattered_points(
-    const std::vector<BathymetryPoint>& points) {
+    const std::vector<BathymetryPoint> &points) {
     // Build a function that returns nearest point value (simple approach)
     // For production, should use proper scattered data interpolation
 
@@ -136,7 +144,7 @@ void CGBezierBathymetrySmoother::set_scattered_points(
     auto bathy_func = [pts](Real x, Real y) -> Real {
         Real min_dist = std::numeric_limits<Real>::max();
         Real value = 0.0;
-        for (const auto& p : pts) {
+        for (const auto &p : pts) {
             Real dx = x - p.x;
             Real dy = y - p.y;
             Real dist = dx * dx + dy * dy;
@@ -172,7 +180,7 @@ void CGBezierBathymetrySmoother::assemble_thin_plate_hessian() {
         MatX H_local = thin_plate_hessian_->scaled_hessian(dx, dy);
 
         // Get global DOF indices for this element
-        const auto& global_dofs = dof_manager_->element_dofs(elem);
+        const auto &global_dofs = dof_manager_->element_dofs(elem);
 
         // Assemble into global matrix with CG connectivity
         for (int i = 0; i < BezierBasis2D::NDOF; ++i) {
@@ -208,12 +216,12 @@ void CGBezierBathymetrySmoother::assemble_data_fitting(
     dTWd_global_ = 0.0;
 
     for (Index elem = 0; elem < num_elements; ++elem) {
-        const auto& bounds = quadtree_->element_bounds(elem);
+        const auto &bounds = quadtree_->element_bounds(elem);
         Real dx = bounds.xmax - bounds.xmin;
         Real dy = bounds.ymax - bounds.ymin;
         Real jacobian = dx * dy;
 
-        const auto& global_dofs = dof_manager_->element_dofs(elem);
+        const auto &global_dofs = dof_manager_->element_dofs(elem);
 
         // Integrate over element using Gauss quadrature
         for (int qi = 0; qi < ngauss; ++qi) {
@@ -263,7 +271,8 @@ void CGBezierBathymetrySmoother::solve() {
             "CGBezierBathymetrySmoother: bathymetry data not set");
     }
 
-    // Use constrained solve if we have any constraints (hanging nodes or edge derivatives)
+    // Use constrained solve if we have any constraints (hanging nodes or edge
+    // derivatives)
     Index total_constraints = dof_manager_->num_constraints() +
                               dof_manager_->num_edge_derivative_constraints();
 
@@ -283,14 +292,16 @@ void CGBezierBathymetrySmoother::solve_unconstrained() {
     // Q = alpha * H + lambda * (B^T W B + epsilon * I)
     // where alpha normalizes H to have similar magnitude to B^T W B
 
-    // Compute scale factor to normalize thin plate Hessian to comparable magnitude as BtWB
-    // Note: H can be very small for large elements (scales as 1/element_size^3 for curvature)
-    // We only set alpha=0 for truly zero H (constant/linear functions have exactly zero curvature)
+    // Compute scale factor to normalize thin plate Hessian to comparable
+    // magnitude as BtWB Note: H can be very small for large elements (scales as
+    // 1/element_size^3 for curvature) We only set alpha=0 for truly zero H
+    // (constant/linear functions have exactly zero curvature)
     Real norm_BtWB = BtWB_global_.norm();
     Real norm_H = H_global_.norm();
     Real alpha = 0.0;
     if (norm_H > 1e-14) {
-        // Always normalize H if it's nonzero - the previous threshold was too aggressive
+        // Always normalize H if it's nonzero - the previous threshold was too
+        // aggressive
         alpha = norm_BtWB / norm_H;
     }
 
@@ -323,7 +334,8 @@ void CGBezierBathymetrySmoother::solve_unconstrained() {
 void CGBezierBathymetrySmoother::solve_with_constraints() {
     Index num_dofs = dof_manager_->num_global_dofs();
     Index num_hanging_constraints = dof_manager_->num_constraints();
-    Index num_edge_constraints = dof_manager_->num_edge_derivative_constraints();
+    Index num_edge_constraints =
+        dof_manager_->num_edge_derivative_constraints();
     Index num_constraints = num_hanging_constraints + num_edge_constraints;
 
     // Build Q matrix (same as unconstrained)
@@ -343,12 +355,12 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
 
     // Build combined constraint matrix A
     std::vector<Eigen::Triplet<Real>> A_triplets;
-    A_triplets.reserve(num_constraints * 50);  // Estimate non-zeros
+    A_triplets.reserve(num_constraints * 50); // Estimate non-zeros
 
     Index row = 0;
 
     // Add hanging node constraints
-    for (const auto& hc : dof_manager_->constraints()) {
+    for (const auto &hc : dof_manager_->constraints()) {
         A_triplets.emplace_back(row, hc.slave_dof, 1.0);
         for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
             A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
@@ -358,9 +370,9 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
 
     // Add edge derivative constraints (at Gauss points along shared edges)
     // Form: sum(c1_k * phi1_k) / scale1 - sum(c2_k * phi2_k) / scale2 = 0
-    for (const auto& ec : dof_manager_->edge_derivative_constraints()) {
-        const auto& global_dofs1 = dof_manager_->element_dofs(ec.elem1);
-        const auto& global_dofs2 = dof_manager_->element_dofs(ec.elem2);
+    for (const auto &ec : dof_manager_->edge_derivative_constraints()) {
+        const auto &global_dofs1 = dof_manager_->element_dofs(ec.elem1);
+        const auto &global_dofs2 = dof_manager_->element_dofs(ec.elem2);
 
         // Element 1 contribution (positive)
         for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
@@ -416,9 +428,10 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
     SpMat KKT(kkt_size, kkt_size);
     KKT.setFromTriplets(triplets.begin(), triplets.end());
 
-    // Add small regularization to the (2,2) block to handle redundant constraints
-    // This is augmented Lagrangian: [Q A^T; A -εI][x; μ] = [-c; 0]
-    // With ε small, this minimizes constraint violation when constraints are redundant
+    // Add small regularization to the (2,2) block to handle redundant
+    // constraints This is augmented Lagrangian: [Q A^T; A -εI][x; μ] = [-c; 0]
+    // With ε small, this minimizes constraint violation when constraints are
+    // redundant
     Real constraint_reg = 1e-10;
     for (Index i = num_dofs; i < kkt_size; ++i) {
         KKT.coeffRef(i, i) -= constraint_reg;
@@ -450,7 +463,7 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
     // This corrects small violations introduced by the KKT regularization
     // Formula: x = x - Aᵀ(AAᵀ)⁻¹(Ax - b), with b=0
     if (num_constraints > 0) {
-        VecX Ax = A * solution_;  // Constraint violation
+        VecX Ax = A * solution_; // Constraint violation
 
         // Compute (AAᵀ)⁻¹ * Ax
         SpMat AAt = A * A.transpose();
@@ -479,18 +492,18 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
 
 Index CGBezierBathymetrySmoother::find_element(Real x, Real y) const {
     for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
-        const auto& bounds = quadtree_->element_bounds(elem);
-        if (x >= bounds.xmin && x <= bounds.xmax &&
-            y >= bounds.ymin && y <= bounds.ymax) {
+        const auto &bounds = quadtree_->element_bounds(elem);
+        if (x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin &&
+            y <= bounds.ymax) {
             return elem;
         }
     }
-    return -1;  // Point outside domain
+    return -1; // Point outside domain
 }
 
-Real CGBezierBathymetrySmoother::evaluate_in_element(Index elem, Real x,
-                                                      Real y) const {
-    const auto& bounds = quadtree_->element_bounds(elem);
+Real CGBezierBathymetrySmoother::evaluate_in_element(
+    Index elem, Real x, Real y) const {
+    const auto &bounds = quadtree_->element_bounds(elem);
 
     // Map to parameter space [0, 1]^2
     Real u = (x - bounds.xmin) / (bounds.xmax - bounds.xmin);
@@ -520,7 +533,7 @@ Real CGBezierBathymetrySmoother::evaluate(Real x, Real y) const {
         Real min_dist = std::numeric_limits<Real>::max();
         Index closest = 0;
         for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-            const auto& b = quadtree_->element_bounds(e);
+            const auto &b = quadtree_->element_bounds(e);
             Real cx = 0.5 * (b.xmin + b.xmax);
             Real cy = 0.5 * (b.ymin + b.ymax);
             Real dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
@@ -535,9 +548,9 @@ Real CGBezierBathymetrySmoother::evaluate(Real x, Real y) const {
     return evaluate_in_element(elem, x, y);
 }
 
-Vec2 CGBezierBathymetrySmoother::evaluate_gradient_in_element(Index elem, Real x,
-                                                               Real y) const {
-    const auto& bounds = quadtree_->element_bounds(elem);
+Vec2 CGBezierBathymetrySmoother::evaluate_gradient_in_element(
+    Index elem, Real x, Real y) const {
+    const auto &bounds = quadtree_->element_bounds(elem);
     Real dx = bounds.xmax - bounds.xmin;
     Real dy = bounds.ymax - bounds.ymin;
 
@@ -574,7 +587,7 @@ Vec2 CGBezierBathymetrySmoother::evaluate_gradient(Real x, Real y) const {
         Real min_dist = std::numeric_limits<Real>::max();
         Index closest = 0;
         for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-            const auto& b = quadtree_->element_bounds(e);
+            const auto &b = quadtree_->element_bounds(e);
             Real cx = 0.5 * (b.xmin + b.xmax);
             Real cy = 0.5 * (b.ymin + b.ymax);
             Real dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
@@ -590,7 +603,7 @@ Vec2 CGBezierBathymetrySmoother::evaluate_gradient(Real x, Real y) const {
 }
 
 VecX CGBezierBathymetrySmoother::element_coefficients(Index elem) const {
-    const auto& global_dofs = dof_manager_->element_dofs(elem);
+    const auto &global_dofs = dof_manager_->element_dofs(elem);
     VecX coeffs(BezierBasis2D::NDOF);
     for (int i = 0; i < BezierBasis2D::NDOF; ++i) {
         coeffs(i) = solution_(global_dofs[i]);
@@ -602,7 +615,8 @@ VecX CGBezierBathymetrySmoother::element_coefficients(Index elem) const {
 // Transfer and output
 // =============================================================================
 
-void CGBezierBathymetrySmoother::transfer_to_seabed(SeabedSurface& seabed) const {
+void CGBezierBathymetrySmoother::transfer_to_seabed(
+    SeabedSurface &seabed) const {
     if (!solved_) {
         throw std::runtime_error(
             "CGBezierBathymetrySmoother: must call solve() before "
@@ -616,8 +630,8 @@ void CGBezierBathymetrySmoother::transfer_to_seabed(SeabedSurface& seabed) const
     }
 }
 
-void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
-                                            int resolution) const {
+void CGBezierBathymetrySmoother::write_vtk(
+    const std::string &filename, int resolution) const {
     if (!solved_) {
         throw std::runtime_error(
             "CGBezierBathymetrySmoother: must call solve() before write_vtk()");
@@ -626,15 +640,12 @@ void CGBezierBathymetrySmoother::write_vtk(const std::string& filename,
     // Use CG-aware VTK writer that deduplicates shared vertices at element
     // boundaries, producing a properly connected mesh without visual gaps
     io::write_cg_bezier_surface_vtk(
-        filename,
-        *quadtree_,
-        [this](Real x, Real y) { return evaluate(x, y); },
-        resolution > 0 ? resolution : 11,
-        "elevation");
+        filename, *quadtree_, [this](Real x, Real y) { return evaluate(x, y); },
+        resolution > 0 ? resolution : 11, "elevation");
 }
 
 void CGBezierBathymetrySmoother::write_control_points_vtk(
-    const std::string& filename) const {
+    const std::string &filename) const {
     if (!solved_) {
         throw std::runtime_error(
             "CGBezierBathymetrySmoother: must call solve() before "
@@ -642,8 +653,7 @@ void CGBezierBathymetrySmoother::write_control_points_vtk(
     }
 
     io::write_bezier_control_points_vtk(
-        filename,
-        *quadtree_,
+        filename, *quadtree_,
         [this](Index e) { return element_coefficients(e); },
         [](int dof) {
             int i = dof % 6;
@@ -658,19 +668,22 @@ void CGBezierBathymetrySmoother::write_control_points_vtk(
 // =============================================================================
 
 Real CGBezierBathymetrySmoother::data_residual() const {
-    if (!solved_) return 0.0;
+    if (!solved_)
+        return 0.0;
     // ||B*x - d||^2_W = x^T * B^T W B * x - 2 * x^T * B^T W d + d^T W d
     return solution_.dot(BtWB_global_ * solution_) -
            2.0 * solution_.dot(BtWd_global_) + dTWd_global_;
 }
 
 Real CGBezierBathymetrySmoother::regularization_energy() const {
-    if (!solved_) return 0.0;
+    if (!solved_)
+        return 0.0;
     return solution_.dot(H_global_ * solution_);
 }
 
 Real CGBezierBathymetrySmoother::objective_value() const {
-    if (!solved_) return 0.0;
+    if (!solved_)
+        return 0.0;
     Real norm_BtWB = BtWB_global_.norm();
     Real norm_H = H_global_.norm();
     Real alpha = (norm_H > 1e-14) ? norm_BtWB / norm_H : 1.0;
@@ -683,7 +696,8 @@ Real CGBezierBathymetrySmoother::constraint_violation() const {
     Index num_edge = dof_manager_->num_edge_derivative_constraints();
     Index num_constraints = num_hanging + num_edge;
 
-    if (!solved_ || num_constraints == 0) return 0.0;
+    if (!solved_ || num_constraints == 0)
+        return 0.0;
 
     // Build full constraint matrix (same as in solve_with_constraints)
     Index num_dofs = dof_manager_->num_global_dofs();
@@ -691,7 +705,7 @@ Real CGBezierBathymetrySmoother::constraint_violation() const {
     Index row = 0;
 
     // Hanging node constraints
-    for (const auto& hc : dof_manager_->constraints()) {
+    for (const auto &hc : dof_manager_->constraints()) {
         A_triplets.emplace_back(row, hc.slave_dof, 1.0);
         for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
             A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
@@ -700,9 +714,9 @@ Real CGBezierBathymetrySmoother::constraint_violation() const {
     }
 
     // Edge derivative constraints
-    for (const auto& ec : dof_manager_->edge_derivative_constraints()) {
-        const auto& global_dofs1 = dof_manager_->element_dofs(ec.elem1);
-        const auto& global_dofs2 = dof_manager_->element_dofs(ec.elem2);
+    for (const auto &ec : dof_manager_->edge_derivative_constraints()) {
+        const auto &global_dofs1 = dof_manager_->element_dofs(ec.elem1);
+        const auto &global_dofs2 = dof_manager_->element_dofs(ec.elem2);
 
         for (int k = 0; k < BezierBasis2D::NDOF; ++k) {
             Real coeff = ec.coeffs1(k) / ec.scale1;
@@ -726,4 +740,4 @@ Real CGBezierBathymetrySmoother::constraint_violation() const {
     return violation.norm();
 }
 
-}  // namespace drifter
+} // namespace drifter

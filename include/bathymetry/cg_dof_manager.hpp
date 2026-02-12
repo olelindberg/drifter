@@ -21,12 +21,12 @@
 //   Index n_dofs = dofs.num_global_dofs();
 //   const auto& elem_dofs = dofs.element_dofs(elem_idx);
 
-#include "core/types.hpp"
-#include "bathymetry/quadtree_adapter.hpp"
 #include "bathymetry/lagrange_basis_2d.hpp"
-#include <vector>
+#include "bathymetry/quadtree_adapter.hpp"
+#include "core/types.hpp"
 #include <map>
 #include <set>
+#include <vector>
 
 namespace drifter {
 
@@ -68,9 +68,9 @@ struct C2Constraint {
 
     /// Constraint type (for debugging)
     enum class Type {
-        Value,      // u constraint
-        Gradient,   // ∂u/∂n constraint (reserved for future use)
-        Hessian     // ∂²u/∂n² constraint (reserved for future use)
+        Value,    // u constraint
+        Gradient, // ∂u/∂n constraint (reserved for future use)
+        Hessian   // ∂²u/∂n² constraint (reserved for future use)
     };
     Type type = Type::Value;
 };
@@ -84,7 +84,7 @@ public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh
     /// @param basis Lagrange basis functions
-    CGDofManager(const QuadtreeAdapter& mesh, const LagrangeBasis2D& basis);
+    CGDofManager(const QuadtreeAdapter &mesh, const LagrangeBasis2D &basis);
 
     // =========================================================================
     // DOF queries
@@ -100,10 +100,10 @@ public:
     int num_element_dofs() const { return basis_.num_dofs(); }
 
     /// Get global DOF indices for an element
-    const std::vector<Index>& element_dofs(Index elem) const;
+    const std::vector<Index> &element_dofs(Index elem) const;
 
     /// Get local-to-global DOF mapping for all elements
-    const std::vector<std::vector<Index>>& all_element_dofs() const {
+    const std::vector<std::vector<Index>> &all_element_dofs() const {
         return elem_to_global_;
     }
 
@@ -111,7 +111,7 @@ public:
     bool is_boundary_dof(Index dof) const;
 
     /// Get all DOFs on domain boundary
-    const std::vector<Index>& boundary_dofs() const { return boundary_dofs_; }
+    const std::vector<Index> &boundary_dofs() const { return boundary_dofs_; }
 
     /// Get DOF indices at domain corners (4 corners)
     std::vector<Index> domain_corner_dofs() const;
@@ -121,8 +121,9 @@ public:
     // =========================================================================
 
     /// Apply Dirichlet constraints at domain corners
-    /// @param corner_values Values at corners: [bottom-left, bottom-right, top-left, top-right]
-    void apply_corner_dirichlet(const std::vector<Real>& corner_values);
+    /// @param corner_values Values at corners: [bottom-left, bottom-right,
+    /// top-left, top-right]
+    void apply_corner_dirichlet(const std::vector<Real> &corner_values);
 
     /// Apply a single Dirichlet constraint
     /// @param dof DOF index to constrain
@@ -130,7 +131,9 @@ public:
     void apply_single_dirichlet(Index dof, Real value);
 
     /// Get all constraints
-    const std::vector<C2Constraint>& constraints() const { return constraints_; }
+    const std::vector<C2Constraint> &constraints() const {
+        return constraints_;
+    }
 
     /// Check if a DOF is constrained (slave)
     bool is_constrained(Index dof) const;
@@ -145,19 +148,20 @@ public:
 
     /// @brief Transform stiffness matrix via constraint elimination
     /// @param K Global stiffness matrix (num_global_dofs x num_global_dofs)
-    /// @return Reduced matrix K_red = T^T * K * T (num_free_dofs x num_free_dofs)
-    SpMat transform_matrix(const SpMat& K) const;
+    /// @return Reduced matrix K_red = T^T * K * T (num_free_dofs x
+    /// num_free_dofs)
+    SpMat transform_matrix(const SpMat &K) const;
 
     /// @brief Transform RHS vector via constraint elimination
     /// @param f Global RHS vector (num_global_dofs)
     /// @param K Global stiffness matrix (for Dirichlet BC contribution)
     /// @return Reduced vector f_red = T^T * f_modified (num_free_dofs)
-    VecX transform_rhs(const VecX& f, const SpMat& K) const;
+    VecX transform_rhs(const VecX &f, const SpMat &K) const;
 
     /// @brief Expand solution from free DOFs to global DOFs
     /// @param u_free Solution in free DOF space (num_free_dofs)
     /// @return Full solution u_global = T * u_free (num_global_dofs)
-    VecX expand_solution(const VecX& u_free) const;
+    VecX expand_solution(const VecX &u_free) const;
 
     /// @brief Map from global DOF to free DOF index
     /// @return -1 if DOF is constrained, otherwise the free DOF index
@@ -171,14 +175,14 @@ public:
     // =========================================================================
 
     /// Get the mesh
-    const QuadtreeAdapter& mesh() const { return mesh_; }
+    const QuadtreeAdapter &mesh() const { return mesh_; }
 
     /// Get the basis
-    const LagrangeBasis2D& basis() const { return basis_; }
+    const LagrangeBasis2D &basis() const { return basis_; }
 
 private:
-    const QuadtreeAdapter& mesh_;
-    const LagrangeBasis2D& basis_;
+    const QuadtreeAdapter &mesh_;
+    const LagrangeBasis2D &basis_;
 
     /// Number of DOFs
     Index num_global_dofs_ = 0;
@@ -251,13 +255,14 @@ private:
     std::vector<Vec2> get_edge_dof_positions(Index elem, int edge_id) const;
 
     /// Find existing DOF at a position (or return -1)
-    Index find_dof_at_position(const Vec2& pos, Real tol = 1e-10) const;
+    Index find_dof_at_position(const Vec2 &pos, Real tol = 1e-10) const;
 
     /// Position lookup for DOF sharing
-    std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;  // Quantized position -> DOF
+    std::map<std::pair<int64_t, int64_t>, Index>
+        position_to_dof_; // Quantized position -> DOF
 
     /// Convert position to quantized key
-    std::pair<int64_t, int64_t> quantize_position(const Vec2& pos) const;
+    std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

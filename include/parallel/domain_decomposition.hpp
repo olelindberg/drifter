@@ -15,8 +15,8 @@
 //   decomp.build_communication_maps();
 
 #include "core/types.hpp"
-#include "mesh/octree_adapter.hpp"
 #include "mesh/morton.hpp"
+#include "mesh/octree_adapter.hpp"
 #include <map>
 #include <memory>
 #include <set>
@@ -30,27 +30,27 @@ namespace drifter {
 
 /// @brief Partitioning strategy
 enum class PartitionStrategy {
-    Morton,          ///< Morton curve (space-filling, preserves locality)
-    Hilbert,         ///< Hilbert curve (better locality than Morton)
-    Metis,           ///< METIS graph partitioning
-    ParMetis,        ///< Parallel METIS (for large meshes)
-    PTScotch,        ///< PT-Scotch partitioner
-    Uniform          ///< Uniform block distribution (simple but poor locality)
+    Morton,   ///< Morton curve (space-filling, preserves locality)
+    Hilbert,  ///< Hilbert curve (better locality than Morton)
+    Metis,    ///< METIS graph partitioning
+    ParMetis, ///< Parallel METIS (for large meshes)
+    PTScotch, ///< PT-Scotch partitioner
+    Uniform   ///< Uniform block distribution (simple but poor locality)
 };
 
 /// @brief Ghost layer configuration
 struct GhostConfig {
-    int num_layers = 1;              ///< Number of ghost element layers
-    bool include_diagonal = true;    ///< Include face-diagonal neighbors
-    bool include_corners = false;    ///< Include corner neighbors
+    int num_layers = 1;           ///< Number of ghost element layers
+    bool include_diagonal = true; ///< Include face-diagonal neighbors
+    bool include_corners = false; ///< Include corner neighbors
 };
 
 /// @brief Element ownership info
 struct ElementOwnership {
-    Index global_id;      ///< Global element ID
-    Index local_id;       ///< Local element ID (on owning rank)
-    int owner_rank;       ///< Rank that owns this element
-    bool is_ghost;        ///< True if this is a ghost element
+    Index global_id; ///< Global element ID
+    Index local_id;  ///< Local element ID (on owning rank)
+    int owner_rank;  ///< Rank that owns this element
+    bool is_ghost;   ///< True if this is a ghost element
 };
 
 /// @brief Communication neighbor info
@@ -75,7 +75,7 @@ public:
     ~DomainDecomposition() = default;
 
     /// @brief Set global mesh (before partitioning)
-    void set_global_mesh(const OctreeAdapter& mesh);
+    void set_global_mesh(const OctreeAdapter &mesh);
 
     /// @brief Partition the mesh
     /// @param strategy Partitioning strategy
@@ -89,19 +89,19 @@ public:
     Index partition_metis();
 
     /// @brief Build communication maps for halo exchange
-    void build_communication_maps(const GhostConfig& config = GhostConfig());
+    void build_communication_maps(const GhostConfig &config = GhostConfig());
 
     /// @brief Get local elements (owned by this rank)
-    const std::vector<Index>& local_elements() const { return local_elements_; }
+    const std::vector<Index> &local_elements() const { return local_elements_; }
 
     /// @brief Get ghost elements (owned by other ranks)
-    const std::vector<Index>& ghost_elements() const { return ghost_elements_; }
+    const std::vector<Index> &ghost_elements() const { return ghost_elements_; }
 
     /// @brief Get all elements (local + ghost)
     std::vector<Index> all_elements() const;
 
     /// @brief Get neighbor communication info
-    const std::vector<NeighborComm>& neighbors() const { return neighbors_; }
+    const std::vector<NeighborComm> &neighbors() const { return neighbors_; }
 
     /// @brief Get element owner rank
     int owner(Index global_elem_id) const;
@@ -122,10 +122,10 @@ public:
     Index num_ghost_elements() const { return ghost_elements_.size(); }
 
     /// @brief Get partition array (element → rank)
-    const std::vector<int>& partition() const { return partition_; }
+    const std::vector<int> &partition() const { return partition_; }
 
     /// @brief Rebalance after AMR
-    void rebalance(const OctreeAdapter& new_mesh);
+    void rebalance(const OctreeAdapter &new_mesh);
 
     /// @brief Get MPI rank
     int rank() const { return rank_; }
@@ -145,19 +145,19 @@ private:
     int rank_ = 0;
     int size_ = 1;
 
-    const OctreeAdapter* mesh_ = nullptr;
+    const OctreeAdapter *mesh_ = nullptr;
 
-    std::vector<int> partition_;              // Global element → rank
-    std::vector<Index> local_elements_;       // Global IDs owned by this rank
-    std::vector<Index> ghost_elements_;       // Global IDs needed as ghosts
-    std::map<Index, Index> global_to_local_;  // Global ID → local ID
-    std::map<Index, Index> local_to_global_;  // Local ID → global ID
+    std::vector<int> partition_;             // Global element → rank
+    std::vector<Index> local_elements_;      // Global IDs owned by this rank
+    std::vector<Index> ghost_elements_;      // Global IDs needed as ghosts
+    std::map<Index, Index> global_to_local_; // Global ID → local ID
+    std::map<Index, Index> local_to_global_; // Local ID → global ID
 
-    std::vector<NeighborComm> neighbors_;     // Communication with each neighbor
+    std::vector<NeighborComm> neighbors_; // Communication with each neighbor
 
     void compute_morton_partition();
     void compute_metis_partition();
-    void identify_ghost_elements(const GhostConfig& config);
+    void identify_ghost_elements(const GhostConfig &config);
     void build_neighbor_lists();
 };
 
@@ -171,27 +171,27 @@ public:
 #endif
 
     /// @brief Compute imbalance ratio (max/avg elements per rank)
-    Real compute_imbalance(const DomainDecomposition& decomp) const;
+    Real compute_imbalance(const DomainDecomposition &decomp) const;
 
     /// @brief Check if rebalancing is needed
-    bool needs_rebalance(const DomainDecomposition& decomp,
-                          Real threshold = 1.2) const;
+    bool needs_rebalance(
+        const DomainDecomposition &decomp, Real threshold = 1.2) const;
 
     /// @brief Compute new partition with better balance
     std::vector<int> compute_balanced_partition(
-        const OctreeAdapter& mesh,
-        const DomainDecomposition& current_decomp);
+        const OctreeAdapter &mesh, const DomainDecomposition &current_decomp);
 
     /// @brief Compute migration plan
     struct MigrationPlan {
-        std::map<Index, int> element_destinations;  // Element → new rank
-        std::map<int, std::vector<Index>> send_to;  // Rank → elements to send
-        std::map<int, std::vector<Index>> recv_from; // Rank → elements to receive
+        std::map<Index, int> element_destinations; // Element → new rank
+        std::map<int, std::vector<Index>> send_to; // Rank → elements to send
+        std::map<int, std::vector<Index>>
+            recv_from; // Rank → elements to receive
     };
 
     MigrationPlan compute_migration(
-        const std::vector<int>& old_partition,
-        const std::vector<int>& new_partition);
+        const std::vector<int> &old_partition,
+        const std::vector<int> &new_partition);
 
 private:
 #ifdef DRIFTER_USE_MPI
@@ -212,14 +212,12 @@ public:
 
     /// @brief Perform one diffusive balancing step
     /// @return Number of elements migrated
-    Index balance_step(DomainDecomposition& decomp,
-                       OctreeAdapter& mesh);
+    Index balance_step(DomainDecomposition &decomp, OctreeAdapter &mesh);
 
     /// @brief Iterate until balanced
-    void balance(DomainDecomposition& decomp,
-                 OctreeAdapter& mesh,
-                 Real tolerance = 0.1,
-                 int max_iterations = 10);
+    void balance(
+        DomainDecomposition &decomp, OctreeAdapter &mesh, Real tolerance = 0.1,
+        int max_iterations = 10);
 
 private:
 #ifdef DRIFTER_USE_MPI
@@ -229,9 +227,7 @@ private:
     int size_ = 1;
 
     std::vector<Index> select_boundary_elements(
-        const DomainDecomposition& decomp,
-        int neighbor_rank,
-        Index count);
+        const DomainDecomposition &decomp, int neighbor_rank, Index count);
 };
 
-}  // namespace drifter
+} // namespace drifter
