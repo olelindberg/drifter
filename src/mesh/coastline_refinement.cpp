@@ -1,10 +1,8 @@
 #include "mesh/coastline_refinement.hpp"
 
 // GDAL includes must be outside the drifter namespace
-#ifdef DRIFTER_HAS_GDAL
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
-#endif
 
 #include <boost/geometry.hpp>
 #include <boost/geometry/geometries/box.hpp>
@@ -102,8 +100,6 @@ CoastlineIndex &CoastlineIndex::operator=(CoastlineIndex &&) noexcept = default;
 // =============================================================================
 // CoastlineReader implementation
 // =============================================================================
-
-#ifdef DRIFTER_HAS_GDAL
 
 namespace {
 
@@ -261,19 +257,6 @@ bool CoastlineReader::load(
 }
 
 bool CoastlineReader::is_available() { return true; }
-
-#else // No GDAL
-
-bool CoastlineReader::load(
-    const std::string &filename, const std::string &layer_name,
-    const std::string &target_srs) {
-    impl_->error = "GDAL not available";
-    return false;
-}
-
-bool CoastlineReader::is_available() { return false; }
-
-#endif // DRIFTER_HAS_GDAL
 
 void CoastlineReader::swap_xy() { swap_xy_impl(impl_->polygons); }
 

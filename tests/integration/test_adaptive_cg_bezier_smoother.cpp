@@ -248,23 +248,18 @@ TEST_F(AdaptiveCGBezierSmootherTest, WritesVTKOutput) {
 }
 
 // =============================================================================
-// GeoTIFF Integration Test (if available)
+// Multi-Source Bathymetry Integration Tests
 // =============================================================================
 
-TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
-  // Skip if GeoTIFF not available
-  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-  GeoTiffReader reader;
-  BathymetryData bathy;
+class AdaptiveCGBezierSmootherGeoTiffTest : public BathymetryTestFixture {
+  protected:
+    static constexpr Real TOLERANCE = 1e-10;
+    static constexpr Real LOOSE_TOLERANCE = 1e-6;
+};
 
-  try {
-    bathy = reader.load(geotiff_path);
-  } catch (...) {
-    GTEST_SKIP() << "GeoTIFF not available";
-  }
-
-  if (!bathy.is_valid()) {
-    GTEST_SKIP() << "GeoTIFF not valid";
+TEST_F(AdaptiveCGBezierSmootherGeoTiffTest, DISABLED_AdaptiveGeoTiffRefinement) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
   }
 
   // Define domain with specific center coordinates
@@ -278,12 +273,6 @@ TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   Real ymin = center_y - half_size;
   Real ymax = center_y + half_size;
 
-  // Verify bounds are within GeoTIFF
-  if (xmin < bathy.xmin || xmax > bathy.xmax || ymin < bathy.ymin ||
-      ymax > bathy.ymax) {
-    GTEST_SKIP() << "Test region outside GeoTIFF bounds";
-  }
-
   AdaptiveCGBezierConfig config;
   config.error_threshold = 1.0; // 1 meter threshold
   config.max_iterations = 10;
@@ -294,9 +283,7 @@ TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
 
   AdaptiveCGBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
 
-  auto bathy_func = [&bathy](Real x, Real y) -> Real {
-    return static_cast<Real>(bathy.get_depth(x, y));
-  };
+  auto bathy_func = create_depth_function();
   smoother.set_bathymetry_data(bathy_func);
 
   auto result = smoother.solve_adaptive();
@@ -318,21 +305,10 @@ TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
 // Test: Compare constraint configurations with adaptive solver
 // =============================================================================
 
-TEST_F(AdaptiveCGBezierSmootherTest,
+TEST_F(AdaptiveCGBezierSmootherGeoTiffTest,
        DISABLED_AdaptiveWithConstraintComparison) {
-  // Skip if GeoTIFF not available
-  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-  GeoTiffReader reader;
-  BathymetryData bathy;
-
-  try {
-    bathy = reader.load(geotiff_path);
-  } catch (...) {
-    GTEST_SKIP() << "GeoTIFF not available";
-  }
-
-  if (!bathy.is_valid()) {
-    GTEST_SKIP() << "GeoTIFF not valid";
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
   }
 
   // Define domain with specific center coordinates
@@ -346,15 +322,7 @@ TEST_F(AdaptiveCGBezierSmootherTest,
   Real ymin = center_y - half_size;
   Real ymax = center_y + half_size;
 
-  // Verify bounds are within GeoTIFF
-  if (xmin < bathy.xmin || xmax > bathy.xmax || ymin < bathy.ymin ||
-      ymax > bathy.ymax) {
-    GTEST_SKIP() << "Test region outside GeoTIFF bounds";
-  }
-
-  auto bathy_func = [&bathy](Real x, Real y) -> Real {
-    return static_cast<Real>(bathy.get_depth(x, y));
-  };
+  auto bathy_func = create_depth_function();
 
   std::cout << "=== Adaptive CG Bezier Constraint Comparison ===" << std::endl;
 
@@ -441,20 +409,9 @@ TEST_F(AdaptiveCGBezierSmootherTest, CGHasFewerDOFsThanDG) {
 // Quality Evaluation: Compare constraint modes and lambda values
 // =============================================================================
 
-TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_QualityEvaluation) {
-  // Skip if GeoTIFF not available
-  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-  GeoTiffReader reader;
-  BathymetryData bathy;
-
-  try {
-    bathy = reader.load(geotiff_path);
-  } catch (...) {
-    GTEST_SKIP() << "GeoTIFF not available";
-  }
-
-  if (!bathy.is_valid()) {
-    GTEST_SKIP() << "GeoTIFF not valid";
+TEST_F(AdaptiveCGBezierSmootherGeoTiffTest, DISABLED_QualityEvaluation) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
   }
 
   // Define domain with specific center coordinates
@@ -468,15 +425,7 @@ TEST_F(AdaptiveCGBezierSmootherTest, DISABLED_QualityEvaluation) {
   Real ymin = center_y - half_size;
   Real ymax = center_y + half_size;
 
-  // Verify bounds are within GeoTIFF
-  if (xmin < bathy.xmin || xmax > bathy.xmax || ymin < bathy.ymin ||
-      ymax > bathy.ymax) {
-    GTEST_SKIP() << "Test region outside GeoTIFF bounds";
-  }
-
-  auto bathy_func = [&bathy](Real x, Real y) -> Real {
-    return static_cast<Real>(bathy.get_depth(x, y));
-  };
+  auto bathy_func = create_depth_function();
 
   // Constraint configurations
   struct ConstraintConfig {

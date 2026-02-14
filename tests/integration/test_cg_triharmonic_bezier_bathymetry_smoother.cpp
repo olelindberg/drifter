@@ -11,9 +11,7 @@
 #include <iomanip>
 #include <filesystem>
 
-#ifdef DRIFTER_HAS_GDAL
 #include "mesh/geotiff_reader.hpp"
-#endif
 
 using namespace drifter;
 using namespace drifter::testing;
@@ -531,12 +529,20 @@ TEST_F(CGTriharmonicSmootherTest, PerformanceTest8x8) {
 }
 
 // =============================================================================
-// GeoTIFF Integration Test
+// Multi-Source Bathymetry Integration Tests
 // =============================================================================
 
-#ifdef DRIFTER_HAS_GDAL
+class CGTriharmonicSmootherGeoTiffTest : public BathymetryTestFixture {
+  protected:
+    static constexpr Real TOLERANCE = 1e-10;
+    static constexpr Real LOOSE_TOLERANCE = 1e-6;
+};
 
-TEST_F(CGTriharmonicSmootherTest, KattegatGeoTiffIntegration) {
+TEST_F(CGTriharmonicSmootherGeoTiffTest, KattegatIntegration) {
+    if (!data_files_exist()) {
+        GTEST_SKIP() << "Bathymetry data not available";
+    }
+
     // Kattegat test area
     Real center_x = 4095238.0;   // EPSG:3034
     Real center_y = 3344695.0;   // EPSG:3034
@@ -546,25 +552,6 @@ TEST_F(CGTriharmonicSmootherTest, KattegatGeoTiffIntegration) {
     Real xmax = center_x + domain_size / 2;
     Real ymin = center_y - domain_size / 2;
     Real ymax = center_y + domain_size / 2;
-
-    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-
-    if (!GeoTiffReader::is_available()) {
-        GTEST_SKIP() << "GDAL not available";
-    }
-
-    if (!std::filesystem::exists(geotiff_path)) {
-        GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
-    }
-
-    GeoTiffReader reader;
-    BathymetryData bathy = reader.load(geotiff_path);
-    if (!bathy.is_valid()) {
-        GTEST_SKIP() << "Could not load GeoTIFF file: " << reader.last_error();
-    }
-
-    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-    BathymetrySurface surface(bathy_ptr);
 
     std::cout << "=== CG Triharmonic Bezier Kattegat Test ===" << std::endl;
     std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
@@ -576,10 +563,8 @@ TEST_F(CGTriharmonicSmootherTest, KattegatGeoTiffIntegration) {
 
     std::cout << "Mesh elements: " << mesh.num_elements() << std::endl;
 
-    // Depth function using BathymetrySurface
-    auto depth_func = [&surface](Real x, Real y) -> Real {
-        return -surface.depth(x, y);  // depth returns positive down
-    };
+    // Depth function using multi-source bathymetry
+    auto depth_func = create_depth_function();
 
     // Create CG Triharmonic Bezier smoother
     // Note: triharmonic only penalizes curvature gradient, not curvature itself
@@ -593,7 +578,7 @@ TEST_F(CGTriharmonicSmootherTest, KattegatGeoTiffIntegration) {
     config.edge_ngauss = 4;                 // 4 Gauss points per edge
 
     CGTriharmonicBezierBathymetrySmoother smoother(mesh, config);
-    smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+    smoother.set_bathymetry_data(depth_func);
 
     std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
     std::cout << "Constraints: " << smoother.num_constraints() << std::endl;
@@ -643,7 +628,11 @@ TEST_F(CGTriharmonicSmootherTest, KattegatGeoTiffIntegration) {
     EXPECT_LT(avg_diff, 50.0);  // Average error less than 50m
 }
 
-TEST_F(CGTriharmonicSmootherTest, DISABLED_KattegatLambdaComparison) {
+TEST_F(CGTriharmonicSmootherGeoTiffTest, DISABLED_KattegatLambdaComparison) {
+    if (!data_files_exist()) {
+        GTEST_SKIP() << "Bathymetry data not available";
+    }
+
     // Kattegat test area
     Real center_x = 4095238.0;
     Real center_y = 3344695.0;
@@ -654,30 +643,10 @@ TEST_F(CGTriharmonicSmootherTest, DISABLED_KattegatLambdaComparison) {
     Real ymin = center_y - domain_size / 2;
     Real ymax = center_y + domain_size / 2;
 
-    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-
-    if (!GeoTiffReader::is_available()) {
-        GTEST_SKIP() << "GDAL not available";
-    }
-    if (!std::filesystem::exists(geotiff_path)) {
-        GTEST_SKIP() << "GeoTIFF file not found";
-    }
-
-    GeoTiffReader reader;
-    BathymetryData bathy = reader.load(geotiff_path);
-    if (!bathy.is_valid()) {
-        GTEST_SKIP() << "Could not load GeoTIFF";
-    }
-
-    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-    BathymetrySurface surface(bathy_ptr);
-
     QuadtreeAdapter mesh;
     mesh.build_uniform(xmin, xmax, ymin, ymax, 8, 8);
 
-    auto depth_func = [&surface](Real x, Real y) -> Real {
-        return -surface.depth(x, y);
-    };
+    auto depth_func = create_depth_function();
 
     std::cout << "=== Lambda Comparison for Triharmonic ===" << std::endl;
 
@@ -742,6 +711,4 @@ TEST_F(CGTriharmonicSmootherTest, DISABLED_KattegatLambdaComparison) {
 
     EXPECT_TRUE(true);  // Always pass, this is for visual comparison
 }
-
-#endif  // DRIFTER_HAS_GDAL
 

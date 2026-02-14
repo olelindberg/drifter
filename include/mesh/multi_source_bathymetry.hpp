@@ -18,9 +18,7 @@
 #include <string>
 #include <vector>
 
-#ifdef DRIFTER_HAS_GDAL
 #include <ogr_spatialref.h>
-#endif
 
 namespace drifter {
 

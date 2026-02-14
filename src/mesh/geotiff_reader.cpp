@@ -4,10 +4,8 @@
 #include <algorithm>
 #include <cmath>
 
-#ifdef DRIFTER_HAS_GDAL
 #include <cpl_conv.h>
 #include <gdal_priv.h>
-#endif
 
 namespace drifter {
 
@@ -16,33 +14,24 @@ namespace drifter {
 // =============================================================================
 
 GeoTiffReader::GeoTiffReader() {
-#ifdef DRIFTER_HAS_GDAL
     GDALAllRegister();
     gdal_initialized_ = true;
-#endif
 }
 
 GeoTiffReader::~GeoTiffReader() {
-#ifdef DRIFTER_HAS_GDAL
     if (gdal_initialized_) {
         GDALDestroyDriverManager();
     }
-#endif
 }
 
 bool GeoTiffReader::is_available() {
-#ifdef DRIFTER_HAS_GDAL
     return true;
-#else
-    return false;
-#endif
 }
 
 BathymetryData GeoTiffReader::load(const std::string &filename) {
     BathymetryData data;
     error_message_.clear();
 
-#ifdef DRIFTER_HAS_GDAL
     // Open the dataset
     GDALDataset *dataset =
         static_cast<GDALDataset *>(GDALOpen(filename.c_str(), GA_ReadOnly));
@@ -135,11 +124,6 @@ BathymetryData GeoTiffReader::load(const std::string &filename) {
     if (data.ymin > data.ymax)
         std::swap(data.ymin, data.ymax);
 
-#else
-    error_message_ =
-        "GDAL support not available. Rebuild with -DDRIFTER_USE_GDAL=ON";
-#endif
-
     return data;
 }
 
@@ -147,7 +131,6 @@ BathymetryBounds GeoTiffReader::load_bounds_only(const std::string &filename) {
     BathymetryBounds bounds;
     error_message_.clear();
 
-#ifdef DRIFTER_HAS_GDAL
     // Open the dataset
     GDALDataset *dataset =
         static_cast<GDALDataset *>(GDALOpen(filename.c_str(), GA_ReadOnly));
@@ -214,11 +197,6 @@ BathymetryBounds GeoTiffReader::load_bounds_only(const std::string &filename) {
     // Close dataset - we don't need the raster data
     GDALClose(dataset);
 
-#else
-    error_message_ =
-        "GDAL support not available. Rebuild with -DDRIFTER_USE_GDAL=ON";
-#endif
-
     return bounds;
 }
 
@@ -246,6 +224,32 @@ void BathymetrySurface::gradient(
 
     dh_dx = (h_xp - h_xm) / (2.0 * dx);
     dh_dy = (h_yp - h_ym) / (2.0 * dy);
+}
+
+void BathymetrySurface::curvature(Real x, Real y, Real &d2h_dx2, Real &d2h_dxdy,
+                                  Real &d2h_dy2) const {
+    // Compute second derivatives using central differences
+    double dx = std::abs(data_->geotransform[1]) * 0.5;
+    double dy = std::abs(data_->geotransform[5]) * 0.5;
+
+    // d²h/dx² = (h(x+dx) - 2*h(x) + h(x-dx)) / dx²
+    float h_c = data_->get_depth(x, y);
+    float h_xp = data_->get_depth(x + dx, y);
+    float h_xm = data_->get_depth(x - dx, y);
+    d2h_dx2 = (h_xp - 2.0 * h_c + h_xm) / (dx * dx);
+
+    // d²h/dy² = (h(y+dy) - 2*h(y) + h(y-dy)) / dy²
+    float h_yp = data_->get_depth(x, y + dy);
+    float h_ym = data_->get_depth(x, y - dy);
+    d2h_dy2 = (h_yp - 2.0 * h_c + h_ym) / (dy * dy);
+
+    // d²h/dxdy = (h(x+dx,y+dy) - h(x+dx,y-dy) - h(x-dx,y+dy) + h(x-dx,y-dy)) /
+    // (4*dx*dy)
+    float h_pp = data_->get_depth(x + dx, y + dy);
+    float h_pm = data_->get_depth(x + dx, y - dy);
+    float h_mp = data_->get_depth(x - dx, y + dy);
+    float h_mm = data_->get_depth(x - dx, y - dy);
+    d2h_dxdy = (h_pp - h_pm - h_mp + h_mm) / (4.0 * dx * dy);
 }
 
 bool BathymetrySurface::is_water(Real x, Real y, Real min_depth) const {

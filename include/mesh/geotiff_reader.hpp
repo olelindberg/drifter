@@ -18,9 +18,7 @@
 #include <string>
 #include <vector>
 
-#ifdef DRIFTER_HAS_GDAL
 #include <gdal_priv.h>
-#endif
 
 namespace drifter {
 
@@ -225,6 +223,12 @@ public:
     /// @param x, y World coordinates
     /// @param dh_dx, dh_dy Output gradients
     void gradient(Real x, Real y, Real &dh_dx, Real &dh_dy) const;
+
+    /// Evaluate bathymetry curvature (second derivatives via central differences)
+    /// @param x, y World coordinates
+    /// @param d2h_dx2, d2h_dxdy, d2h_dy2 Output second derivatives
+    void curvature(Real x, Real y, Real &d2h_dx2, Real &d2h_dxdy,
+                   Real &d2h_dy2) const;
 
     /// Check if location is water (depth > min_depth)
     bool is_water(Real x, Real y, Real min_depth = 1.0) const;

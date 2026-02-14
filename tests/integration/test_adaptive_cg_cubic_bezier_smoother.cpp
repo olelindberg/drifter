@@ -392,10 +392,20 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
 }
 
 // =============================================================================
-// GeoTIFF Integration Tests
+// Multi-Source Bathymetry Integration Tests
 // =============================================================================
 
-TEST_F(AdaptiveCGCubicBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
+class AdaptiveCGCubicBezierSmootherGeoTiffTest : public BathymetryTestFixture {
+  protected:
+    static constexpr Real TOLERANCE = 1e-10;
+    static constexpr Real LOOSE_TOLERANCE = 1e-6;
+};
+
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, DISABLED_AdaptiveGeoTiffRefinement) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
+  }
+
   // Kattegat test area
   Real center_x = 4095238.0;  // EPSG:3034
   Real center_y = 3344695.0;  // EPSG:3034
@@ -406,27 +416,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   Real ymin = center_y - domain_size / 2;
   Real ymax = center_y + domain_size / 2;
 
-  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-  GeoTiffReader reader;
-  BathymetryData bathy;
-
-  try {
-    bathy = reader.load(geotiff_path);
-  } catch (...) {
-    GTEST_SKIP() << "GeoTIFF not available";
-  }
-
-  if (!bathy.is_valid()) {
-    GTEST_SKIP() << "GeoTIFF not valid";
-  }
-
-  auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-  BathymetrySurface surface(bathy_ptr);
-
-  auto depth_func = [&surface](Real x, Real y) -> Real {
-    return -surface.depth(x,
-                          y); // depth returns positive down, we want elevation
-  };
+  auto depth_func = create_depth_function();
 
   std::cout << "=== Adaptive CG Cubic Bezier GeoTIFF Test ===" << std::endl;
   std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
@@ -442,7 +432,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   config.verbose = true;
 
   AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
-  smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+  smoother.set_bathymetry_data(depth_func);
 
   auto start = std::chrono::high_resolution_clock::now();
   auto result = smoother.solve_adaptive();
@@ -469,7 +459,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, DISABLED_AdaptiveGeoTiffRefinement) {
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }
 
-TEST_F(AdaptiveCGCubicBezierSmootherTest, CompareConstraintModes) {
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, CompareConstraintModes) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
+  }
+
   // Compare different constraint modes for adaptive refinement
 
   Real center_x = 4095238.0;
@@ -481,26 +475,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, CompareConstraintModes) {
   Real ymin = center_y - domain_size / 2;
   Real ymax = center_y + domain_size / 2;
 
-  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-  GeoTiffReader reader;
-  BathymetryData bathy;
-
-  try {
-    bathy = reader.load(geotiff_path);
-  } catch (...) {
-    GTEST_SKIP() << "GeoTIFF not available";
-  }
-
-  if (!bathy.is_valid()) {
-    GTEST_SKIP() << "GeoTIFF not valid";
-  }
-
-  auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-  BathymetrySurface surface(bathy_ptr);
-
-  auto depth_func = [&surface](Real x, Real y) -> Real {
-    return -surface.depth(x, y);
-  };
+  auto depth_func = create_depth_function();
 
   std::cout << "\n=== Adaptive CG Cubic Bezier Constraint Mode Comparison ==="
             << std::endl;

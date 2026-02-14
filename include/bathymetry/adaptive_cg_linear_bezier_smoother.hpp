@@ -18,6 +18,7 @@
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
+#include "mesh/geotiff_reader.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <functional>
 #include <memory>
@@ -72,8 +73,14 @@ enum class MarkingStrategy {
 
 /// @brief Error metric type for adaptive refinement decisions
 enum class ErrorMetricType {
-  NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area)
-  StdError         ///< Standard deviation of error within element
+  NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area) [meters]
+  StdError,        ///< Standard deviation of error within element [meters]
+  RelativeError,   ///< RMS error / (|mean_depth| + depth_scale) [dimensionless]
+
+  // WENO-style smoothness indicators (from raw GeoTIFF data)
+  GradientIndicator,  ///< h² × mean(|∇z|²) — scaled gradient magnitude
+  CurvatureIndicator, ///< h⁴ × mean(|H|²_F) — scaled Hessian Frobenius norm
+  WenoIndicator       ///< Combined: w_g × gradient + w_c × curvature
 };
 
 /// @brief Reason for adaptive convergence
@@ -95,6 +102,15 @@ struct CGLinearElementErrorEstimate {
   // Statistical decomposition of error (RMS² = mean² + std²)
   Real mean_error; ///< Signed weighted mean error: E[z_data - z_bezier]
   Real std_error;  ///< Std dev around mean (captures local variability)
+
+  // Depth-independent metrics
+  Real mean_depth;     ///< Weighted mean depth within element
+  Real relative_error; ///< normalized_error / (|mean_depth| + depth_scale)
+
+  // WENO-style smoothness indicators (from raw bathymetry data)
+  Real gradient_indicator;  ///< h² × mean(|∇z|²) [length⁴]
+  Real curvature_indicator; ///< h⁴ × mean(|H|²_F) [length⁴]
+  Real weno_indicator;      ///< Combined: w_g × gradient + w_c × curvature
 };
 
 /// @brief Configuration for adaptive CG linear Bezier smoother
@@ -107,6 +123,13 @@ struct AdaptiveCGLinearBezierConfig {
 
   /// @brief Which error metric to use for refinement decisions
   ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
+
+  /// @brief Characteristic depth for relative error regularization (meters)
+  /// Prevents blow-up near shoreline where depth approaches zero.
+  /// At depths >> depth_scale, behaves like pure relative error.
+  /// At depths << depth_scale, behaves like absolute error scaled by
+  /// depth_scale.
+  Real depth_scale = 1.0;
 
   // Marking strategy selection
   MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
@@ -127,11 +150,22 @@ struct AdaptiveCGLinearBezierConfig {
   // Error estimation
   int ngauss_error = 4; ///< Gauss points per direction for error integration
 
+  // WENO indicator weights
+  /// @brief Weight for gradient term in WENO indicator (default 1.0)
+  Real weno_gradient_weight = 1.0;
+
+  /// @brief Weight for curvature term in WENO indicator (default 1.0)
+  Real weno_curvature_weight = 1.0;
+
   // Smoother configuration (passed to CGLinearBezierBathymetrySmoother)
   CGLinearBezierSmootherConfig smoother_config;
 
   // Progress reporting
   bool verbose = false;
+
+  // Diagnostic output: if non-empty, write per-element error CSVs to this
+  // directory
+  std::string error_output_dir = "";
 };
 
 /// @brief Result of a single adaptation iteration for CG linear smoother
@@ -216,6 +250,21 @@ public:
   /// @param is_land_func Returns true if (x,y) is on land
   /// Elements entirely on land will not be refined
   void set_land_mask(std::function<bool(Real, Real)> is_land_func);
+
+  /// @brief Set bathymetry gradient function (for WENO indicator)
+  /// @param grad_func Function (x, y, &dh_dx, &dh_dy) -> void
+  void set_gradient_function(
+      std::function<void(Real, Real, Real &, Real &)> grad_func);
+
+  /// @brief Set bathymetry curvature function (for WENO indicator)
+  /// @param curv_func Function (x, y, &d2h_dx2, &d2h_dxdy, &d2h_dy2) -> void
+  void set_curvature_function(
+      std::function<void(Real, Real, Real &, Real &, Real &)> curv_func);
+
+  /// @brief Set bathymetry from BathymetrySurface (sets depth, gradient, and
+  /// curvature)
+  /// @param surface BathymetrySurface providing depth, gradient, curvature
+  void set_bathymetry_surface(const BathymetrySurface &surface);
 
   // =========================================================================
   // Adaptive solve
@@ -306,6 +355,10 @@ private:
   // Optional land mask
   std::function<bool(Real, Real)> land_mask_func_;
 
+  // Optional gradient/curvature functions for WENO indicator
+  std::function<void(Real, Real, Real &, Real &)> grad_func_;
+  std::function<void(Real, Real, Real &, Real &, Real &)> curv_func_;
+
   // Current smoother (recreated after each refinement)
   std::unique_ptr<CGLinearBezierBathymetrySmoother> smoother_;
 
@@ -348,17 +401,29 @@ private:
   /// @param[out] l2_error L2 error ||z_data - z_bezier||_L2 over element
   /// @param[out] mean_error Weighted mean error (signed)
   /// @param[out] std_error Standard deviation around mean
+  /// @param[out] mean_depth Weighted mean depth within element
   void compute_element_error_statistics(Index elem, Real &l2_error,
-                                        Real &mean_error,
-                                        Real &std_error) const;
+                                        Real &mean_error, Real &std_error,
+                                        Real &mean_depth) const;
 
   /// @brief Get the error metric value based on config
   /// @param err Error estimate for an element
-  /// @return The selected metric value (normalized_error or std_error)
+  /// @return The selected metric value
   Real error_metric(const CGLinearElementErrorEstimate &err) const {
-    return (config_.error_metric_type == ErrorMetricType::StdError)
-               ? err.std_error
-               : err.normalized_error;
+    switch (config_.error_metric_type) {
+    case ErrorMetricType::RelativeError:
+      return err.relative_error;
+    case ErrorMetricType::StdError:
+      return err.std_error;
+    case ErrorMetricType::GradientIndicator:
+      return err.gradient_indicator;
+    case ErrorMetricType::CurvatureIndicator:
+      return err.curvature_indicator;
+    case ErrorMetricType::WenoIndicator:
+      return err.weno_indicator;
+    default:
+      return err.normalized_error;
+    }
   }
 
   /// @brief Check if element is entirely on land
@@ -368,6 +433,16 @@ private:
 
   /// @brief Print profiling report to stdout
   void print_profile_report() const;
+
+  /// @brief Compute gradient indicator for element (WENO scaling: h² × |∇z|²)
+  /// @param elem Element index
+  /// @return Gradient indicator value, or 0 if no gradient function set
+  Real compute_gradient_indicator(Index elem) const;
+
+  /// @brief Compute curvature indicator for element (WENO scaling: h⁴ × |H|²_F)
+  /// @param elem Element index
+  /// @return Curvature indicator value, or 0 if no curvature function set
+  Real compute_curvature_indicator(Index elem) const;
 };
 
 } // namespace drifter

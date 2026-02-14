@@ -11,9 +11,7 @@
 #include <filesystem>
 #include <sstream>
 
-#ifdef DRIFTER_HAS_GDAL
 #include "mesh/geotiff_reader.hpp"
-#endif
 
 using namespace drifter;
 using namespace drifter::testing;
@@ -755,11 +753,28 @@ TEST_F(CGBezierSmootherTest, DiagnoseNonConformingEdge) {
 }
 
 // =============================================================================
-// Level 4: Kattegat GeoTIFF Integration Test
+// Level 4: Multi-Source Bathymetry Integration Tests
 // =============================================================================
 
-#ifdef DRIFTER_HAS_GDAL
-TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
+class CGBezierSmootherGeoTiffTest : public BathymetryTestFixture {
+  protected:
+    static constexpr Real TOLERANCE = 1e-10;
+    static constexpr Real LOOSE_TOLERANCE = 1e-6;
+
+    QuadtreeAdapter create_quadtree(int nx, int ny, Real xmin = 0.0,
+                                    Real xmax = 100.0, Real ymin = 0.0,
+                                    Real ymax = 100.0) {
+        QuadtreeAdapter mesh;
+        mesh.build_uniform(xmin, xmax, ymin, ymax, nx, ny);
+        return mesh;
+    }
+};
+
+TEST_F(CGBezierSmootherGeoTiffTest, KattegatIntegration) {
+    if (!data_files_exist()) {
+        GTEST_SKIP() << "Bathymetry data not available";
+    }
+
     // Kattegat test area
     Real center_x = 4095238.0;  // EPSG:3034
     Real center_y = 3344695.0;  // EPSG:3034
@@ -770,25 +785,6 @@ TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
     Real ymin = center_y - domain_size / 2;
     Real ymax = center_y + domain_size / 2;
 
-    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-
-    if (!GeoTiffReader::is_available()) {
-        GTEST_SKIP() << "GDAL not available";
-    }
-
-    if (!std::filesystem::exists(geotiff_path)) {
-        GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
-    }
-
-    GeoTiffReader reader;
-    BathymetryData bathy = reader.load(geotiff_path);
-    if (!bathy.is_valid()) {
-        GTEST_SKIP() << "Could not load GeoTIFF file: " << reader.last_error();
-    }
-
-    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-    BathymetrySurface surface(bathy_ptr);
-
     std::cout << "=== CG Bezier Kattegat Test ===" << std::endl;
     std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]" << std::endl;
 
@@ -798,10 +794,8 @@ TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
 
     std::cout << "Mesh elements: " << mesh.num_elements() << std::endl;
 
-    // Depth function using BathymetrySurface
-    auto depth_func = [&surface](Real x, Real y) -> Real {
-        return -surface.depth(x, y);  // depth returns positive down, we want elevation
-    };
+    // Depth function using multi-source bathymetry
+    auto depth_func = create_depth_function();
 
     // Create CG Bezier smoother
     // lambda controls data fitting weight: lower = smoother, higher = closer to data
@@ -811,7 +805,7 @@ TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
     config.ngauss_energy = 6;
 
     CGBezierBathymetrySmoother smoother(mesh, config);
-    smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+    smoother.set_bathymetry_data(depth_func);
 
     std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
     std::cout << "Constraints: " << smoother.num_constraints() << std::endl;
@@ -905,7 +899,11 @@ TEST_F(CGBezierSmootherTest, KattegatGeoTiffIntegration) {
     EXPECT_LT(avg_diff, 50.0);  // Average error less than 50m
 }
 
-TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
+TEST_F(CGBezierSmootherGeoTiffTest, KattegatWithC1C2Constraints) {
+    if (!data_files_exist()) {
+        GTEST_SKIP() << "Bathymetry data not available";
+    }
+
     // Test with C¹ and C² continuity constraints
     Real center_x = 4095238.0;
     Real center_y = 3344695.0;
@@ -916,33 +914,12 @@ TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
     Real ymin = center_y - domain_size / 2;
     Real ymax = center_y + domain_size / 2;
 
-    std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-
-    if (!GeoTiffReader::is_available()) {
-        GTEST_SKIP() << "GDAL not available";
-    }
-
-    if (!std::filesystem::exists(geotiff_path)) {
-        GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
-    }
-
-    GeoTiffReader reader;
-    BathymetryData bathy = reader.load(geotiff_path);
-    if (!bathy.is_valid()) {
-        GTEST_SKIP() << "Could not load GeoTIFF file: " << reader.last_error();
-    }
-
-    auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-    BathymetrySurface surface(bathy_ptr);
-
     std::cout << "=== CG Bezier with C¹/C² Constraints ===" << std::endl;
 
     QuadtreeAdapter mesh;
     mesh.build_uniform(xmin, xmax, ymin, ymax, 8, 8);
 
-    auto depth_func = [&surface](Real x, Real y) -> Real {
-        return -surface.depth(x, y);
-    };
+    auto depth_func = create_depth_function();
 
     // Test configurations
     struct TestConfig {
@@ -963,7 +940,7 @@ TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
         config.edge_ngauss = 4;
 
         CGBezierBathymetrySmoother smoother(mesh, config);
-        smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+        smoother.set_bathymetry_data(depth_func);
 
         std::cout << "\n--- Config: " << tc.suffix << " ---" << std::endl;
         std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
@@ -1006,7 +983,6 @@ TEST_F(CGBezierSmootherTest, KattegatWithC1C2Constraints) {
 
     std::cout << "\nCompare outputs in ParaView to see effect of constraints on boundary kinks." << std::endl;
 }
-#endif
 
 // =============================================================================
 // Diagnostics Tests
@@ -1326,23 +1302,9 @@ TEST_F(CGBezierSmootherTest, NonConformingWithCoarseLowerIndex) {
 // Uniform Grid Evaluation: Compare constraint modes and lambda values
 // =============================================================================
 
-#ifdef DRIFTER_HAS_GDAL
-TEST_F(CGBezierSmootherTest, DISABLED_UniformGridEvaluation) {
-  // Skip if GeoTIFF not available
-  std::string geotiff_path = BATHYMETRY_GEOTIFF_PATH;
-
-  if (!GeoTiffReader::is_available()) {
-    GTEST_SKIP() << "GDAL not available";
-  }
-
-  if (!std::filesystem::exists(geotiff_path)) {
-    GTEST_SKIP() << "GeoTIFF file not found: " << geotiff_path;
-  }
-
-  GeoTiffReader reader;
-  BathymetryData bathy = reader.load(geotiff_path);
-  if (!bathy.is_valid()) {
-    GTEST_SKIP() << "Could not load GeoTIFF file: " << reader.last_error();
+TEST_F(CGBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
   }
 
   // Define domain
@@ -1356,12 +1318,7 @@ TEST_F(CGBezierSmootherTest, DISABLED_UniformGridEvaluation) {
   Real ymin = center_y - half_size;
   Real ymax = center_y + half_size;
 
-  auto bathy_ptr = std::make_shared<BathymetryData>(std::move(bathy));
-  BathymetrySurface surface(bathy_ptr);
-
-  auto depth_func = [&surface](Real x, Real y) -> Real {
-    return -surface.depth(x, y);  // depth returns positive down, we want elevation
-  };
+  auto depth_func = create_depth_function();
 
   // Gauss quadrature nodes and weights on [0, 1] (6-point)
   constexpr int ngauss = 6;
@@ -1572,4 +1529,3 @@ TEST_F(CGBezierSmootherTest, DISABLED_UniformGridEvaluation) {
   std::ifstream check(output_path);
   EXPECT_TRUE(check.good()) << "Output file was not created";
 }
-#endif

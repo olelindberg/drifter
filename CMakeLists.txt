@@ -19,7 +19,6 @@ option(DRIFTER_USE_OPENMP "Enable OpenMP threading" ON)
 option(DRIFTER_USE_CUDA "Enable CUDA GPU acceleration" OFF)
 option(DRIFTER_USE_ZARR "Enable Zarr v3 output via zarrs_ffi" ON)
 option(DRIFTER_USE_VTK "Enable VTK output" ON)
-option(DRIFTER_USE_GDAL "Enable GDAL for geospatial data" ON)
 option(DRIFTER_BUILD_TESTS "Build unit tests" ON)
 option(DRIFTER_BUILD_DOCS "Build documentation" OFF)
 
@@ -36,16 +35,9 @@ if(DRIFTER_USE_OPENMP)
     find_package(OpenMP REQUIRED)
 endif()
 
-# Optional: GDAL for geospatial data (bathymetry, coastlines)
-if(DRIFTER_USE_GDAL)
-    find_package(GDAL QUIET)
-    if(GDAL_FOUND)
-        add_definitions(-DDRIFTER_HAS_GDAL)
-        message(STATUS "GDAL found: ${GDAL_VERSION}")
-    else()
-        message(WARNING "GDAL not found, geospatial features disabled")
-    endif()
-endif()
+# Required: GDAL for geospatial data (bathymetry, coastlines)
+find_package(GDAL REQUIRED)
+message(STATUS "GDAL found: ${GDAL_VERSION}")
 
 # Optional: VTK for visualization output
 if(DRIFTER_USE_VTK)
@@ -88,10 +80,8 @@ include_directories(
     ${EIGEN3_INCLUDE_DIR}
 )
 
-# Conditionally add optional include directories
-if(GDAL_FOUND)
-    include_directories(${GDAL_INCLUDE_DIRS})
-endif()
+# GDAL include directories (required)
+include_directories(${GDAL_INCLUDE_DIRS})
 if(VTK_FOUND)
     include_directories(${VTK_INCLUDE_DIRS})
 endif()
@@ -233,7 +223,7 @@ target_link_libraries(drifter_lib PUBLIC
     Eigen3::Eigen
     $<$<BOOL:${DRIFTER_USE_MPI}>:MPI::MPI_CXX>
     $<$<BOOL:${DRIFTER_USE_OPENMP}>:OpenMP::OpenMP_CXX>
-    $<$<BOOL:${GDAL_FOUND}>:${GDAL_LIBRARIES}>
+    ${GDAL_LIBRARIES}
     $<$<BOOL:${VTK_FOUND}>:${VTK_LIBRARIES}>
     $<$<BOOL:${ZARRS_FFI_LIB}>:${ZARRS_FFI_LIB}>
 )

@@ -7,10 +7,8 @@
 #include <sstream>
 #include <stdexcept>
 
-#ifdef DRIFTER_HAS_GDAL
 #include <gdal_priv.h>
 #include <ogr_spatialref.h>
-#endif
 
 namespace drifter {
 
@@ -30,9 +28,7 @@ struct MultiSourceBathymetry::Impl {
     std::vector<TileInfo> tiles; // Changed from BathymetryData to TileInfo
     GeoTiffReader reader;
 
-#ifdef DRIFTER_HAS_GDAL
     std::unique_ptr<OGRCoordinateTransformation> to_4326;
-#endif
 
     // Combined bounds in EPSG:3034
     Real bounds_xmin = 0, bounds_xmax = 0;
@@ -79,10 +75,6 @@ struct MultiSourceBathymetry::Impl {
 MultiSourceBathymetry::MultiSourceBathymetry(
     const std::string &primary_file, const std::vector<std::string> &tile_files)
     : impl_(std::make_unique<Impl>()) {
-#ifndef DRIFTER_HAS_GDAL
-    throw std::runtime_error("MultiSourceBathymetry requires GDAL support. "
-                             "Rebuild with -DDRIFTER_USE_GDAL=ON");
-#else
     // Load primary source (always loaded eagerly)
     std::cout << "[MultiSourceBathymetry] Loading primary source: "
               << primary_file << std::endl;
@@ -156,7 +148,6 @@ MultiSourceBathymetry::MultiSourceBathymetry(
     // Extend bounds with tile coverage transformed to EPSG:3034
     // Note: For simplicity, we don't transform tile bounds to 3034
     // The combined bounds are approximate for the primary source
-#endif
 }
 
 MultiSourceBathymetry::~MultiSourceBathymetry() {
@@ -187,9 +178,6 @@ MultiSourceBathymetry &
 MultiSourceBathymetry::operator=(MultiSourceBathymetry &&) noexcept = default;
 
 Real MultiSourceBathymetry::evaluate(Real x, Real y) const {
-#ifndef DRIFTER_HAS_GDAL
-    throw std::runtime_error("GDAL support not available");
-#else
     // Step 1: Check primary source (EPSG:3034)
     if (Impl::is_inside_bounds(impl_->primary, x, y)) {
         float val = impl_->primary.interpolate(x, y);
@@ -259,7 +247,6 @@ Real MultiSourceBathymetry::evaluate(Real x, Real y) const {
     oss << "Point outside all sources: EPSG:3034(" << x << ", " << y << ") = "
         << "EPSG:4326(" << lon << ", " << lat << ")";
     throw std::out_of_range(oss.str());
-#endif
 }
 
 bool MultiSourceBathymetry::is_land(Real x, Real y) const {
@@ -268,9 +255,6 @@ bool MultiSourceBathymetry::is_land(Real x, Real y) const {
 }
 
 bool MultiSourceBathymetry::contains(Real x, Real y) const {
-#ifndef DRIFTER_HAS_GDAL
-    return false;
-#else
     // Check primary
     if (Impl::is_inside_bounds(impl_->primary, x, y)) {
         return true;
@@ -289,7 +273,6 @@ bool MultiSourceBathymetry::contains(Real x, Real y) const {
     }
 
     return false;
-#endif
 }
 
 void MultiSourceBathymetry::get_bounds(
@@ -313,11 +296,7 @@ LoadingStats MultiSourceBathymetry::get_loading_stats() const {
 }
 
 bool MultiSourceBathymetry::is_available() {
-#ifdef DRIFTER_HAS_GDAL
     return true;
-#else
-    return false;
-#endif
 }
 
 } // namespace drifter
