@@ -8,9 +8,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 
-#ifdef DRIFTER_HAS_GDAL
 #include <ogr_spatialref.h>
-#endif
 
 #include <boost/geometry.hpp>
 #include <boost/geometry/geometries/point_xy.hpp>
@@ -53,8 +51,6 @@ protected:
 // =============================================================================
 // Basic construction tests
 // =============================================================================
-
-#ifdef DRIFTER_HAS_GDAL
 
 TEST_F(MultiSourceBathymetryTest, IsAvailable) {
   EXPECT_TRUE(MultiSourceBathymetry::is_available());
@@ -431,12 +427,13 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainWithPolygonMask) {
 
   // Configure adaptive smoother
   AdaptiveCGLinearBezierConfig config;
-  config.max_refinement_level = 12;
-  config.error_threshold = 10.0;
-  config.max_iterations = 20;
+  config.max_refinement_level = 15;
+  config.error_threshold = 0.01;
+  config.max_iterations = 100;
   config.max_elements = 10000;
   config.smoother_config.lambda = 1000.0;
   config.verbose = true;
+  config.error_metric_type = ErrorMetricType::RelativeError;
 
   // Start with single element covering entire domain
   auto start = std::chrono::high_resolution_clock::now();
@@ -514,15 +511,3 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainWithPolygonMask) {
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }
-
-#else // DRIFTER_HAS_GDAL
-
-TEST_F(MultiSourceBathymetryTest, NotAvailableWithoutGDAL) {
-  EXPECT_FALSE(MultiSourceBathymetry::is_available());
-}
-
-TEST_F(MultiSourceBathymetryTest, ThrowsWithoutGDAL) {
-  EXPECT_THROW(MultiSourceBathymetry("any.tif", {}), std::runtime_error);
-}
-
-#endif // DRIFTER_HAS_GDAL
