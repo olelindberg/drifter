@@ -13,4 +13,4 @@ namespace drifter {
 // - Minimize data migration while improving balance
 // - Transfer solution data during element migration
 
-}  // namespace drifter
+} // namespace drifter

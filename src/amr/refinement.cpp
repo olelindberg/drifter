@@ -28,8 +28,8 @@ std::unique_ptr<ErrorEstimator> ErrorEstimator::spectral_decay() {
     return std::make_unique<GradientErrorEstimator>(basis);
 }
 
-std::unique_ptr<ErrorEstimator> ErrorEstimator::feature_based(
-    std::function<Real(const Vec3 &)> /*feature_detector*/) {
+std::unique_ptr<ErrorEstimator>
+ErrorEstimator::feature_based(std::function<Real(const Vec3 &)> /*feature_detector*/) {
     return std::make_unique<FeatureBasedEstimator>();
 }
 
@@ -37,13 +37,12 @@ std::unique_ptr<ErrorEstimator> ErrorEstimator::feature_based(
 // GradientErrorEstimator
 // ----------------------------------------------------------------------------
 
-GradientErrorEstimator::GradientErrorEstimator(
-    const HexahedronBasis &basis, const RefinementParams &params)
+GradientErrorEstimator::GradientErrorEstimator(const HexahedronBasis &basis,
+                                               const RefinementParams &params)
     : basis_(basis), params_(params) {}
 
-void GradientErrorEstimator::estimate(
-    const std::vector<VecX> &solution, const OctreeAdapter &mesh,
-    std::vector<ErrorIndicator> &indicators) const {
+void GradientErrorEstimator::estimate(const std::vector<VecX> &solution, const OctreeAdapter &mesh,
+                                      std::vector<ErrorIndicator> &indicators) const {
     indicators.resize(mesh.num_elements());
 
     const auto &elements = mesh.elements();
@@ -68,8 +67,8 @@ void GradientErrorEstimator::estimate(
     }
 }
 
-ErrorIndicator GradientErrorEstimator::estimate_element(
-    const VecX &solution, const OctreeNode &node) const {
+ErrorIndicator GradientErrorEstimator::estimate_element(const VecX &solution,
+                                                        const OctreeNode &node) const {
     ErrorIndicator result;
 
     if (solution.size() == 0)
@@ -93,8 +92,7 @@ ErrorIndicator GradientErrorEstimator::estimate_element(
     return result;
 }
 
-RefineMask
-GradientErrorEstimator::compute_directional_mask(const VecX &solution) const {
+RefineMask GradientErrorEstimator::compute_directional_mask(const VecX &solution) const {
     if (solution.size() == 0)
         return RefineMask::NONE;
 
@@ -166,23 +164,20 @@ GradientErrorEstimator::compute_directional_mask(const VecX &solution) const {
 // JumpErrorEstimator
 // ----------------------------------------------------------------------------
 
-JumpErrorEstimator::JumpErrorEstimator(
-    const HexahedronBasis &basis, const RefinementParams &params)
+JumpErrorEstimator::JumpErrorEstimator(const HexahedronBasis &basis, const RefinementParams &params)
     : basis_(basis), params_(params) {}
 
-void JumpErrorEstimator::estimate(
-    const std::vector<VecX> & /*solution*/, const OctreeAdapter &mesh,
-    std::vector<ErrorIndicator> &indicators) const {
+void JumpErrorEstimator::estimate(const std::vector<VecX> & /*solution*/, const OctreeAdapter &mesh,
+                                  std::vector<ErrorIndicator> &indicators) const {
     indicators.resize(mesh.num_elements());
 }
 
-ErrorIndicator JumpErrorEstimator::estimate_element(
-    const VecX & /*solution*/, const OctreeNode & /*node*/) const {
+ErrorIndicator JumpErrorEstimator::estimate_element(const VecX & /*solution*/,
+                                                    const OctreeNode & /*node*/) const {
     return ErrorIndicator();
 }
 
-void JumpErrorEstimator::set_neighbor_data(
-    const std::vector<std::vector<VecX>> &face_neighbors) {
+void JumpErrorEstimator::set_neighbor_data(const std::vector<std::vector<VecX>> &face_neighbors) {
     face_neighbors_ = face_neighbors;
 }
 
@@ -190,24 +185,24 @@ void JumpErrorEstimator::set_neighbor_data(
 // FeatureBasedEstimator
 // ----------------------------------------------------------------------------
 
-void FeatureBasedEstimator::add_bathymetry_criterion(
-    std::function<Real(Real, Real)> bathymetry, Real threshold) {
+void FeatureBasedEstimator::add_bathymetry_criterion(std::function<Real(Real, Real)> bathymetry,
+                                                     Real threshold) {
     bathymetry_criteria_.emplace_back(std::move(bathymetry), threshold);
 }
 
-void FeatureBasedEstimator::add_coastline_criterion(
-    std::function<bool(Real, Real)> is_land, Real max_distance) {
+void FeatureBasedEstimator::add_coastline_criterion(std::function<bool(Real, Real)> is_land,
+                                                    Real max_distance) {
     coastline_criteria_.emplace_back(std::move(is_land), max_distance);
 }
 
-void FeatureBasedEstimator::estimate(
-    const std::vector<VecX> & /*solution*/, const OctreeAdapter &mesh,
-    std::vector<ErrorIndicator> &indicators) const {
+void FeatureBasedEstimator::estimate(const std::vector<VecX> & /*solution*/,
+                                     const OctreeAdapter &mesh,
+                                     std::vector<ErrorIndicator> &indicators) const {
     indicators.resize(mesh.num_elements());
 }
 
-ErrorIndicator FeatureBasedEstimator::estimate_element(
-    const VecX & /*solution*/, const OctreeNode & /*node*/) const {
+ErrorIndicator FeatureBasedEstimator::estimate_element(const VecX & /*solution*/,
+                                                       const OctreeNode & /*node*/) const {
     return ErrorIndicator();
 }
 
@@ -215,14 +210,12 @@ ErrorIndicator FeatureBasedEstimator::estimate_element(
 // SolutionProjection
 // ----------------------------------------------------------------------------
 
-SolutionProjection::SolutionProjection(const HexahedronBasis &basis)
-    : basis_(basis) {
+SolutionProjection::SolutionProjection(const HexahedronBasis &basis) : basis_(basis) {
     build_projection_matrices();
 }
 
-void SolutionProjection::project_to_children(
-    const VecX &U_parent, RefineMask mask,
-    std::vector<VecX> &U_children) const {
+void SolutionProjection::project_to_children(const VecX &U_parent, RefineMask mask,
+                                             std::vector<VecX> &U_children) const {
     int n_children = num_children(mask);
     U_children.resize(n_children);
 
@@ -258,23 +251,20 @@ void SolutionProjection::project_to_children(
                 // Evaluate parent polynomial at child nodes
                 for (int k = 0; k < n1d; ++k) {
                     Real zeta_child = parent_nodes(k);
-                    Real zeta_parent = zeta_min + 0.5 * (zeta_child + 1.0) *
-                                                      (zeta_max - zeta_min);
+                    Real zeta_parent = zeta_min + 0.5 * (zeta_child + 1.0) * (zeta_max - zeta_min);
 
                     for (int j = 0; j < n1d; ++j) {
                         Real eta_child = parent_nodes(j);
-                        Real eta_parent = eta_min + 0.5 * (eta_child + 1.0) *
-                                                        (eta_max - eta_min);
+                        Real eta_parent = eta_min + 0.5 * (eta_child + 1.0) * (eta_max - eta_min);
 
                         for (int i = 0; i < n1d; ++i) {
                             Real xi_child = parent_nodes(i);
-                            Real xi_parent = xi_min + 0.5 * (xi_child + 1.0) *
-                                                          (xi_max - xi_min);
+                            Real xi_parent = xi_min + 0.5 * (xi_child + 1.0) * (xi_max - xi_min);
 
                             // Interpolate parent solution to this point
                             int child_dof = k * n1d * n1d + j * n1d + i;
-                            U_children[child_idx](child_dof) = interpolate_3d(
-                                U_parent, xi_parent, eta_parent, zeta_parent);
+                            U_children[child_idx](child_dof) =
+                                interpolate_3d(U_parent, xi_parent, eta_parent, zeta_parent);
                         }
                     }
                 }
@@ -285,9 +275,8 @@ void SolutionProjection::project_to_children(
     }
 }
 
-void SolutionProjection::project_from_children(
-    const std::vector<VecX> &U_children, RefineMask mask,
-    VecX &U_parent) const {
+void SolutionProjection::project_from_children(const std::vector<VecX> &U_children, RefineMask mask,
+                                               VecX &U_parent) const {
     int n1d = basis_.order() + 1;
     int ndof = n1d * n1d * n1d;
     U_parent.resize(ndof);
@@ -334,18 +323,16 @@ void SolutionProjection::project_from_children(
                     Real zeta_max = ref_z ? (cz) : 1.0;
 
                     Real xi_c = 2.0 * (xi_p - xi_min) / (xi_max - xi_min) - 1.0;
-                    Real eta_c =
-                        2.0 * (eta_p - eta_min) / (eta_max - eta_min) - 1.0;
-                    Real zeta_c =
-                        2.0 * (zeta_p - zeta_min) / (zeta_max - zeta_min) - 1.0;
+                    Real eta_c = 2.0 * (eta_p - eta_min) / (eta_max - eta_min) - 1.0;
+                    Real zeta_c = 2.0 * (zeta_p - zeta_min) / (zeta_max - zeta_min) - 1.0;
 
                     // Clamp to valid range
                     xi_c = std::clamp(xi_c, -1.0, 1.0);
                     eta_c = std::clamp(eta_c, -1.0, 1.0);
                     zeta_c = std::clamp(zeta_c, -1.0, 1.0);
 
-                    U_parent(parent_dof) = interpolate_3d(
-                        U_children[child_idx], xi_c, eta_c, zeta_c);
+                    U_parent(parent_dof) =
+                        interpolate_3d(U_children[child_idx], xi_c, eta_c, zeta_c);
                 }
 
                 // Mass lumping weight
@@ -355,8 +342,7 @@ void SolutionProjection::project_from_children(
     }
 }
 
-Real SolutionProjection::interpolate_3d(
-    const VecX &U, Real xi, Real eta, Real zeta) const {
+Real SolutionProjection::interpolate_3d(const VecX &U, Real xi, Real eta, Real zeta) const {
     int n1d = basis_.order() + 1;
     const VecX &nodes = basis_.lgl_basis_1d().nodes;
 
@@ -391,11 +377,9 @@ Real SolutionProjection::interpolate_3d(
     return result;
 }
 
-MatX SolutionProjection::child_projection_matrix(
-    int child_index, RefineMask mask) const {
+MatX SolutionProjection::child_projection_matrix(int child_index, RefineMask mask) const {
     auto it = child_projections_.find(mask);
-    if (it != child_projections_.end() &&
-        child_index < static_cast<int>(it->second.size())) {
+    if (it != child_projections_.end() && child_index < static_cast<int>(it->second.size())) {
         return it->second[child_index];
     }
 
@@ -426,20 +410,17 @@ void SolutionProjection::build_projection_matrices() {
 // AdaptiveMeshRefinement
 // ----------------------------------------------------------------------------
 
-AdaptiveMeshRefinement::AdaptiveMeshRefinement(
-    int order, const RefinementParams &params)
+AdaptiveMeshRefinement::AdaptiveMeshRefinement(int order, const RefinementParams &params)
     : order_(order), params_(params), basis_(order),
       solution_projection_(std::make_unique<SolutionProjection>(basis_)),
       mortar_manager_(std::make_unique<MortarInterfaceManager>(order)) {}
 
-void AdaptiveMeshRefinement::set_error_estimator(
-    std::unique_ptr<ErrorEstimator> estimator) {
+void AdaptiveMeshRefinement::set_error_estimator(std::unique_ptr<ErrorEstimator> estimator) {
     error_estimator_ = std::move(estimator);
 }
 
-int AdaptiveMeshRefinement::adapt(
-    OctreeAdapter &mesh, std::vector<VecX> &solution,
-    std::vector<std::vector<FaceConnection>> &face_connections) {
+int AdaptiveMeshRefinement::adapt(OctreeAdapter &mesh, std::vector<VecX> &solution,
+                                  std::vector<std::vector<FaceConnection>> &face_connections) {
     // Step 1: Mark elements for refinement/coarsening
     std::vector<RefinementAction> actions;
     std::vector<RefineMask> masks;
@@ -504,9 +485,10 @@ int AdaptiveMeshRefinement::adapt(
     return static_cast<int>(to_refine.size() + to_coarsen.size());
 }
 
-void AdaptiveMeshRefinement::mark_elements(
-    const OctreeAdapter &mesh, const std::vector<VecX> &solution,
-    std::vector<RefinementAction> &actions, std::vector<RefineMask> &masks) {
+void AdaptiveMeshRefinement::mark_elements(const OctreeAdapter &mesh,
+                                           const std::vector<VecX> &solution,
+                                           std::vector<RefinementAction> &actions,
+                                           std::vector<RefineMask> &masks) {
     Index num_elem = mesh.num_elements();
     actions.resize(num_elem, RefinementAction::None);
     masks.resize(num_elem, RefineMask::NONE);
@@ -526,9 +508,8 @@ void AdaptiveMeshRefinement::mark_elements(
 
         if (ind.refine && can_refine(node, ind.suggested_mask)) {
             actions[e] = RefinementAction::Refine;
-            masks[e] = ind.suggested_mask != RefineMask::NONE
-                           ? ind.suggested_mask
-                           : RefineMask::XYZ;
+            masks[e] =
+                ind.suggested_mask != RefineMask::NONE ? ind.suggested_mask : RefineMask::XYZ;
         } else if (ind.coarsen && can_coarsen(node)) {
             actions[e] = RefinementAction::Coarsen;
         }
@@ -538,14 +519,14 @@ void AdaptiveMeshRefinement::mark_elements(
     apply_aoi_constraints(mesh, actions, masks);
 }
 
-void AdaptiveMeshRefinement::refine_mesh(
-    OctreeAdapter &mesh, const std::vector<Index> &elements_to_refine,
-    const std::vector<RefineMask> &masks) {
+void AdaptiveMeshRefinement::refine_mesh(OctreeAdapter &mesh,
+                                         const std::vector<Index> &elements_to_refine,
+                                         const std::vector<RefineMask> &masks) {
     mesh.refine(elements_to_refine, masks);
 }
 
-void AdaptiveMeshRefinement::coarsen_mesh(
-    OctreeAdapter &mesh, const std::vector<Index> &elements_to_coarsen) {
+void AdaptiveMeshRefinement::coarsen_mesh(OctreeAdapter &mesh,
+                                          const std::vector<Index> &elements_to_coarsen) {
     mesh.coarsen(elements_to_coarsen);
 }
 
@@ -576,8 +557,8 @@ void AdaptiveMeshRefinement::transfer_solution(
     for (const auto &[parent, children] : refinement_map) {
         if (parent < static_cast<Index>(old_solution.size())) {
             std::vector<VecX> child_solutions;
-            solution_projection_->project_to_children(
-                old_solution[parent], RefineMask::XYZ, child_solutions);
+            solution_projection_->project_to_children(old_solution[parent], RefineMask::XYZ,
+                                                      child_solutions);
 
             for (const auto &child_sol : child_solutions) {
                 new_solution.push_back(child_sol);
@@ -587,8 +568,7 @@ void AdaptiveMeshRefinement::transfer_solution(
 }
 
 void AdaptiveMeshRefinement::rebuild_face_connections(
-    const OctreeAdapter &mesh,
-    std::vector<std::vector<FaceConnection>> &face_connections) {
+    const OctreeAdapter &mesh, std::vector<std::vector<FaceConnection>> &face_connections) {
     face_connections = mesh.build_face_connections();
 }
 
@@ -603,8 +583,7 @@ void AdaptiveMeshRefinement::update_mortar_interfaces(
     for (size_t e = 0; e < face_connections.size(); ++e) {
         for (int f = 0; f < 6; ++f) {
             const auto &conn = face_connections[e][f];
-            if (!conn.fine_elems.empty() &&
-                conn.type != FaceConnectionType::SameLevel &&
+            if (!conn.fine_elems.empty() && conn.type != FaceConnectionType::SameLevel &&
                 conn.type != FaceConnectionType::Boundary) {
                 // Register non-conforming interface
                 mortar_manager_->register_interface(conn);
@@ -616,16 +595,13 @@ void AdaptiveMeshRefinement::update_mortar_interfaces(
     mortar_manager_->build_operators();
 }
 
-bool AdaptiveMeshRefinement::can_refine(
-    const OctreeNode &node, RefineMask /*mask*/) const {
-    return node.level.level_x < params_.max_level &&
-           node.level.level_y < params_.max_level &&
+bool AdaptiveMeshRefinement::can_refine(const OctreeNode &node, RefineMask /*mask*/) const {
+    return node.level.level_x < params_.max_level && node.level.level_y < params_.max_level &&
            node.level.level_z < params_.max_level;
 }
 
 bool AdaptiveMeshRefinement::can_coarsen(const OctreeNode &node) const {
-    return node.level.level_x > params_.min_level ||
-           node.level.level_y > params_.min_level ||
+    return node.level.level_x > params_.min_level || node.level.level_y > params_.min_level ||
            node.level.level_z > params_.min_level;
 }
 
@@ -637,13 +613,10 @@ void AdaptiveMeshRefinement::enforce_balance(OctreeAdapter & /*mesh*/) {
 // AMRController (legacy)
 // ----------------------------------------------------------------------------
 
-AMRController::AMRController(
-    std::shared_ptr<Mesh> mesh, std::unique_ptr<ErrorEstimator> estimator)
+AMRController::AMRController(std::shared_ptr<Mesh> mesh, std::unique_ptr<ErrorEstimator> estimator)
     : mesh_(std::move(mesh)), estimator_(std::move(estimator)) {}
 
-void AMRController::set_criteria(const RefinementCriteria &criteria) {
-    criteria_ = criteria;
-}
+void AMRController::set_criteria(const RefinementCriteria &criteria) { criteria_ = criteria; }
 
 void AMRController::mark_elements() {
     // Stub
@@ -688,13 +661,13 @@ void AMRController::coarsen_element(Index /*elem_id*/) {
     // Stub
 }
 
-void AMRController::interpolate_to_children(
-    const Element & /*parent*/, std::vector<Element> & /*children*/) {
+void AMRController::interpolate_to_children(const Element & /*parent*/,
+                                            std::vector<Element> & /*children*/) {
     // Stub
 }
 
-void AMRController::project_from_children(
-    const std::vector<Element> & /*children*/, Element & /*parent*/) {
+void AMRController::project_from_children(const std::vector<Element> & /*children*/,
+                                          Element & /*parent*/) {
     // Stub
 }
 
@@ -704,13 +677,11 @@ void AMRController::project_from_children(
 
 void LoadBalancer::set_strategy(Strategy strategy) { strategy_ = strategy; }
 
-std::vector<int>
-LoadBalancer::compute_partition(const Mesh & /*mesh*/, int num_procs) {
+std::vector<int> LoadBalancer::compute_partition(const Mesh & /*mesh*/, int num_procs) {
     return std::vector<int>(100, 0); // Stub
 }
 
-std::vector<int>
-LoadBalancer::compute_partition(const OctreeAdapter &mesh, int num_procs) {
+std::vector<int> LoadBalancer::compute_partition(const OctreeAdapter &mesh, int num_procs) {
     std::vector<int> partition(mesh.num_elements());
     for (size_t i = 0; i < partition.size(); ++i) {
         partition[i] = static_cast<int>(i % num_procs);
@@ -718,8 +689,7 @@ LoadBalancer::compute_partition(const OctreeAdapter &mesh, int num_procs) {
     return partition;
 }
 
-void LoadBalancer::migrate(
-    Mesh & /*mesh*/, const std::vector<int> & /*new_partition*/) {
+void LoadBalancer::migrate(Mesh & /*mesh*/, const std::vector<int> & /*new_partition*/) {
     // Stub
 }
 
@@ -735,23 +705,24 @@ std::vector<Index> LoadBalancer::morton_order(const OctreeAdapter & /*mesh*/) {
 // AMRFluxComputation
 // ----------------------------------------------------------------------------
 
-AMRFluxComputation::AMRFluxComputation(
-    const HexahedronBasis &basis, MortarInterfaceManager &mortar_manager)
+AMRFluxComputation::AMRFluxComputation(const HexahedronBasis &basis,
+                                       MortarInterfaceManager &mortar_manager)
     : basis_(basis), mortar_manager_(mortar_manager) {}
 
-void AMRFluxComputation::compute_nonconforming_flux(
-    const FaceConnection & /*conn*/, const VecX & /*U_coarse*/,
-    const std::vector<VecX> & /*U_fine*/,
-    const NumericalFluxFunc & /*numerical_flux*/, VecX & /*rhs_coarse*/,
-    std::vector<VecX> & /*rhs_fine*/) const {
+void AMRFluxComputation::compute_nonconforming_flux(const FaceConnection & /*conn*/,
+                                                    const VecX & /*U_coarse*/,
+                                                    const std::vector<VecX> & /*U_fine*/,
+                                                    const NumericalFluxFunc & /*numerical_flux*/,
+                                                    VecX & /*rhs_coarse*/,
+                                                    std::vector<VecX> & /*rhs_fine*/) const {
     // Stub
 }
 
-void AMRFluxComputation::compute_conforming_flux(
-    int /*face_id_left*/, int /*face_id_right*/, const VecX & /*U_left*/,
-    const VecX & /*U_right*/, const Vec3 & /*normal*/,
-    const NumericalFluxFunc & /*numerical_flux*/, VecX & /*rhs_left*/,
-    VecX & /*rhs_right*/) const {
+void AMRFluxComputation::compute_conforming_flux(int /*face_id_left*/, int /*face_id_right*/,
+                                                 const VecX & /*U_left*/, const VecX & /*U_right*/,
+                                                 const Vec3 & /*normal*/,
+                                                 const NumericalFluxFunc & /*numerical_flux*/,
+                                                 VecX & /*rhs_left*/, VecX & /*rhs_right*/) const {
     // Stub
 }
 
@@ -759,8 +730,8 @@ void AMRFluxComputation::compute_conforming_flux(
 // AdaptiveMeshRefinement AOI methods
 // ----------------------------------------------------------------------------
 
-void AdaptiveMeshRefinement::set_aoi_refinement(
-    const AreaOfInterest &aoi, const std::string &region_name, int min_level) {
+void AdaptiveMeshRefinement::set_aoi_refinement(const AreaOfInterest &aoi,
+                                                const std::string &region_name, int min_level) {
     aoi_ = &aoi;
     aoi_region_ = region_name;
     aoi_min_level_ = min_level;
@@ -772,9 +743,9 @@ void AdaptiveMeshRefinement::clear_aoi_refinement() {
     aoi_min_level_ = 0;
 }
 
-void AdaptiveMeshRefinement::apply_aoi_constraints(
-    const OctreeAdapter &mesh, std::vector<RefinementAction> &actions,
-    std::vector<RefineMask> &masks) const {
+void AdaptiveMeshRefinement::apply_aoi_constraints(const OctreeAdapter &mesh,
+                                                   std::vector<RefinementAction> &actions,
+                                                   std::vector<RefineMask> &masks) const {
 
     if (!aoi_ || aoi_region_.empty() || aoi_min_level_ <= 0)
         return;

@@ -12,8 +12,7 @@ namespace drifter {
 
 BernsteinBasis1D::BernsteinBasis1D(int order) : order_(order) {
     if (order < 0) {
-        throw std::invalid_argument(
-            "BernsteinBasis1D: order must be non-negative");
+        throw std::invalid_argument("BernsteinBasis1D: order must be non-negative");
     }
     build_conversion_matrices();
 }
@@ -99,8 +98,7 @@ void BernsteinBasis1D::build_conversion_matrices() {
     // Build V_B: Bernstein basis at uniform parameter values
     MatX V_B(np, np);
     for (int k = 0; k < np; ++k) {
-        Real t =
-            static_cast<Real>(k) / static_cast<Real>(n); // Parameter in [0,1]
+        Real t = static_cast<Real>(k) / static_cast<Real>(n); // Parameter in [0,1]
         Real xi = 2.0 * t - 1.0; // Reference coord in [-1,1]
         VecX B = evaluate(xi);
         for (int i = 0; i < np; ++i) {
@@ -138,8 +136,7 @@ void BernsteinBasis1D::build_conversion_matrices() {
 // =============================================================================
 
 BernsteinBasis3D::BernsteinBasis3D(int order)
-    : order_(order), num_dofs_((order + 1) * (order + 1) * (order + 1)),
-      basis_1d_(order) {
+    : order_(order), num_dofs_((order + 1) * (order + 1) * (order + 1)), basis_1d_(order) {
     build_3d_conversion_matrix();
 }
 
@@ -164,12 +161,10 @@ void BernsteinBasis3D::build_3d_conversion_matrix() {
                 for (int k1 = 0; k1 < np; ++k1) {
                     for (int j1 = 0; j1 < np; ++j1) {
                         for (int i1 = 0; i1 < np; ++i1) {
-                            int col =
-                                i1 + np * (j1 + np * k1); // Lagrange index
+                            int col = i1 + np * (j1 + np * k1); // Lagrange index
 
                             // Tensor product of 1D conversion matrices
-                            L2B_3d_(row, col) = L2B_1d(i2, i1) *
-                                                L2B_1d(j2, j1) * L2B_1d(k2, k1);
+                            L2B_3d_(row, col) = L2B_1d(i2, i1) * L2B_1d(j2, j1) * L2B_1d(k2, k1);
                         }
                     }
                 }
@@ -263,8 +258,7 @@ VecX SeabedInterpolator::evaluate_lagrange_1d(Real xi) const {
     return phi;
 }
 
-VecX SeabedInterpolator::evaluate_lagrange_bottom_face(
-    Real xi, Real eta) const {
+VecX SeabedInterpolator::evaluate_lagrange_bottom_face(Real xi, Real eta) const {
     // Evaluate 3D Lagrange basis at (xi, eta, zeta=-1)
     VecX phi_xi = evaluate_lagrange_1d(xi);
     VecX phi_eta = evaluate_lagrange_1d(eta);
@@ -286,8 +280,7 @@ VecX SeabedInterpolator::evaluate_lagrange_bottom_face(
     return phi;
 }
 
-Vec3 SeabedInterpolator::evaluate_point(
-    const VecX &coords, Real xi, Real eta) const {
+Vec3 SeabedInterpolator::evaluate_point(const VecX &coords, Real xi, Real eta) const {
     // coords contains interleaved [x0,y0,z0, x1,y1,z1, ...] for each DOF
 
     Vec3 point(0, 0, 0);
@@ -336,8 +329,7 @@ Vec3 SeabedInterpolator::evaluate_point(
     return point;
 }
 
-Real SeabedInterpolator::evaluate_scalar(
-    const VecX &data, Real xi, Real eta) const {
+Real SeabedInterpolator::evaluate_scalar(const VecX &data, Real xi, Real eta) const {
     Real value = 0.0;
 
     if (method_ == SeabedInterpolation::Quintic) {
@@ -375,8 +367,7 @@ VecX SeabedInterpolator::to_bernstein(const VecX &lagrange_data) const {
     return L2B_3d_ * lagrange_data;
 }
 
-Real SeabedInterpolator::evaluate_scalar_2d(
-    const VecX &data_2d, Real xi, Real eta) const {
+Real SeabedInterpolator::evaluate_scalar_2d(const VecX &data_2d, Real xi, Real eta) const {
     // Evaluate 2D scalar field (for bottom face only, no z-dependence)
     // data_2d has n1d * n1d values indexed as i + n1d * j
     int np = order_ + 1;

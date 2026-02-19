@@ -9,4 +9,4 @@ namespace drifter {
 // This file exists for potential future non-inline implementations
 // and to ensure the header compiles correctly.
 
-}  // namespace drifter
+} // namespace drifter

@@ -33,9 +33,8 @@ public:
     /// @param layer_name Layer name to read (e.g., "landpolygon_2500")
     /// @param target_srs Target spatial reference system (e.g., "EPSG:3034")
     /// @return true if successful
-    bool load(
-        const std::string &filename, const std::string &layer_name = "",
-        const std::string &target_srs = "");
+    bool load(const std::string &filename, const std::string &layer_name = "",
+              const std::string &target_srs = "");
 
     /// @brief Get the number of polygons
     size_t num_polygons() const;

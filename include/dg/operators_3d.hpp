@@ -25,18 +25,18 @@ class Element;
 /// @brief Boundary condition type for DG operators
 enum class BCType : uint8_t {
     Dirichlet, ///< Specified value
-    Neumann,   ///< Specified flux
-    Periodic,  ///< Periodic boundary
-    Outflow,   ///< Free outflow (extrapolation)
-    Inflow,    ///< Specified inflow
-    NoSlip,    ///< No-slip wall (velocity = 0)
-    FreeSlip   ///< Free-slip wall (normal velocity = 0)
+    Neumann, ///< Specified flux
+    Periodic, ///< Periodic boundary
+    Outflow, ///< Free outflow (extrapolation)
+    Inflow, ///< Specified inflow
+    NoSlip, ///< No-slip wall (velocity = 0)
+    FreeSlip ///< Free-slip wall (normal velocity = 0)
 };
 
 /// @brief Boundary condition specification
 struct BoundaryCondition {
     BCType type = BCType::Dirichlet;
-    int boundary_id = -1;                               ///< Boundary marker/ID
+    int boundary_id = -1; ///< Boundary marker/ID
     std::function<VecX(const Vec3 &, Real)> value_func; ///< BC value at (x, t)
 };
 
@@ -46,10 +46,10 @@ using PhysicalFluxFunc = std::function<Tensor3(const VecX &U)>;
 
 /// @brief Solution state at a point (for flux evaluation)
 struct ElementState {
-    VecX U;        ///< Solution values (num_vars)
-    MatX grad_U;   ///< Solution gradients (num_vars x 3)
+    VecX U; ///< Solution values (num_vars)
+    MatX grad_U; ///< Solution gradients (num_vars x 3)
     Vec3 position; ///< Physical position
-    Vec3 normal;   ///< Outward normal (for face evaluations)
+    Vec3 normal; ///< Outward normal (for face evaluations)
 };
 
 /// @brief 3D DG integration operators for a single element
@@ -59,8 +59,7 @@ public:
     /// @brief Construct element operator
     /// @param basis Hexahedron basis
     /// @param quad Volume quadrature
-    explicit DG3DElementOperator(
-        const HexahedronBasis &basis, const GaussQuadrature3D &quad);
+    explicit DG3DElementOperator(const HexahedronBasis &basis, const GaussQuadrature3D &quad);
 
     /// Polynomial order
     int order() const { return basis_.order(); }
@@ -88,15 +87,13 @@ public:
     /// Compute gradient in reference coordinates: (du/dxi, du/deta, du/dzeta)
     /// @param u Solution at DOFs
     /// @param grad_u Output: gradient at DOFs (3 columns for xi, eta, zeta)
-    void
-    gradient_reference(const VecX &u, MatX &grad_u, bool use_lgl = true) const;
+    void gradient_reference(const VecX &u, MatX &grad_u, bool use_lgl = true) const;
 
     /// Compute divergence in reference coordinates: du/dxi + dv/deta + dw/dzeta
     /// @param flux Flux components (3 VecX for xi, eta, zeta components)
     /// @param div_flux Output: divergence at DOFs
-    void divergence_reference(
-        const std::array<VecX, 3> &flux, VecX &div_flux,
-        bool use_lgl = true) const;
+    void divergence_reference(const std::array<VecX, 3> &flux, VecX &div_flux,
+                              bool use_lgl = true) const;
 
     // =========================================================================
     // Volume integral contribution
@@ -110,10 +107,9 @@ public:
     /// @param jacobian Jacobian matrix (3x3) at each quadrature point
     /// @param det_J Jacobian determinant at each quadrature point
     /// @param[out] rhs Volume contribution to RHS
-    void volume_integral(
-        const VecX &U, const PhysicalFluxFunc &physical_flux,
-        const std::vector<Mat3> &jacobian, const VecX &det_J, VecX &rhs,
-        bool use_lgl = true) const;
+    void volume_integral(const VecX &U, const PhysicalFluxFunc &physical_flux,
+                         const std::vector<Mat3> &jacobian, const VecX &det_J, VecX &rhs,
+                         bool use_lgl = true) const;
 
     // =========================================================================
     // Face integral contribution
@@ -127,10 +123,9 @@ public:
     /// @param numerical_flux Numerical flux function
     /// @param face_jacobian Surface Jacobian (det of face metric)
     /// @param[out] rhs Face contribution to RHS
-    void face_integral(
-        int face_id, const VecX &U_interior, const VecX &U_exterior,
-        const Vec3 &normal, const NumericalFluxFunc &numerical_flux,
-        const VecX &face_jacobian, VecX &rhs, bool use_lgl = true) const;
+    void face_integral(int face_id, const VecX &U_interior, const VecX &U_exterior,
+                       const Vec3 &normal, const NumericalFluxFunc &numerical_flux,
+                       const VecX &face_jacobian, VecX &rhs, bool use_lgl = true) const;
 
     // =========================================================================
     // Access to basis and quadrature
@@ -149,8 +144,7 @@ private:
     // Precomputed basis values at quadrature points
     MatX phi_at_quad_lgl_; // (num_quad x num_dofs)
     MatX phi_at_quad_gl_;
-    std::array<MatX, 3>
-        dphi_at_quad_lgl_; // Gradients (num_quad x num_dofs) for each dir
+    std::array<MatX, 3> dphi_at_quad_lgl_; // Gradients (num_quad x num_dofs) for each dir
     std::array<MatX, 3> dphi_at_quad_gl_;
 };
 
@@ -184,11 +178,10 @@ public:
     /// @param[out] grad_U_x X-component of gradient at DOFs
     /// @param[out] grad_U_y Y-component of gradient at DOFs
     /// @param[out] grad_U_z Z-component of gradient at DOFs
-    void gradient(
-        const std::vector<VecX> &U,
-        const std::vector<std::vector<FaceConnection>> &face_connections,
-        const std::vector<BoundaryCondition> &bc, std::vector<VecX> &grad_U_x,
-        std::vector<VecX> &grad_U_y, std::vector<VecX> &grad_U_z) const;
+    void gradient(const std::vector<VecX> &U,
+                  const std::vector<std::vector<FaceConnection>> &face_connections,
+                  const std::vector<BoundaryCondition> &bc, std::vector<VecX> &grad_U_x,
+                  std::vector<VecX> &grad_U_y, std::vector<VecX> &grad_U_z) const;
 
     // =========================================================================
     // Divergence operator
@@ -201,13 +194,11 @@ public:
     /// @param numerical_flux Numerical flux for interface
     /// @param bc Boundary conditions
     /// @param[out] div_F Divergence at DOFs
-    void divergence(
-        const std::vector<VecX> &F_x, const std::vector<VecX> &F_y,
-        const std::vector<VecX> &F_z,
-        const std::vector<std::vector<FaceConnection>> &face_connections,
-        const NumericalFluxFunc &numerical_flux,
-        const std::vector<BoundaryCondition> &bc,
-        std::vector<VecX> &div_F) const;
+    void divergence(const std::vector<VecX> &F_x, const std::vector<VecX> &F_y,
+                    const std::vector<VecX> &F_z,
+                    const std::vector<std::vector<FaceConnection>> &face_connections,
+                    const NumericalFluxFunc &numerical_flux,
+                    const std::vector<BoundaryCondition> &bc, std::vector<VecX> &div_F) const;
 
     // =========================================================================
     // Full RHS computation for conservation laws
@@ -222,12 +213,11 @@ public:
     /// @param face_connections Face connectivity
     /// @param bc Boundary conditions
     /// @param[out] rhs Right-hand side at DOFs
-    void compute_rhs(
-        const std::vector<VecX> &U, const PhysicalFluxFunc &physical_flux,
-        const NumericalFluxFunc &numerical_flux,
-        const std::function<VecX(const VecX &, const Vec3 &)> &source_term,
-        const std::vector<std::vector<FaceConnection>> &face_connections,
-        const std::vector<BoundaryCondition> &bc, std::vector<VecX> &rhs) const;
+    void compute_rhs(const std::vector<VecX> &U, const PhysicalFluxFunc &physical_flux,
+                     const NumericalFluxFunc &numerical_flux,
+                     const std::function<VecX(const VecX &, const Vec3 &)> &source_term,
+                     const std::vector<std::vector<FaceConnection>> &face_connections,
+                     const std::vector<BoundaryCondition> &bc, std::vector<VecX> &rhs) const;
 
     // =========================================================================
     // Laplacian operator (for diffusion)
@@ -239,11 +229,9 @@ public:
     /// @param face_connections Face connectivity
     /// @param bc Boundary conditions
     /// @param[out] lap_U Laplacian at DOFs
-    void laplacian(
-        const std::vector<VecX> &U, Real diffusivity,
-        const std::vector<std::vector<FaceConnection>> &face_connections,
-        const std::vector<BoundaryCondition> &bc,
-        std::vector<VecX> &lap_U) const;
+    void laplacian(const std::vector<VecX> &U, Real diffusivity,
+                   const std::vector<std::vector<FaceConnection>> &face_connections,
+                   const std::vector<BoundaryCondition> &bc, std::vector<VecX> &lap_U) const;
 
     // =========================================================================
     // Non-conforming interface handling
@@ -259,9 +247,7 @@ public:
     bool uses_mortar() const { return use_mortar_; }
 
     /// Get mortar interface manager (for external flux computation)
-    const MortarInterfaceManager *mortar_manager() const {
-        return mortar_manager_.get();
-    }
+    const MortarInterfaceManager* mortar_manager() const { return mortar_manager_.get(); }
 
 private:
     int order_;
@@ -275,20 +261,20 @@ private:
     std::unique_ptr<MortarInterfaceManager> mortar_manager_;
 
     // Helper methods
-    void compute_interface_flux_conforming(
-        int elem_left, int face_left, int elem_right, int face_right,
-        const VecX &U_left, const VecX &U_right, const Vec3 &normal,
-        const NumericalFluxFunc &numerical_flux, VecX &rhs_left,
-        VecX &rhs_right) const;
+    void compute_interface_flux_conforming(int elem_left, int face_left, int elem_right,
+                                           int face_right, const VecX &U_left, const VecX &U_right,
+                                           const Vec3 &normal,
+                                           const NumericalFluxFunc &numerical_flux, VecX &rhs_left,
+                                           VecX &rhs_right) const;
 
-    void compute_interface_flux_nonconforming(
-        const FaceConnection &conn, const std::vector<VecX> &U,
-        const NumericalFluxFunc &numerical_flux, std::vector<VecX> &rhs) const;
+    void compute_interface_flux_nonconforming(const FaceConnection &conn,
+                                              const std::vector<VecX> &U,
+                                              const NumericalFluxFunc &numerical_flux,
+                                              std::vector<VecX> &rhs) const;
 
-    void compute_boundary_flux(
-        int elem, int face_id, const VecX &U_interior, const Vec3 &normal,
-        const BoundaryCondition &bc, Real time, const Vec3 &face_center,
-        const NumericalFluxFunc &numerical_flux, VecX &rhs) const;
+    void compute_boundary_flux(int elem, int face_id, const VecX &U_interior, const Vec3 &normal,
+                               const BoundaryCondition &bc, Real time, const Vec3 &face_center,
+                               const NumericalFluxFunc &numerical_flux, VecX &rhs) const;
 };
 
 // =============================================================================
@@ -299,15 +285,14 @@ private:
 /// @details Given physical coordinates at nodes, compute Jacobian and metric
 /// terms
 struct GeometricFactors {
-    std::vector<Mat3> jacobian;     ///< Jacobian matrix at each quad point
+    std::vector<Mat3> jacobian; ///< Jacobian matrix at each quad point
     std::vector<Mat3> jacobian_inv; ///< Inverse Jacobian
-    VecX det_J;                     ///< Jacobian determinant
+    VecX det_J; ///< Jacobian determinant
     std::array<VecX, 6> face_det_J; ///< Face Jacobian determinants
 
     /// Compute geometric factors from physical node positions
-    static GeometricFactors compute(
-        const HexahedronBasis &basis, const GaussQuadrature3D &quad,
-        const std::vector<Vec3> &physical_nodes);
+    static GeometricFactors compute(const HexahedronBasis &basis, const GaussQuadrature3D &quad,
+                                    const std::vector<Vec3> &physical_nodes);
 };
 
 /// @brief Transform gradient from reference to physical coordinates
@@ -333,47 +318,41 @@ public:
     /// @brief Construct sigma coordinate operators
     /// @param basis Hexahedron basis
     /// @param quad Volume quadrature
-    SigmaCoordinateOperators(
-        const HexahedronBasis &basis, const GaussQuadrature3D &quad);
+    SigmaCoordinateOperators(const HexahedronBasis &basis, const GaussQuadrature3D &quad);
 
     /// @brief Compute horizontal gradient in sigma coordinates
     /// @details Accounts for sigma-coordinate metric terms:
     ///          du/dx|_z = du/dx|_sigma - (dsigma/dx) * du/dsigma
-    void horizontal_gradient(
-        const VecX &U,
-        const VecX &eta,     // Free surface elevation
-        const VecX &h,       // Bathymetry
-        const VecX &deta_dx, // Free surface gradient
-        const VecX &deta_dy,
-        const VecX &dh_dx, // Bathymetry gradient
-        const VecX &dh_dy, VecX &dU_dx, VecX &dU_dy) const;
+    void horizontal_gradient(const VecX &U,
+                             const VecX &eta, // Free surface elevation
+                             const VecX &h, // Bathymetry
+                             const VecX &deta_dx, // Free surface gradient
+                             const VecX &deta_dy,
+                             const VecX &dh_dx, // Bathymetry gradient
+                             const VecX &dh_dy, VecX &dU_dx, VecX &dU_dy) const;
 
     /// @brief Compute vertical gradient in sigma coordinates
     /// @details du/dz = (1/H) * du/dsigma where H = eta + h
-    void vertical_gradient(
-        const VecX &U, const VecX &eta, const VecX &h, VecX &dU_dz) const;
+    void vertical_gradient(const VecX &U, const VecX &eta, const VecX &h, VecX &dU_dz) const;
 
     /// @brief Compute sigma-coordinate divergence
     /// @details Accounts for time-varying water column depth
-    void sigma_divergence(
-        const VecX &Hu,    // H * u (x-transport)
-        const VecX &Hv,    // H * v (y-transport)
-        const VecX &omega, // Sigma velocity
-        const VecX &H,     // Water column depth
-        VecX &div) const;
+    void sigma_divergence(const VecX &Hu, // H * u (x-transport)
+                          const VecX &Hv, // H * v (y-transport)
+                          const VecX &omega, // Sigma velocity
+                          const VecX &H, // Water column depth
+                          VecX &div) const;
 
     /// @brief Update metrics when free surface changes (steady state, no time
     /// derivative)
-    void update_sigma_metrics(
-        const VecX &eta, const VecX &h, const VecX &deta_dx,
-        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy);
+    void update_sigma_metrics(const VecX &eta, const VecX &h, const VecX &deta_dx,
+                              const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy);
 
     /// @brief Update metrics with time derivative for ALE formulation
     /// @param deta_dt Time derivative of free surface elevation
-    void update_sigma_metrics_with_time(
-        const VecX &eta, const VecX &h, const VecX &deta_dx,
-        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy,
-        const VecX &deta_dt);
+    void update_sigma_metrics_with_time(const VecX &eta, const VecX &h, const VecX &deta_dx,
+                                        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy,
+                                        const VecX &deta_dt);
 
     /// @brief Compute ALE correction term for material derivative
     /// @details In ALE formulation, the material derivative becomes:
@@ -382,8 +361,7 @@ public:
     /// @param U Field values at DOFs
     /// @param w_mesh Mesh velocity (dz/dt at constant sigma)
     /// @param[out] correction ALE correction term to add to time derivative
-    void
-    ale_correction(const VecX &U, const VecX &w_mesh, VecX &correction) const;
+    void ale_correction(const VecX &U, const VecX &w_mesh, VecX &correction) const;
 
     /// @brief Compute full material derivative in moving coordinates
     /// @details DU/Dt = dU/dt + u*dU/dx + v*dU/dy + (omega -
@@ -394,9 +372,8 @@ public:
     /// @param omega Sigma velocity (dsigma/dt following fluid)
     /// @param w_mesh Mesh velocity
     /// @param[out] material_deriv Full material derivative
-    void material_derivative(
-        const VecX &U, const VecX &dU_dt, const VecX &u, const VecX &v,
-        const VecX &omega, const VecX &w_mesh, VecX &material_deriv) const;
+    void material_derivative(const VecX &U, const VecX &dU_dt, const VecX &u, const VecX &v,
+                             const VecX &omega, const VecX &w_mesh, VecX &material_deriv) const;
 
     /// @brief Get cached dsigma/dt values
     const VecX &dsigma_dt() const { return dsigma_dt_; }
@@ -412,12 +389,12 @@ private:
     const GaussQuadrature3D &quad_;
 
     // Sigma-coordinate metric terms (cached for efficiency)
-    VecX H_;         // Total water depth H = eta + h
-    VecX H_inv_;     // 1/H
+    VecX H_; // Total water depth H = eta + h
+    VecX H_inv_; // 1/H
     VecX dsigma_dx_; // Metric term dsigma/dx
     VecX dsigma_dy_; // Metric term dsigma/dy
     VecX dsigma_dt_; // Metric term dsigma/dt (for ALE)
-    VecX sigma_;     // Sigma values at DOFs
+    VecX sigma_; // Sigma values at DOFs
 };
 
 } // namespace drifter

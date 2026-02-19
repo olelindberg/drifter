@@ -7,4 +7,4 @@ namespace drifter {
 
 // Basis implementation will go here
 
-}  // namespace drifter
+} // namespace drifter

@@ -7,4 +7,4 @@ namespace drifter {
 
 // Mesh implementation will go here
 
-}  // namespace drifter
+} // namespace drifter

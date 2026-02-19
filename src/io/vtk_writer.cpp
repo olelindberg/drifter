@@ -2,9 +2,9 @@
 #include "dg/basis_hexahedron.hpp"
 #include "dg/bernstein_basis.hpp"
 #include <cstring>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
-#include <filesystem>
 
 namespace drifter {
 
@@ -14,10 +14,9 @@ namespace drifter {
 
 namespace {
 
-const char base64_chars[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "abcdefghijklmnopqrstuvwxyz"
-    "0123456789+/";
+const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                            "abcdefghijklmnopqrstuvwxyz"
+                            "0123456789+/";
 
 std::string base64_encode(const unsigned char* data, size_t len) {
     std::string result;
@@ -25,8 +24,10 @@ std::string base64_encode(const unsigned char* data, size_t len) {
 
     for (size_t i = 0; i < len; i += 3) {
         unsigned int n = data[i] << 16;
-        if (i + 1 < len) n |= data[i + 1] << 8;
-        if (i + 2 < len) n |= data[i + 2];
+        if (i + 1 < len)
+            n |= data[i + 1] << 8;
+        if (i + 2 < len)
+            n |= data[i + 2];
 
         result += base64_chars[(n >> 18) & 0x3F];
         result += base64_chars[(n >> 12) & 0x3F];
@@ -37,19 +38,14 @@ std::string base64_encode(const unsigned char* data, size_t len) {
     return result;
 }
 
-}  // namespace
+} // namespace
 
 // =============================================================================
 // VTKWriter implementation
 // =============================================================================
 
-VTKWriter::VTKWriter(const std::string& basename,
-                       VTKFormat format,
-                       VTKEncoding encoding)
-    : basename_(basename)
-    , format_(format)
-    , encoding_(encoding)
-{
+VTKWriter::VTKWriter(const std::string &basename, VTKFormat format, VTKEncoding encoding)
+    : basename_(basename), format_(format), encoding_(encoding) {
 #ifdef DRIFTER_USE_MPI
     int mpi_initialized = 0;
     MPI_Initialized(&mpi_initialized);
@@ -66,19 +62,18 @@ VTKWriter::VTKWriter(const std::string& basename,
     }
 }
 
-void VTKWriter::set_polynomial_order(int order) {
-    order_ = order;
-}
+void VTKWriter::set_polynomial_order(int order) { order_ = order; }
 
-void VTKWriter::set_mesh(const OctreeAdapter& mesh) {
+void VTKWriter::set_mesh(const OctreeAdapter &mesh) {
     mesh_ = &mesh;
     build_mesh_geometry();
 }
 
 void VTKWriter::build_mesh_geometry() {
-    if (!mesh_) return;
+    if (!mesh_)
+        return;
 
-    const auto& elements = mesh_->elements();
+    const auto &elements = mesh_->elements();
 
     // For each element, generate nodes based on polynomial order
     int nodes_per_dim = order_ + 1;
@@ -97,8 +92,8 @@ void VTKWriter::build_mesh_geometry() {
 
     for (const auto* node_ptr : elements) {
         // Get element bounding box
-        const auto& node = *node_ptr;
-        const auto& bounds = node.bounds;
+        const auto &node = *node_ptr;
+        const auto &bounds = node.bounds;
         Vec3 min_corner(bounds.xmin, bounds.ymin, bounds.zmin);
         Vec3 max_corner(bounds.xmax, bounds.ymax, bounds.zmax);
         Vec3 size = max_corner - min_corner;
@@ -108,16 +103,13 @@ void VTKWriter::build_mesh_geometry() {
         cell_connectivity.reserve(nodes_per_elem);
 
         for (int k = 0; k < nodes_per_dim; ++k) {
-            Real zeta = (order_ == 1) ? static_cast<Real>(k) :
-                        -1.0 + 2.0 * k / order_;
+            Real zeta = (order_ == 1) ? static_cast<Real>(k) : -1.0 + 2.0 * k / order_;
 
             for (int j = 0; j < nodes_per_dim; ++j) {
-                Real eta = (order_ == 1) ? static_cast<Real>(j) :
-                           -1.0 + 2.0 * j / order_;
+                Real eta = (order_ == 1) ? static_cast<Real>(j) : -1.0 + 2.0 * j / order_;
 
                 for (int i = 0; i < nodes_per_dim; ++i) {
-                    Real xi = (order_ == 1) ? static_cast<Real>(i) :
-                              -1.0 + 2.0 * i / order_;
+                    Real xi = (order_ == 1) ? static_cast<Real>(i) : -1.0 + 2.0 * i / order_;
 
                     // Map from reference [-1,1]^3 to physical coordinates
                     Vec3 point;
@@ -150,7 +142,7 @@ void VTKWriter::build_mesh_geometry() {
     }
 }
 
-void VTKWriter::add_point_data(const std::string& name, int num_components) {
+void VTKWriter::add_point_data(const std::string &name, int num_components) {
     VTKField field;
     field.name = name;
     field.num_components = num_components;
@@ -158,7 +150,7 @@ void VTKWriter::add_point_data(const std::string& name, int num_components) {
     point_fields_[name] = field;
 }
 
-void VTKWriter::add_cell_data(const std::string& name, int num_components) {
+void VTKWriter::add_cell_data(const std::string &name, int num_components) {
     VTKField field;
     field.name = name;
     field.num_components = num_components;
@@ -166,7 +158,7 @@ void VTKWriter::add_cell_data(const std::string& name, int num_components) {
     cell_fields_[name] = field;
 }
 
-void VTKWriter::set_point_data(const std::string& name, const VecX& data) {
+void VTKWriter::set_point_data(const std::string &name, const VecX &data) {
     auto it = point_fields_.find(name);
     if (it == point_fields_.end()) {
         throw std::runtime_error("Unknown point field: " + name);
@@ -178,8 +170,7 @@ void VTKWriter::set_point_data(const std::string& name, const VecX& data) {
     }
 }
 
-void VTKWriter::set_point_data(const std::string& name,
-                                const std::vector<VecX>& element_data) {
+void VTKWriter::set_point_data(const std::string &name, const std::vector<VecX> &element_data) {
     auto it = point_fields_.find(name);
     if (it == point_fields_.end()) {
         throw std::runtime_error("Unknown point field: " + name);
@@ -187,20 +178,20 @@ void VTKWriter::set_point_data(const std::string& name,
 
     // Flatten element data to point data
     size_t total_size = 0;
-    for (const auto& data : element_data) {
+    for (const auto &data : element_data) {
         total_size += data.size();
     }
 
     it->second.data.resize(total_size);
     size_t offset = 0;
-    for (const auto& data : element_data) {
+    for (const auto &data : element_data) {
         for (Index i = 0; i < data.size(); ++i) {
             it->second.data[offset++] = data(i);
         }
     }
 }
 
-void VTKWriter::set_cell_data(const std::string& name, const VecX& data) {
+void VTKWriter::set_cell_data(const std::string &name, const VecX &data) {
     auto it = cell_fields_.find(name);
     if (it == cell_fields_.end()) {
         throw std::runtime_error("Unknown cell field: " + name);
@@ -212,8 +203,7 @@ void VTKWriter::set_cell_data(const std::string& name, const VecX& data) {
     }
 }
 
-void VTKWriter::set_cell_data(const std::string& name,
-                               const std::vector<Real>& element_values) {
+void VTKWriter::set_cell_data(const std::string &name, const std::vector<Real> &element_values) {
     auto it = cell_fields_.find(name);
     if (it == cell_fields_.end()) {
         throw std::runtime_error("Unknown cell field: " + name);
@@ -225,20 +215,18 @@ void VTKWriter::write(size_t time_idx, Real time) {
     std::string filename = get_filename(time_idx);
 
     switch (format_) {
-        case VTKFormat::VTU:
-            write_vtu(filename, time);
-            break;
-        case VTKFormat::PVTU:
-            write_pvtu(filename, time);
-            break;
+    case VTKFormat::VTU:
+        write_vtu(filename, time);
+        break;
+    case VTKFormat::PVTU:
+        write_pvtu(filename, time);
+        break;
     }
 
     timesteps_.push_back({time, filename});
 }
 
-void VTKWriter::write_timestep(Real time) {
-    write(time_idx_++, time);
-}
+void VTKWriter::write_timestep(Real time) { write(time_idx_++, time); }
 
 std::string VTKWriter::get_filename(size_t time_idx) const {
     std::ostringstream ss;
@@ -251,16 +239,16 @@ std::string VTKWriter::get_filename(size_t time_idx) const {
 #endif
 
     switch (format_) {
-        case VTKFormat::VTU:
-        case VTKFormat::PVTU:
-            ss << ".vtu";
-            break;
+    case VTKFormat::VTU:
+    case VTKFormat::PVTU:
+        ss << ".vtu";
+        break;
     }
 
     return ss.str();
 }
 
-void VTKWriter::write_vtu(const std::string& filename, Real time) {
+void VTKWriter::write_vtu(const std::string &filename, Real time) {
     std::ofstream file(filename);
     if (!file) {
         throw std::runtime_error("Failed to open file: " + filename);
@@ -276,19 +264,20 @@ void VTKWriter::write_vtu(const std::string& filename, Real time) {
 
     file << "<UnstructuredGrid>\n";
     file << "<FieldData>\n";
-    file << "<DataArray type=\"Float64\" Name=\"TIME\" NumberOfTuples=\"1\" format=\"ascii\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"TIME\" NumberOfTuples=\"1\" "
+            "format=\"ascii\">\n";
     file << std::setprecision(15) << time << "\n";
     file << "</DataArray>\n";
     file << "</FieldData>\n";
 
-    file << "<Piece NumberOfPoints=\"" << points_.size()
-         << "\" NumberOfCells=\"" << cells_.size() << "\">\n";
+    file << "<Piece NumberOfPoints=\"" << points_.size() << "\" NumberOfCells=\"" << cells_.size()
+         << "\">\n";
 
     // Points
     file << "<Points>\n";
     std::vector<Real> point_data;
     point_data.reserve(points_.size() * 3);
-    for (const auto& pt : points_) {
+    for (const auto &pt : points_) {
         point_data.push_back(pt(0));
         point_data.push_back(pt(1));
         point_data.push_back(pt(2));
@@ -308,13 +297,13 @@ void VTKWriter::write_vtu(const std::string& filename, Real time) {
 
     // Connectivity
     std::vector<Real> connectivity;
-    for (const auto& cell : cells_) {
+    for (const auto &cell : cells_) {
         for (Index idx : cell) {
             connectivity.push_back(static_cast<Real>(idx));
         }
     }
     file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (const auto& cell : cells_) {
+    for (const auto &cell : cells_) {
         for (Index idx : cell) {
             file << idx << " ";
         }
@@ -325,7 +314,7 @@ void VTKWriter::write_vtu(const std::string& filename, Real time) {
     // Offsets
     file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
     Index offset = 0;
-    for (const auto& cell : cells_) {
+    for (const auto &cell : cells_) {
         offset += cell.size();
         file << offset << " ";
     }
@@ -343,7 +332,7 @@ void VTKWriter::write_vtu(const std::string& filename, Real time) {
     // Point data
     if (!point_fields_.empty()) {
         file << "<PointData>\n";
-        for (const auto& [name, field] : point_fields_) {
+        for (const auto &[name, field] : point_fields_) {
             if (encoding_ == VTKEncoding::ASCII) {
                 write_data_array_ascii(file, name, field.num_components, field.data);
             } else if (encoding_ == VTKEncoding::Binary) {
@@ -358,7 +347,7 @@ void VTKWriter::write_vtu(const std::string& filename, Real time) {
     // Cell data
     if (!cell_fields_.empty()) {
         file << "<CellData>\n";
-        for (const auto& [name, field] : cell_fields_) {
+        for (const auto &[name, field] : cell_fields_) {
             if (encoding_ == VTKEncoding::ASCII) {
                 write_data_array_ascii(file, name, field.num_components, field.data);
             } else if (encoding_ == VTKEncoding::Binary) {
@@ -375,15 +364,14 @@ void VTKWriter::write_vtu(const std::string& filename, Real time) {
     file << "</VTKFile>\n";
 }
 
-void VTKWriter::write_pvtu(const std::string& filename, Real time) {
+void VTKWriter::write_pvtu(const std::string &filename, Real time) {
 #ifdef DRIFTER_USE_MPI
     // Each rank writes its piece
     write_vtu(filename, time);
 
     // Rank 0 writes the PVTU master file
     if (rank_ == 0) {
-        std::string pvtu_filename = basename_ + "_" +
-            std::to_string(time_idx_) + ".pvtu";
+        std::string pvtu_filename = basename_ + "_" + std::to_string(time_idx_) + ".pvtu";
 
         std::ofstream file(pvtu_filename);
         file << "<?xml version=\"1.0\"?>\n";
@@ -397,18 +385,18 @@ void VTKWriter::write_pvtu(const std::string& filename, Real time) {
 
         if (!point_fields_.empty()) {
             file << "<PPointData>\n";
-            for (const auto& [name, field] : point_fields_) {
-                file << "<PDataArray type=\"Float64\" Name=\"" << name
-                     << "\" NumberOfComponents=\"" << field.num_components << "\"/>\n";
+            for (const auto &[name, field] : point_fields_) {
+                file << "<PDataArray type=\"Float64\" Name=\"" << name << "\" NumberOfComponents=\""
+                     << field.num_components << "\"/>\n";
             }
             file << "</PPointData>\n";
         }
 
         if (!cell_fields_.empty()) {
             file << "<PCellData>\n";
-            for (const auto& [name, field] : cell_fields_) {
-                file << "<PDataArray type=\"Float64\" Name=\"" << name
-                     << "\" NumberOfComponents=\"" << field.num_components << "\"/>\n";
+            for (const auto &[name, field] : cell_fields_) {
+                file << "<PDataArray type=\"Float64\" Name=\"" << name << "\" NumberOfComponents=\""
+                     << field.num_components << "\"/>\n";
             }
             file << "</PCellData>\n";
         }
@@ -416,8 +404,8 @@ void VTKWriter::write_pvtu(const std::string& filename, Real time) {
         // List all pieces
         for (int r = 0; r < size_; ++r) {
             std::ostringstream piece_name;
-            piece_name << basename_ << "_" << std::setfill('0') << std::setw(6) << time_idx_
-                       << "_" << std::setfill('0') << std::setw(4) << r << ".vtu";
+            piece_name << basename_ << "_" << std::setfill('0') << std::setw(6) << time_idx_ << "_"
+                       << std::setfill('0') << std::setw(4) << r << ".vtu";
             file << "<Piece Source=\"" << piece_name.str() << "\"/>\n";
         }
 
@@ -429,9 +417,7 @@ void VTKWriter::write_pvtu(const std::string& filename, Real time) {
 #endif
 }
 
-void VTKWriter::finalize() {
-    write_pvd();
-}
+void VTKWriter::finalize() { write_pvd(); }
 
 void VTKWriter::write_pvd() {
     std::string pvd_filename = basename_ + ".pvd";
@@ -441,20 +427,19 @@ void VTKWriter::write_pvd() {
     file << "<VTKFile type=\"Collection\" version=\"0.1\">\n";
     file << "<Collection>\n";
 
-    for (const auto& [time, filename] : timesteps_) {
-        file << "<DataSet timestep=\"" << std::setprecision(15) << time
-             << "\" file=\"" << filename << "\"/>\n";
+    for (const auto &[time, filename] : timesteps_) {
+        file << "<DataSet timestep=\"" << std::setprecision(15) << time << "\" file=\"" << filename
+             << "\"/>\n";
     }
 
     file << "</Collection>\n";
     file << "</VTKFile>\n";
 }
 
-void VTKWriter::write_data_array_ascii(std::ostream& out, const std::string& name,
-                                         int num_components, const std::vector<Real>& data) {
-    out << "<DataArray type=\"Float64\" Name=\"" << name
-        << "\" NumberOfComponents=\"" << num_components
-        << "\" format=\"ascii\">\n";
+void VTKWriter::write_data_array_ascii(std::ostream &out, const std::string &name,
+                                       int num_components, const std::vector<Real> &data) {
+    out << "<DataArray type=\"Float64\" Name=\"" << name << "\" NumberOfComponents=\""
+        << num_components << "\" format=\"ascii\">\n";
     for (size_t i = 0; i < data.size(); ++i) {
         out << std::setprecision(15) << data[i];
         if ((i + 1) % num_components == 0) {
@@ -466,17 +451,16 @@ void VTKWriter::write_data_array_ascii(std::ostream& out, const std::string& nam
     out << "</DataArray>\n";
 }
 
-void VTKWriter::write_data_array_binary(std::ostream& out, const std::string& name,
-                                          int num_components, const std::vector<Real>& data) {
+void VTKWriter::write_data_array_binary(std::ostream &out, const std::string &name,
+                                        int num_components, const std::vector<Real> &data) {
     // For binary, we still write base64 in XML
     write_data_array_base64(out, name, num_components, data);
 }
 
-void VTKWriter::write_data_array_base64(std::ostream& out, const std::string& name,
-                                          int num_components, const std::vector<Real>& data) {
-    out << "<DataArray type=\"Float64\" Name=\"" << name
-        << "\" NumberOfComponents=\"" << num_components
-        << "\" format=\"binary\">";
+void VTKWriter::write_data_array_base64(std::ostream &out, const std::string &name,
+                                        int num_components, const std::vector<Real> &data) {
+    out << "<DataArray type=\"Float64\" Name=\"" << name << "\" NumberOfComponents=\""
+        << num_components << "\" format=\"binary\">";
 
     // Prepend size as 64-bit unsigned integer
     uint64_t size = data.size() * sizeof(Real);
@@ -500,10 +484,8 @@ void VTKWriter::set_communicator(MPI_Comm comm) {
 // OceanVTKWriter implementation
 // =============================================================================
 
-OceanVTKWriter::OceanVTKWriter(const std::string& basename,
-                                 const OctreeAdapter& mesh,
-                                 int polynomial_order)
-{
+OceanVTKWriter::OceanVTKWriter(const std::string &basename, const OctreeAdapter &mesh,
+                               int polynomial_order) {
     writer_ = std::make_unique<VTKWriter>(basename, VTKFormat::VTU, VTKEncoding::Binary);
     writer_->set_polynomial_order(polynomial_order);
     writer_->set_mesh(mesh);
@@ -515,19 +497,16 @@ OceanVTKWriter::OceanVTKWriter(const std::string& basename,
     writer_->add_point_data("salinity", 1);
 }
 
-void OceanVTKWriter::write(Real time,
-                            const std::vector<VecX>& eta,
-                            const std::vector<VecX>& u,
-                            const std::vector<VecX>& v,
-                            const std::vector<VecX>& w,
-                            const std::vector<VecX>& temperature,
-                            const std::vector<VecX>& salinity) {
+void OceanVTKWriter::write(Real time, const std::vector<VecX> &eta, const std::vector<VecX> &u,
+                           const std::vector<VecX> &v, const std::vector<VecX> &w,
+                           const std::vector<VecX> &temperature,
+                           const std::vector<VecX> &salinity) {
     // Flatten eta to point data
     writer_->set_point_data("eta", eta);
 
     // Combine velocity components
     size_t total_points = 0;
-    for (const auto& data : u) {
+    for (const auto &data : u) {
         total_points += data.size();
     }
 
@@ -553,42 +532,38 @@ void OceanVTKWriter::write(Real time,
     writer_->write(time_idx_++, time);
 }
 
-void OceanVTKWriter::finalize() {
-    writer_->finalize();
-}
+void OceanVTKWriter::finalize() { writer_->finalize(); }
 
 // =============================================================================
 // HighOrderVTKWriter implementation
 // =============================================================================
 
-HighOrderVTKWriter::HighOrderVTKWriter(const std::string& basename, int polynomial_order)
-    : order_(polynomial_order)
-{
+HighOrderVTKWriter::HighOrderVTKWriter(const std::string &basename, int polynomial_order)
+    : order_(polynomial_order) {
     writer_ = std::make_unique<VTKWriter>(basename, VTKFormat::VTU, VTKEncoding::Binary);
     writer_->set_polynomial_order(order_);
     compute_vtk_ordering();
 }
 
-void HighOrderVTKWriter::set_mesh(const OctreeAdapter& mesh, const HexahedronBasis& basis) {
+void HighOrderVTKWriter::set_mesh(const OctreeAdapter &mesh, const HexahedronBasis &basis) {
     basis_ = &basis;
     writer_->set_mesh(mesh);
 }
 
-void HighOrderVTKWriter::add_scalar_field(const std::string& name) {
+void HighOrderVTKWriter::add_scalar_field(const std::string &name) {
     writer_->add_point_data(name, 1);
 }
 
-void HighOrderVTKWriter::add_vector_field(const std::string& name) {
+void HighOrderVTKWriter::add_vector_field(const std::string &name) {
     writer_->add_point_data(name, 3);
 }
 
-void HighOrderVTKWriter::set_field(const std::string& name,
-                                     const std::vector<VecX>& element_data) {
+void HighOrderVTKWriter::set_field(const std::string &name, const std::vector<VecX> &element_data) {
     // Reorder each element's data from DG to VTK ordering
     std::vector<VecX> reordered_data;
     reordered_data.reserve(element_data.size());
 
-    for (const auto& data : element_data) {
+    for (const auto &data : element_data) {
         VecX vtk_data;
         reorder_to_vtk(data, vtk_data);
         reordered_data.push_back(vtk_data);
@@ -597,13 +572,9 @@ void HighOrderVTKWriter::set_field(const std::string& name,
     writer_->set_point_data(name, reordered_data);
 }
 
-void HighOrderVTKWriter::write_timestep(Real time) {
-    writer_->write_timestep(time);
-}
+void HighOrderVTKWriter::write_timestep(Real time) { writer_->write_timestep(time); }
 
-void HighOrderVTKWriter::finalize() {
-    writer_->finalize();
-}
+void HighOrderVTKWriter::finalize() { writer_->finalize(); }
 
 void HighOrderVTKWriter::compute_vtk_ordering() {
     // VTK Lagrange hexahedron node ordering
@@ -627,7 +598,7 @@ void HighOrderVTKWriter::compute_vtk_ordering() {
     // TODO: Implement proper VTK high-order ordering if needed
 }
 
-void HighOrderVTKWriter::reorder_to_vtk(const VecX& dg_data, VecX& vtk_data) const {
+void HighOrderVTKWriter::reorder_to_vtk(const VecX &dg_data, VecX &vtk_data) const {
     vtk_data.resize(dg_data.size());
     for (size_t i = 0; i < vtk_ordering_.size(); ++i) {
         if (vtk_ordering_[i] < dg_data.size()) {
@@ -640,14 +611,10 @@ void HighOrderVTKWriter::reorder_to_vtk(const VecX& dg_data, VecX& vtk_data) con
 // XDMFWriter implementation (stub - requires HDF5)
 // =============================================================================
 
-XDMFWriter::XDMFWriter(const std::string& basename)
-    : basename_(basename)
-    , h5_filename_(basename + ".h5")
-    , xdmf_filename_(basename + ".xdmf")
-{
-}
+XDMFWriter::XDMFWriter(const std::string &basename)
+    : basename_(basename), h5_filename_(basename + ".h5"), xdmf_filename_(basename + ".xdmf") {}
 
-void XDMFWriter::set_mesh(const OctreeAdapter& mesh, int order) {
+void XDMFWriter::set_mesh(const OctreeAdapter &mesh, int order) {
     mesh_ = &mesh;
     order_ = order;
 
@@ -656,12 +623,12 @@ void XDMFWriter::set_mesh(const OctreeAdapter& mesh, int order) {
     num_points_ = num_cells_ * nodes_per_elem;
 }
 
-void XDMFWriter::add_attribute(const std::string& name, int num_components,
-                                 const std::string& center) {
+void XDMFWriter::add_attribute(const std::string &name, int num_components,
+                               const std::string &center) {
     attributes_[name] = {num_components, center};
 }
 
-void XDMFWriter::write_timestep(Real time, const std::map<std::string, VecX>& fields) {
+void XDMFWriter::write_timestep(Real time, const std::map<std::string, VecX> &fields) {
     size_t time_idx = timesteps_.size();
     timesteps_.push_back({time, time_idx});
 
@@ -671,9 +638,7 @@ void XDMFWriter::write_timestep(Real time, const std::map<std::string, VecX>& fi
     update_xdmf();
 }
 
-void XDMFWriter::finalize() {
-    update_xdmf();
-}
+void XDMFWriter::finalize() { update_xdmf(); }
 
 void XDMFWriter::update_xdmf() {
     std::ofstream file(xdmf_filename_);
@@ -683,37 +648,42 @@ void XDMFWriter::update_xdmf() {
     file << "<Xdmf Version=\"3.0\">\n";
     file << "<Domain>\n";
 
-    file << "<Grid Name=\"TimeSeries\" GridType=\"Collection\" CollectionType=\"Temporal\">\n";
+    file << "<Grid Name=\"TimeSeries\" GridType=\"Collection\" "
+            "CollectionType=\"Temporal\">\n";
 
-    for (const auto& [time, idx] : timesteps_) {
+    for (const auto &[time, idx] : timesteps_) {
         file << "<Grid Name=\"mesh\" GridType=\"Uniform\">\n";
         file << "<Time Value=\"" << std::setprecision(15) << time << "\"/>\n";
 
         // Topology
-        file << "<Topology TopologyType=\"Hexahedron\" NumberOfElements=\""
-             << num_cells_ << "\">\n";
-        file << "<DataItem Dimensions=\"" << num_cells_ << " 8\" Format=\"HDF\">"
-             << h5_filename_ << ":/mesh/connectivity</DataItem>\n";
+        file << "<Topology TopologyType=\"Hexahedron\" NumberOfElements=\"" << num_cells_
+             << "\">\n";
+        file << "<DataItem Dimensions=\"" << num_cells_ << " 8\" Format=\"HDF\">" << h5_filename_
+             << ":/mesh/connectivity</DataItem>\n";
         file << "</Topology>\n";
 
         // Geometry
         file << "<Geometry GeometryType=\"XYZ\">\n";
-        file << "<DataItem Dimensions=\"" << num_points_ << " 3\" Format=\"HDF\">"
-             << h5_filename_ << ":/mesh/coordinates</DataItem>\n";
+        file << "<DataItem Dimensions=\"" << num_points_ << " 3\" Format=\"HDF\">" << h5_filename_
+             << ":/mesh/coordinates</DataItem>\n";
         file << "</Geometry>\n";
 
         // Attributes
-        for (const auto& [name, info] : attributes_) {
-            const auto& [num_components, center] = info;
+        for (const auto &[name, info] : attributes_) {
+            const auto &[num_components, center] = info;
             file << "<Attribute Name=\"" << name << "\" AttributeType=\"";
-            if (num_components == 1) file << "Scalar";
-            else if (num_components == 3) file << "Vector";
-            else file << "Tensor";
+            if (num_components == 1)
+                file << "Scalar";
+            else if (num_components == 3)
+                file << "Vector";
+            else
+                file << "Tensor";
             file << "\" Center=\"" << center << "\">\n";
             file << "<DataItem Dimensions=\"" << num_points_;
-            if (num_components > 1) file << " " << num_components;
-            file << "\" Format=\"HDF\">"
-                 << h5_filename_ << ":/" << name << "/" << idx << "</DataItem>\n";
+            if (num_components > 1)
+                file << " " << num_components;
+            file << "\" Format=\"HDF\">" << h5_filename_ << ":/" << name << "/" << idx
+                 << "</DataItem>\n";
             file << "</Attribute>\n";
         }
 
@@ -729,14 +699,9 @@ void XDMFWriter::update_xdmf() {
 // SeabedVTKWriter implementation
 // =============================================================================
 
-SeabedVTKWriter::SeabedVTKWriter(const std::string& filename,
-                                  SeabedInterpolation method,
-                                  VTKFormat format)
-    : filename_(filename)
-    , method_(method)
-    , format_(format)
-{
-}
+SeabedVTKWriter::SeabedVTKWriter(const std::string &filename, SeabedInterpolation method,
+                                 VTKFormat format)
+    : filename_(filename), method_(method), format_(format) {}
 
 void SeabedVTKWriter::set_interpolation_method(SeabedInterpolation method) {
     method_ = method;
@@ -744,36 +709,32 @@ void SeabedVTKWriter::set_interpolation_method(SeabedInterpolation method) {
     interpolator_.reset();
 }
 
-const SeabedInterpolator& SeabedVTKWriter::get_interpolator() const {
-    if (!interpolator_ || interpolator_->order() != order_ ||
-        interpolator_->method() != method_) {
+const SeabedInterpolator &SeabedVTKWriter::get_interpolator() const {
+    if (!interpolator_ || interpolator_->order() != order_ || interpolator_->method() != method_) {
         interpolator_ = std::make_unique<SeabedInterpolator>(order_, method_);
     }
     return *interpolator_;
 }
 
-void SeabedVTKWriter::set_mesh(const OctreeAdapter& mesh,
-                                const std::vector<VecX>& element_coords,
-                                int order) {
+void SeabedVTKWriter::set_mesh(const OctreeAdapter &mesh, const std::vector<VecX> &element_coords,
+                               int order) {
     mesh_ = &mesh;
     element_coords_ = element_coords;
     order_ = order;
 }
 
-void SeabedVTKWriter::set_resolution(int resolution) {
-    resolution_ = resolution;
-}
+void SeabedVTKWriter::set_resolution(int resolution) { resolution_ = resolution; }
 
-void SeabedVTKWriter::add_scalar_field(const std::string& name,
-                                        const std::vector<VecX>& element_data) {
+void SeabedVTKWriter::add_scalar_field(const std::string &name,
+                                       const std::vector<VecX> &element_data) {
     scalar_fields_[name] = element_data;
 }
 
-Vec3 SeabedVTKWriter::evaluate_point(const VecX& coords, Real xi, Real eta) const {
+Vec3 SeabedVTKWriter::evaluate_point(const VecX &coords, Real xi, Real eta) const {
     return get_interpolator().evaluate_point(coords, xi, eta);
 }
 
-Real SeabedVTKWriter::evaluate_scalar(const VecX& data, Real xi, Real eta) const {
+Real SeabedVTKWriter::evaluate_scalar(const VecX &data, Real xi, Real eta) const {
     return get_interpolator().evaluate_scalar(data, xi, eta);
 }
 
@@ -786,7 +747,7 @@ void SeabedVTKWriter::write() {
 }
 
 void SeabedVTKWriter::write_vtu() {
-    const auto& elements = mesh_->elements();
+    const auto &elements = mesh_->elements();
     size_t num_elements = elements.size();
 
     int pts_per_face = (resolution_ + 1) * (resolution_ + 1);
@@ -800,12 +761,12 @@ void SeabedVTKWriter::write_vtu() {
     all_points.reserve(num_points_);
 
     std::map<std::string, std::vector<Real>> field_values;
-    for (const auto& [name, _] : scalar_fields_) {
+    for (const auto &[name, _] : scalar_fields_) {
         field_values[name].reserve(num_points_);
     }
 
     for (size_t e = 0; e < num_elements; ++e) {
-        const VecX& coords = element_coords_[e];
+        const VecX &coords = element_coords_[e];
 
         for (int j = 0; j <= resolution_; ++j) {
             Real eta = -1.0 + 2.0 * j / resolution_;
@@ -814,7 +775,7 @@ void SeabedVTKWriter::write_vtu() {
 
                 all_points.push_back(evaluate_point(coords, xi, eta));
 
-                for (const auto& [name, elem_data] : scalar_fields_) {
+                for (const auto &[name, elem_data] : scalar_fields_) {
                     field_values[name].push_back(evaluate_scalar(elem_data[e], xi, eta));
                 }
             }
@@ -848,15 +809,17 @@ void SeabedVTKWriter::write_vtu() {
     }
 
     file << "<?xml version=\"1.0\"?>\n";
-    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+            "byte_order=\"LittleEndian\">\n";
     file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << num_points_
-         << "\" NumberOfCells=\"" << num_cells_ << "\">\n";
+    file << "<Piece NumberOfPoints=\"" << num_points_ << "\" NumberOfCells=\"" << num_cells_
+         << "\">\n";
 
     // Points
     file << "<Points>\n";
-    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-    for (const auto& pt : all_points) {
+    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" "
+            "format=\"ascii\">\n";
+    for (const auto &pt : all_points) {
         file << std::setprecision(15) << pt(0) << " " << pt(1) << " " << pt(2) << "\n";
     }
     file << "</DataArray>\n";
@@ -865,7 +828,7 @@ void SeabedVTKWriter::write_vtu() {
     // Cells
     file << "<Cells>\n";
     file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (const auto& cell : cells) {
+    for (const auto &cell : cells) {
         for (Index idx : cell) {
             file << idx << " ";
         }
@@ -875,7 +838,7 @@ void SeabedVTKWriter::write_vtu() {
 
     file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
     Index offset = 0;
-    for (const auto& cell : cells) {
+    for (const auto &cell : cells) {
         offset += cell.size();
         file << offset << " ";
     }
@@ -883,7 +846,7 @@ void SeabedVTKWriter::write_vtu() {
 
     file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
     for (size_t c = 0; c < num_cells_; ++c) {
-        file << "9 ";  // VTK_QUAD
+        file << "9 "; // VTK_QUAD
     }
     file << "\n</DataArray>\n";
     file << "</Cells>\n";
@@ -891,7 +854,7 @@ void SeabedVTKWriter::write_vtu() {
     // Point data
     if (!field_values.empty()) {
         file << "<PointData>\n";
-        for (const auto& [name, values] : field_values) {
+        for (const auto &[name, values] : field_values) {
             file << "<DataArray type=\"Float64\" Name=\"" << name
                  << "\" NumberOfComponents=\"1\" format=\"ascii\">\n";
             for (Real v : values) {
@@ -907,4 +870,4 @@ void SeabedVTKWriter::write_vtu() {
     file << "</VTKFile>\n";
 }
 
-}  // namespace drifter
+} // namespace drifter

@@ -432,9 +432,9 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   Real domain_size = 100000.0;
 
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 1000.0; // WENO indicator threshold [length⁴]
-  config.error_metric_type = ErrorMetricType::WenoIndicator;
-  config.max_iterations = 100;
+  config.error_threshold = 1.0; // WENO indicator threshold [length⁴]
+  config.error_metric_type = ErrorMetricType::VolumeChange;
+  config.max_iterations = 32;
   config.max_elements = 10000;
   config.smoother_config.lambda = 10.0;
   config.max_refinement_level = 12;
@@ -443,6 +443,9 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.weno_gradient_weight = 1.0;
   config.weno_curvature_weight = 1.0;
   config.error_output_dir = "/tmp/adaptive_cg_linear_errors";
+  config.weno_gradient_weight = 1.0;
+  config.weno_curvature_weight = 1.0;
+  config.vtk_output_prefix = "/tmp/adaptive_cg_linear_bezier_kattegat";
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -457,6 +460,9 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
 
   AdaptiveCGLinearBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(depth_func);
+
+  // Set data cell size for WENO indicator scaling (50m GeoTIFF resolution)
+  smoother.set_data_cell_size(50.0);
 
   // Set gradient function for WENO indicator (numerical differentiation)
   smoother.set_gradient_function(create_gradient_output_function());
@@ -484,43 +490,8 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
 
   EXPECT_TRUE(smoother.is_solved());
 
-  // Write output for visualization with per-element error statistics
-  std::string output_file = "/tmp/adaptive_cg_linear_bezier_kattegat";
-  auto errors = smoother.estimate_errors();
-  std::vector<Real> element_rms(smoother.mesh().num_elements(), 0.0);
-  std::vector<Real> element_mean(smoother.mesh().num_elements(), 0.0);
-  std::vector<Real> element_std(smoother.mesh().num_elements(), 0.0);
-  std::vector<Real> element_gradient(smoother.mesh().num_elements(), 0.0);
-  std::vector<Real> element_curvature(smoother.mesh().num_elements(), 0.0);
-  std::vector<Real> element_weno(smoother.mesh().num_elements(), 0.0);
-  for (const auto &e : errors) {
-    element_rms[e.element] = e.normalized_error;
-    element_mean[e.element] = e.mean_error;
-    element_std[e.element] = e.std_error;
-    element_gradient[e.element] = e.gradient_indicator;
-    element_curvature[e.element] = e.curvature_indicator;
-    element_weno[e.element] = e.weno_indicator;
-  }
-  std::vector<Real> refinement_levels(smoother.mesh().num_elements(), 0.0);
-  for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
-    refinement_levels[i] =
-        static_cast<Real>(smoother.mesh().element_level(i).max_level());
-  }
-
-  io::write_cg_bezier_surface_vtk(
-      output_file, smoother.mesh(),
-      [&smoother](Real x, Real y) { return smoother.evaluate(x, y); }, 6,
-      "elevation",
-      {{"rms_error", element_rms},
-       {"mean_error", element_mean},
-       {"std_error", element_std},
-       {"gradient_indicator", element_gradient},
-       {"curvature_indicator", element_curvature},
-       {"weno_indicator", element_weno},
-       {"refinement_level", refinement_levels}});
-
   // Write raw bathymetry with per-point gradient and curvature indicators
-  if (false) {
+  if (true) {
     std::string raw_output_file =
         "/tmp/raw_bathymetry_with_indicators_kattegat.vtu";
     auto grad_func = create_gradient_output_function();
@@ -648,16 +619,24 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
               << raw_output_file << std::endl;
   }
 
-  auto levels =
-      *std::max_element(refinement_levels.begin(), refinement_levels.end());
-  auto element_size_min = domain_size / std::pow(2.0, levels);
+  // Compute final refinement statistics
+  Real max_level = 0.0;
+  for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
+    max_level = std::max(
+        max_level,
+        static_cast<Real>(smoother.mesh().element_level(i).max_level()));
+  }
+  auto element_size_min = domain_size / std::pow(2.0, max_level);
 
-  std::cout << "Number of levels         : " << levels << std::endl;
+  std::cout << "Number of levels         : " << max_level << std::endl;
   std::cout << "Size of smallest element : " << element_size_min << std::endl;
-  std::cout << "Output written to        : " << output_file << ".vtu"
+  std::cout << "Output written to        : "
+               "/tmp/adaptive_cg_linear_bezier_kattegat_iter_*.vtu"
             << std::endl;
 
-  EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+  // Check that at least the first iteration VTK file exists
+  EXPECT_TRUE(std::filesystem::exists(
+      "/tmp/adaptive_cg_linear_bezier_kattegat_iter_0.vtu"));
 }
 
 TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, WriteRawBathymetryVTK) {
@@ -1285,12 +1264,21 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest,
   }
 }
 
-TEST_F(AdaptiveCGLinearBezierSmootherTest, WenoIndicatorScalesWithElementSize) {
-  // Test that WENO indicator scales correctly with h
-  // For uniform gradient, gradient_indicator = h² × |∇z|²
-  // Smaller elements should have smaller indicator values
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       WenoIndicatorConservesTotalSquaredContribution) {
+  // Test that total squared indicator is conserved under refinement.
+  // This is essential for Dorfler marking to work correctly.
+  //
+  // Indicator formula: Δx² × mean(|∇z|²) × √A
+  // When a parent element is refined into 4 children:
+  //   Parent: indicator = Δx² × mean × √A
+  //   Children: each has indicator = Δx² × mean × √(A/4) = Δx² × mean × √A/2
+  //   Total squared: 4 × (indicator/2)² = indicator² (conserved!)
 
   Real grad_magnitude = 0.5;
+
+  // Use a fixed data cell size
+  Real data_cell_size = 10.0;
 
   // Solve on coarse mesh (4x4)
   AdaptiveCGLinearBezierConfig config_coarse;
@@ -1299,6 +1287,7 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WenoIndicatorScalesWithElementSize) {
 
   AdaptiveCGLinearBezierSmoother smoother_coarse(0.0, 100.0, 0.0, 100.0, 4, 4,
                                                  config_coarse);
+  smoother_coarse.set_data_cell_size(data_cell_size);
   smoother_coarse.set_bathymetry_data(
       [grad_magnitude](Real x, Real) { return grad_magnitude * x; });
   smoother_coarse.set_gradient_function(
@@ -1308,13 +1297,14 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WenoIndicatorScalesWithElementSize) {
       });
   smoother_coarse.adapt_once();
 
-  // Solve on fine mesh (8x8)
+  // Solve on fine mesh (8x8 = 4x refinement in each direction)
   AdaptiveCGLinearBezierConfig config_fine;
   config_fine.smoother_config.lambda = 100.0;
   config_fine.max_iterations = 1;
 
   AdaptiveCGLinearBezierSmoother smoother_fine(0.0, 100.0, 0.0, 100.0, 8, 8,
                                                config_fine);
+  smoother_fine.set_data_cell_size(data_cell_size);
   smoother_fine.set_bathymetry_data(
       [grad_magnitude](Real x, Real) { return grad_magnitude * x; });
   smoother_fine.set_gradient_function(
@@ -1324,25 +1314,35 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, WenoIndicatorScalesWithElementSize) {
       });
   smoother_fine.adapt_once();
 
-  // Get average gradient indicator
+  // Compute total squared indicator contribution
   auto errors_coarse = smoother_coarse.estimate_errors();
   auto errors_fine = smoother_fine.estimate_errors();
 
-  Real avg_grad_coarse = 0.0, avg_grad_fine = 0.0;
+  Real total_sq_coarse = 0.0, total_sq_fine = 0.0;
   for (const auto &err : errors_coarse) {
-    avg_grad_coarse += err.gradient_indicator;
+    total_sq_coarse += err.gradient_indicator * err.gradient_indicator;
   }
   for (const auto &err : errors_fine) {
-    avg_grad_fine += err.gradient_indicator;
+    total_sq_fine += err.gradient_indicator * err.gradient_indicator;
   }
-  avg_grad_coarse /= errors_coarse.size();
-  avg_grad_fine /= errors_fine.size();
 
-  // Fine mesh has 4x smaller area, so h² is 4x smaller
-  // gradient_indicator = h² × |∇z|², so fine should be 4x smaller
-  Real ratio = avg_grad_coarse / avg_grad_fine;
-  EXPECT_NEAR(ratio, 4.0, 0.1)
-      << "Coarse elements should have 4x larger gradient indicator than fine";
+  // Total squared contribution should be conserved (equal for both meshes)
+  // This is the key property for Dorfler marking to work correctly
+  EXPECT_NEAR(total_sq_coarse, total_sq_fine, 1e-6)
+      << "Total squared indicator contribution should be conserved under "
+         "uniform refinement";
+
+  // Verify expected values:
+  // Coarse: 16 elements, each 25m × 25m, area=625, sqrt(area)=25
+  //   indicator = 10² × 0.25 × 25 = 625
+  //   total_sq = 16 × 625² = 6,250,000
+  // Fine: 64 elements, each 12.5m × 12.5m, area=156.25, sqrt(area)=12.5
+  //   indicator = 10² × 0.25 × 12.5 = 312.5
+  //   total_sq = 64 × 312.5² = 6,250,000
+  Real expected_total_sq = 16 * 625 * 625;
+  EXPECT_NEAR(total_sq_coarse, expected_total_sq, 1e-6)
+      << "Coarse mesh total squared should equal 16 × 625² = "
+      << expected_total_sq;
 }
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest, WenoIndicatorWeightsAreRespected) {
@@ -1459,4 +1459,329 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest,
     EXPECT_TRUE(std::isfinite(err.curvature_indicator));
     EXPECT_TRUE(std::isfinite(err.weno_indicator));
   }
+}
+
+// =============================================================================
+// Coarsening Error Tests
+// =============================================================================
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, QuadtreeNodeHasMortonCode) {
+  // Verify Morton codes are computed for quadtree nodes
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2);
+  smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
+
+  const auto &mesh = smoother.mesh();
+  EXPECT_EQ(mesh.num_elements(), 4);
+
+  // Check that Morton codes are unique (element 0 at (0,0) has Morton=0, which
+  // is valid)
+  std::set<uint64_t> morton_codes;
+  for (Index e = 0; e < mesh.num_elements(); ++e) {
+    uint64_t morton = mesh.elements()[e]->morton;
+    morton_codes.insert(morton);
+  }
+
+  // All Morton codes should be unique
+  EXPECT_EQ(morton_codes.size(), static_cast<size_t>(mesh.num_elements()));
+
+  // Verify expected Morton codes for 2x2 grid:
+  // (0,0) -> Morton3D::encode(0,0,0) = 0
+  // (1,0) -> Morton3D::encode(1,0,0) = 1
+  // (0,1) -> Morton3D::encode(0,1,0) = 2
+  // (1,1) -> Morton3D::encode(1,1,0) = 3
+  EXPECT_TRUE(morton_codes.count(0) > 0);
+  EXPECT_TRUE(morton_codes.count(1) > 0);
+  EXPECT_TRUE(morton_codes.count(2) > 0);
+  EXPECT_TRUE(morton_codes.count(3) > 0);
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       CoarseningErrorZeroWhenNoPreviousSolution) {
+  // Coarsening error should be 0 when no previous solution has been stored.
+  // This happens when the first iteration converges without refinement.
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 1000.0; // Strong data fitting
+  config.error_threshold = 0.01;          // Easy to satisfy for constant
+  config.max_iterations = 1;
+
+  // Constant surface converges immediately, no refinement needed
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
+
+  auto result = smoother.adapt_once();
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_TRUE(result.converged)
+      << "Constant surface should converge immediately";
+
+  // Since no refinement happened, prev_solutions_ should be empty
+  // and coarsening_error should be 0
+  auto errors = smoother.estimate_errors();
+  for (const auto &err : errors) {
+    EXPECT_EQ(err.coarsening_error, 0.0)
+        << "Coarsening error should be zero when no previous solution stored";
+  }
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       CoarseningErrorZeroForConstantSurface) {
+  // Constant surface: coarse and fine solutions should be identical
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 1000.0; // Strong data fitting
+  config.error_threshold = 0.01;
+  config.max_iterations = 3;
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 1, 1, config);
+  smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
+
+  // Run multiple iterations to trigger refinement and coarsening error
+  auto result = smoother.solve_adaptive();
+  EXPECT_TRUE(smoother.is_solved());
+
+  auto errors = smoother.estimate_errors();
+  for (const auto &err : errors) {
+    // Constant surface: fine - coarse should be zero (or nearly zero)
+    EXPECT_LT(err.coarsening_error, 1e-6)
+        << "Coarsening error should be near zero for constant surface";
+  }
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       CoarseningErrorPositiveForNonlinearFeatures) {
+  // Nonlinear bathymetry: refinement should show improvement (non-zero
+  // coarsening error)
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_threshold = 0.001; // Force refinement
+  config.max_iterations = 3;
+
+  // Gaussian bump - linear Bezier needs refinement to capture
+  auto gaussian = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real r2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    return 50.0 + 30.0 * std::exp(-r2 / (2 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 1, 1, config);
+  smoother.set_bathymetry_data(gaussian);
+
+  // Run adaptive solve which handles multiple iterations properly
+  auto result = smoother.solve_adaptive();
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(result.num_elements, 1) << "Should have refined from 1x1";
+
+  // Check coarsening errors
+  auto errors = smoother.estimate_errors();
+  Real max_coarsening_error = 0.0;
+  for (const auto &err : errors) {
+    max_coarsening_error = std::max(max_coarsening_error, err.coarsening_error);
+  }
+
+  // Some elements should show improvement from refinement
+  // After at least one refinement cycle, coarsening error should be positive
+  EXPECT_GT(max_coarsening_error, 0.0)
+      << "Some elements should have positive coarsening error after refinement";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, CoarseningErrorFieldIsComputed) {
+  // Test that coarsening_error is computed after refinement
+  // Note: CoarseningError metric alone can't drive the FIRST refinement
+  // (since there's no previous solution to compare against), so we use
+  // NormalizedError to trigger initial refinement, then verify
+  // coarsening_error.
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_metric_type = ErrorMetricType::NormalizedError;
+  config.error_threshold = 0.01; // Low threshold to trigger refinement
+  config.max_iterations = 3;
+
+  // Spatially varying feature that needs refinement
+  auto bathy = [](Real x, Real y) {
+    return 50.0 + 20.0 * std::sin(x * 0.1) * std::sin(y * 0.1);
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(bathy);
+
+  // Run adaptive solve
+  auto result = smoother.solve_adaptive();
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(result.num_elements, 4) << "Should have refined beyond initial 2x2";
+
+  // Verify coarsening_error field is properly populated and finite
+  auto errors = smoother.estimate_errors();
+  EXPECT_EQ(errors.size(), static_cast<size_t>(smoother.mesh().num_elements()));
+
+  bool has_nonzero_coarsening = false;
+  for (const auto &err : errors) {
+    EXPECT_TRUE(std::isfinite(err.coarsening_error));
+    if (err.coarsening_error > 0.0) {
+      has_nonzero_coarsening = true;
+    }
+  }
+
+  // After refinement, some elements should have non-zero coarsening error
+  EXPECT_TRUE(has_nonzero_coarsening)
+      << "Some elements should have non-zero coarsening error after refinement";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, MeanDifferenceIsComputed) {
+  // Test that mean_difference field is properly computed after refinement
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_metric_type = ErrorMetricType::NormalizedError;
+  config.error_threshold = 0.01;
+  config.max_iterations = 3;
+
+  // Gaussian bump - needs refinement
+  auto gaussian = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real r2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    return 50.0 + 30.0 * std::exp(-r2 / (2 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(gaussian);
+  smoother.solve_adaptive();
+
+  auto errors = smoother.estimate_errors();
+  bool has_nonzero = false;
+  for (const auto &err : errors) {
+    EXPECT_TRUE(std::isfinite(err.mean_difference));
+    EXPECT_GE(err.mean_difference, 0.0)
+        << "Mean difference must be non-negative";
+    if (err.mean_difference > 0.0)
+      has_nonzero = true;
+  }
+  EXPECT_TRUE(has_nonzero)
+      << "Should have non-zero mean_difference after refinement";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, VolumeChangeIsComputed) {
+  // Test that volume_change field is properly computed after refinement
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_metric_type = ErrorMetricType::NormalizedError;
+  config.error_threshold = 0.01;
+  config.max_iterations = 3;
+
+  auto gaussian = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real r2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    return 50.0 + 30.0 * std::exp(-r2 / (2 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(gaussian);
+  smoother.solve_adaptive();
+
+  auto errors = smoother.estimate_errors();
+  bool has_nonzero = false;
+  for (const auto &err : errors) {
+    EXPECT_TRUE(std::isfinite(err.volume_change));
+    EXPECT_GE(err.volume_change, 0.0) << "Volume change must be non-negative";
+    if (err.volume_change > 0.0)
+      has_nonzero = true;
+  }
+  EXPECT_TRUE(has_nonzero)
+      << "Should have non-zero volume_change after refinement";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       MeanDifferenceZeroForConstantSurface) {
+  // Constant surface: fine - coarse should have zero mean difference
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 1000.0;
+  config.error_metric_type = ErrorMetricType::NormalizedError;
+  config.error_threshold = 0.01;
+  config.max_iterations = 3;
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
+  smoother.solve_adaptive();
+
+  auto errors = smoother.estimate_errors();
+  for (const auto &err : errors) {
+    EXPECT_LT(err.mean_difference, 1e-6)
+        << "Mean difference should be near zero for constant surface";
+    EXPECT_LT(err.volume_change, 1e-6)
+        << "Volume change should be near zero for constant surface";
+  }
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       VolumeChangeEqualsAreaTimesMeanDifference) {
+  // Verify volume_change = mean_difference * area
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_metric_type = ErrorMetricType::NormalizedError;
+  config.error_threshold = 0.01;
+  config.max_iterations = 3;
+
+  auto gaussian = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real r2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    return 50.0 + 30.0 * std::exp(-r2 / (2 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(gaussian);
+  smoother.solve_adaptive();
+
+  const auto &mesh = smoother.mesh();
+  auto errors = smoother.estimate_errors();
+
+  for (const auto &err : errors) {
+    const QuadBounds &bounds = mesh.element_bounds(err.element);
+    Real area = (bounds.xmax - bounds.xmin) * (bounds.ymax - bounds.ymin);
+    Real expected_volume = err.mean_difference * area;
+    EXPECT_NEAR(err.volume_change, expected_volume, 1e-10)
+        << "volume_change should equal mean_difference * area";
+  }
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest,
+       MeanDifferenceMetricDrivesRefinement) {
+  // Test that MeanDifference can be used as the driving metric
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_metric_type = ErrorMetricType::MeanDifference;
+  config.error_threshold = 0.1; // 10 cm threshold
+  config.max_iterations = 5;
+  config.max_elements = 100;
+
+  auto gaussian = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real r2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    return 50.0 + 30.0 * std::exp(-r2 / (2 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(gaussian);
+
+  auto result = smoother.solve_adaptive();
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(result.num_elements, 4) << "Should have refined beyond initial 2x2";
+}
+
+TEST_F(AdaptiveCGLinearBezierSmootherTest, VolumeChangeMetricDrivesRefinement) {
+  // Test that VolumeChange can be used as the driving metric
+  AdaptiveCGLinearBezierConfig config;
+  config.smoother_config.lambda = 100.0;
+  config.error_metric_type = ErrorMetricType::VolumeChange;
+  config.error_threshold = 100.0; // 100 m³ threshold
+  config.max_iterations = 5;
+  config.max_elements = 100;
+
+  auto gaussian = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0, sigma = 15.0;
+    Real r2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    return 50.0 + 30.0 * std::exp(-r2 / (2 * sigma * sigma));
+  };
+
+  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
+  smoother.set_bathymetry_data(gaussian);
+
+  auto result = smoother.solve_adaptive();
+  EXPECT_TRUE(smoother.is_solved());
+  EXPECT_GT(result.num_elements, 4) << "Should have refined beyond initial 2x2";
 }

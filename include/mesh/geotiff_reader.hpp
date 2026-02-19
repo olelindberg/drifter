@@ -72,9 +72,7 @@ struct BathymetryData {
     Real xmin, xmax, ymin, ymax;
 
     /// Check if data is valid
-    bool is_valid() const {
-        return sizex > 0 && sizey > 0 && !elevation.empty();
-    }
+    bool is_valid() const { return sizex > 0 && sizey > 0 && !elevation.empty(); }
 
     /// Get elevation at pixel coordinates
     float at_pixel(int x, int y) const {
@@ -92,8 +90,7 @@ struct BathymetryData {
     /// Convert world coordinates to pixel coordinates (fractional)
     void world_to_pixel(double wx, double wy, double &px, double &py) const {
         // Inverse of the geotransform
-        double det = geotransform[1] * geotransform[5] -
-                     geotransform[2] * geotransform[4];
+        double det = geotransform[1] * geotransform[5] - geotransform[2] * geotransform[4];
         if (std::abs(det) < 1e-15) {
             px = py = 0;
             return;
@@ -137,9 +134,8 @@ struct BathymetryData {
         double fx = px - x0;
         double fy = py - y0;
 
-        return static_cast<float>(
-            (1 - fx) * (1 - fy) * e00 + fx * (1 - fy) * e10 +
-            (1 - fx) * fy * e01 + fx * fy * e11);
+        return static_cast<float>((1 - fx) * (1 - fy) * e00 + fx * (1 - fy) * e10 +
+                                  (1 - fx) * fy * e01 + fx * fy * e11);
     }
 
     /// Check if a world coordinate is land or nodata
@@ -227,8 +223,7 @@ public:
     /// Evaluate bathymetry curvature (second derivatives via central differences)
     /// @param x, y World coordinates
     /// @param d2h_dx2, d2h_dxdy, d2h_dy2 Output second derivatives
-    void curvature(Real x, Real y, Real &d2h_dx2, Real &d2h_dxdy,
-                   Real &d2h_dy2) const;
+    void curvature(Real x, Real y, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) const;
 
     /// Check if location is water (depth > min_depth)
     bool is_water(Real x, Real y, Real min_depth = 1.0) const;
@@ -241,6 +236,14 @@ public:
 
     /// Get the underlying data
     const BathymetryData &data() const { return *data_; }
+
+    /// Get characteristic cell size (sqrt of pixel area) for WENO indicators
+    /// This is the Δx in the WENO smoothness indicator formula
+    Real cell_size() const {
+        Real dx = std::abs(data_->geotransform[1]);
+        Real dy = std::abs(data_->geotransform[5]);
+        return std::sqrt(dx * dy);
+    }
 
 private:
     std::shared_ptr<BathymetryData> data_;
@@ -258,7 +261,7 @@ public:
 
         /// Vertical bounds (sigma coordinates)
         Real zmin = -1.0; // Bottom (sigma = -1)
-        Real zmax = 0.0;  // Surface (sigma = 0)
+        Real zmax = 0.0; // Surface (sigma = 0)
 
         /// Base resolution
         int base_nx = 10;
@@ -271,20 +274,17 @@ public:
         int max_level_z = 3;
 
         /// Refinement criteria
-        Real coastline_distance =
-            5000.0; // Refine within this distance of coastline
-        Real bathymetry_gradient_threshold =
-            0.01;                      // Refine where gradient exceeds this
+        Real coastline_distance = 5000.0; // Refine within this distance of coastline
+        Real bathymetry_gradient_threshold = 0.01; // Refine where gradient exceeds this
         Real min_element_size = 100.0; // Minimum element size (meters)
-        Real min_depth = 1.0;          // Minimum water depth to include
+        Real min_depth = 1.0; // Minimum water depth to include
 
         /// Whether to mask land cells
         bool mask_land = true;
     };
 
     /// @brief Construct generator with bathymetry data
-    explicit BathymetryMeshGenerator(
-        std::shared_ptr<BathymetryData> bathymetry);
+    explicit BathymetryMeshGenerator(std::shared_ptr<BathymetryData> bathymetry);
 
     /// @brief Set configuration
     void set_config(const Config &config);
@@ -297,17 +297,15 @@ public:
     /// @param element_bounds Element bounds
     /// @param order Polynomial order
     /// @return Bathymetry depths at DOF positions
-    std::vector<VecX> compute_element_bathymetry(
-        const std::vector<ElementBounds> &elements, int order) const;
+    std::vector<VecX> compute_element_bathymetry(const std::vector<ElementBounds> &elements,
+                                                 int order) const;
 
     /// @brief Get bathymetry gradients at element DOFs
-    void compute_element_gradients(
-        const std::vector<ElementBounds> &elements, int order,
-        std::vector<VecX> &dh_dx, std::vector<VecX> &dh_dy) const;
+    void compute_element_gradients(const std::vector<ElementBounds> &elements, int order,
+                                   std::vector<VecX> &dh_dx, std::vector<VecX> &dh_dy) const;
 
     /// @brief Create refinement function for adaptive meshing
-    std::function<bool(const ElementBounds &)>
-    create_refinement_function() const;
+    std::function<bool(const ElementBounds &)> create_refinement_function() const;
 
 private:
     std::shared_ptr<BathymetryData> bathymetry_;

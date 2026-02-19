@@ -90,15 +90,13 @@ public:
     /// @param mesh 2D quadtree mesh
     /// @param config Configuration parameters
     explicit CGTriharmonicBezierBathymetrySmoother(
-        const QuadtreeAdapter &mesh,
-        const CGTriharmonicBezierSmootherConfig &config = {});
+        const QuadtreeAdapter &mesh, const CGTriharmonicBezierSmootherConfig &config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
     /// @param octree 3D mesh
     /// @param config Configuration parameters
     explicit CGTriharmonicBezierBathymetrySmoother(
-        const OctreeAdapter &octree,
-        const CGTriharmonicBezierSmootherConfig &config = {});
+        const OctreeAdapter &octree, const CGTriharmonicBezierSmootherConfig &config = {});
 
     // =========================================================================
     // Data input
@@ -210,8 +208,7 @@ public:
 
     /// @brief Get number of constraints (hanging nodes + edge constraints)
     Index num_constraints() const {
-        return dof_manager_->num_constraints() +
-               dof_manager_->num_edge_derivative_constraints();
+        return dof_manager_->num_constraints() + dof_manager_->num_edge_derivative_constraints();
     }
 
     /// @brief Get the mesh
@@ -223,7 +220,7 @@ public:
 private:
     /// Mesh (owned or referenced)
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter *quadtree_ = nullptr;
+    const QuadtreeAdapter* quadtree_ = nullptr;
 
     /// Configuration
     CGTriharmonicBezierSmootherConfig config_;
@@ -239,9 +236,9 @@ private:
     bool data_set_ = false;
 
     /// Assembled matrices (cached)
-    SpMat H_global_;       ///< Global triharmonic Hessian
-    SpMat BtWB_global_;    ///< Global data fitting normal matrix
-    VecX BtWd_global_;     ///< Global data fitting RHS
+    SpMat H_global_; ///< Global triharmonic Hessian
+    SpMat BtWB_global_; ///< Global data fitting normal matrix
+    VecX BtWd_global_; ///< Global data fitting RHS
     Real dTWd_global_ = 0; ///< Data self-product for residual computation
 
     /// Initialize components

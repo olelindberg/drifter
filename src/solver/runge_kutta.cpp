@@ -20,4 +20,4 @@ namespace drifter {
 //
 // SSP property important for DG with limiting
 
-}  // namespace drifter
+} // namespace drifter

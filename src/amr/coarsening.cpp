@@ -12,4 +12,4 @@ namespace drifter {
 // - Project solution from children to parent (L2 projection)
 // - Update connectivity
 
-}  // namespace drifter
+} // namespace drifter

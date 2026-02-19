@@ -95,8 +95,7 @@ void compute_gauss_lobatto_nodes(int n, VecX &nodes, VecX &weights) {
 
     for (int i = 1; i <= (n - 1) / 2; ++i) {
         // Initial guess
-        Real xi = -std::cos(
-            (0.25 + i) * M_PI / N - 3.0 / (8.0 * N * M_PI * (0.25 + i)));
+        Real xi = -std::cos((0.25 + i) * M_PI / N - 3.0 / (8.0 * N * M_PI * (0.25 + i)));
 
         // Newton iteration to find roots of q = P_{N+1} - P_{N-1}
         for (int iter = 0; iter < 100; ++iter) {
@@ -109,8 +108,7 @@ void compute_gauss_lobatto_nodes(int n, VecX &nodes, VecX &weights) {
                 Real dLnm2 = 0.0, dLnm1 = 1.0;
 
                 for (int k = 2; k <= N; ++k) {
-                    Real Lk =
-                        (2.0 * k - 1.0) / k * xi * Lnm1 - (k - 1.0) / k * Lnm2;
+                    Real Lk = (2.0 * k - 1.0) / k * xi * Lnm1 - (k - 1.0) / k * Lnm2;
                     Real dLk = dLnm2 + (2.0 * k - 1.0) * Lnm1;
 
                     if (k == N - 1) {
@@ -130,8 +128,7 @@ void compute_gauss_lobatto_nodes(int n, VecX &nodes, VecX &weights) {
 
                 // P_{N+1}
                 int k = N + 1;
-                Real LNp1 =
-                    (2.0 * k - 1.0) / k * xi * LN - (k - 1.0) / k * LNm1;
+                Real LNp1 = (2.0 * k - 1.0) / k * xi * LN - (k - 1.0) / k * LNm1;
                 Real dLNp1 = dLNm1 + (2.0 * k - 1.0) * LN;
 
                 // q = P_{N+1} - P_{N-1}, dq
@@ -213,8 +210,7 @@ MatX compute_derivative_matrix_1d(const VecX &nodes) {
 // 1D interpolation matrix
 // =============================================================================
 
-MatX compute_interpolation_matrix_1d(
-    const VecX &from_nodes, const VecX &to_nodes) {
+MatX compute_interpolation_matrix_1d(const VecX &from_nodes, const VecX &to_nodes) {
     int n_from = from_nodes.size();
     int n_to = to_nodes.size();
     VecX bw = compute_barycentric_weights(from_nodes);
@@ -280,8 +276,7 @@ LagrangeBasis1D LagrangeBasis1D::create_gl(int order) {
 // HexahedronBasis implementation
 // =============================================================================
 
-HexahedronBasis::HexahedronBasis(
-    int order, bool lgl_for_velocity, bool gl_for_tracers)
+HexahedronBasis::HexahedronBasis(int order, bool lgl_for_velocity, bool gl_for_tracers)
     : order_(order) {
 
     int np = order + 1;
@@ -312,10 +307,8 @@ void HexahedronBasis::build_3d_nodes() {
         for (int j = 0; j < np; ++j) {
             for (int i = 0; i < np; ++i) {
                 int idx = dof_index(i, j, k, order_);
-                lgl_nodes_3d_[idx] =
-                    Vec3(lgl_1d_.nodes(i), lgl_1d_.nodes(j), lgl_1d_.nodes(k));
-                gl_nodes_3d_[idx] =
-                    Vec3(gl_1d_.nodes(i), gl_1d_.nodes(j), gl_1d_.nodes(k));
+                lgl_nodes_3d_[idx] = Vec3(lgl_1d_.nodes(i), lgl_1d_.nodes(j), lgl_1d_.nodes(k));
+                gl_nodes_3d_[idx] = Vec3(gl_1d_.nodes(i), gl_1d_.nodes(j), gl_1d_.nodes(k));
             }
         }
     }
@@ -325,8 +318,8 @@ namespace {
 
 /// Build 3D tensor-product differentiation matrices from 1D derivative matrix
 /// D_xi = D ⊗ I ⊗ I, D_eta = I ⊗ D ⊗ I, D_zeta = I ⊗ I ⊗ D
-void build_3d_diff_matrices_from_1d(
-    const MatX &D_1d, int order, MatX &D_xi, MatX &D_eta, MatX &D_zeta) {
+void build_3d_diff_matrices_from_1d(const MatX &D_1d, int order, MatX &D_xi, MatX &D_eta,
+                                    MatX &D_zeta) {
     int np = order + 1;
     int ndof = np * np * np;
 
@@ -342,23 +335,19 @@ void build_3d_diff_matrices_from_1d(
                 for (int kp = 0; kp < np; ++kp) {
                     for (int jp = 0; jp < np; ++jp) {
                         for (int ip = 0; ip < np; ++ip) {
-                            int col =
-                                HexahedronBasis::dof_index(ip, jp, kp, order);
+                            int col = HexahedronBasis::dof_index(ip, jp, kp, order);
 
                             // D_xi: differentiate in i, identity in j and k
-                            D_xi(row, col) = D_1d(i, ip) *
-                                             (j == jp ? 1.0 : 0.0) *
-                                             (k == kp ? 1.0 : 0.0);
+                            D_xi(row, col) =
+                                D_1d(i, ip) * (j == jp ? 1.0 : 0.0) * (k == kp ? 1.0 : 0.0);
 
                             // D_eta: differentiate in j, identity in i and k
-                            D_eta(row, col) = (i == ip ? 1.0 : 0.0) *
-                                              D_1d(j, jp) *
-                                              (k == kp ? 1.0 : 0.0);
+                            D_eta(row, col) =
+                                (i == ip ? 1.0 : 0.0) * D_1d(j, jp) * (k == kp ? 1.0 : 0.0);
 
                             // D_zeta: differentiate in k, identity in i and j
-                            D_zeta(row, col) = (i == ip ? 1.0 : 0.0) *
-                                               (j == jp ? 1.0 : 0.0) *
-                                               D_1d(k, kp);
+                            D_zeta(row, col) =
+                                (i == ip ? 1.0 : 0.0) * (j == jp ? 1.0 : 0.0) * D_1d(k, kp);
                         }
                     }
                 }
@@ -383,11 +372,9 @@ void build_3d_interp_matrix_from_1d(const MatX &I_1d, int order, MatX &I_3d) {
                 for (int kp = 0; kp < np; ++kp) {
                     for (int jp = 0; jp < np; ++jp) {
                         for (int ip = 0; ip < np; ++ip) {
-                            int col =
-                                HexahedronBasis::dof_index(ip, jp, kp, order);
+                            int col = HexahedronBasis::dof_index(ip, jp, kp, order);
 
-                            I_3d(row, col) =
-                                I_1d(i, ip) * I_1d(j, jp) * I_1d(k, kp);
+                            I_3d(row, col) = I_1d(i, ip) * I_1d(j, jp) * I_1d(k, kp);
                         }
                     }
                 }
@@ -399,10 +386,8 @@ void build_3d_interp_matrix_from_1d(const MatX &I_1d, int order, MatX &I_3d) {
 } // anonymous namespace
 
 void HexahedronBasis::build_3d_differentiation_matrices() {
-    build_3d_diff_matrices_from_1d(
-        lgl_1d_.D, order_, D_xi_lgl_, D_eta_lgl_, D_zeta_lgl_);
-    build_3d_diff_matrices_from_1d(
-        gl_1d_.D, order_, D_xi_gl_, D_eta_gl_, D_zeta_gl_);
+    build_3d_diff_matrices_from_1d(lgl_1d_.D, order_, D_xi_lgl_, D_eta_lgl_, D_zeta_lgl_);
+    build_3d_diff_matrices_from_1d(gl_1d_.D, order_, D_xi_gl_, D_eta_gl_, D_zeta_gl_);
 }
 
 void HexahedronBasis::build_mass_matrices() {
@@ -422,13 +407,11 @@ void HexahedronBasis::build_mass_matrices() {
             for (int i = 0; i < np; ++i) {
                 int idx = dof_index(i, j, k, order_);
 
-                Real w_lgl = lgl_1d_.weights(i) * lgl_1d_.weights(j) *
-                             lgl_1d_.weights(k);
+                Real w_lgl = lgl_1d_.weights(i) * lgl_1d_.weights(j) * lgl_1d_.weights(k);
                 mass_lgl_(idx, idx) = w_lgl;
                 mass_inv_lgl_(idx, idx) = 1.0 / w_lgl;
 
-                Real w_gl =
-                    gl_1d_.weights(i) * gl_1d_.weights(j) * gl_1d_.weights(k);
+                Real w_gl = gl_1d_.weights(i) * gl_1d_.weights(j) * gl_1d_.weights(k);
                 mass_gl_(idx, idx) = w_gl;
                 mass_inv_gl_(idx, idx) = 1.0 / w_gl;
             }
@@ -438,10 +421,8 @@ void HexahedronBasis::build_mass_matrices() {
 
 void HexahedronBasis::build_grid_interpolation() {
     // Build 3D interpolation matrices between LGL and GL grids
-    MatX I_lgl_to_gl_1d =
-        compute_interpolation_matrix_1d(lgl_1d_.nodes, gl_1d_.nodes);
-    MatX I_gl_to_lgl_1d =
-        compute_interpolation_matrix_1d(gl_1d_.nodes, lgl_1d_.nodes);
+    MatX I_lgl_to_gl_1d = compute_interpolation_matrix_1d(lgl_1d_.nodes, gl_1d_.nodes);
+    MatX I_gl_to_lgl_1d = compute_interpolation_matrix_1d(gl_1d_.nodes, lgl_1d_.nodes);
 
     build_3d_interp_matrix_from_1d(I_lgl_to_gl_1d, order_, lgl_to_gl_);
     build_3d_interp_matrix_from_1d(I_gl_to_lgl_1d, order_, gl_to_lgl_);
@@ -478,10 +459,8 @@ void HexahedronBasis::build_face_interpolation() {
                 int face_idx = it + np * jt;
 
                 // Face quadrature node in tangent coordinates
-                face_quad_nodes_[face][face_idx] =
-                    Vec2(lgl_1d_.nodes(it), lgl_1d_.nodes(jt));
-                face_quad_weights_[face](face_idx) =
-                    lgl_1d_.weights(it) * lgl_1d_.weights(jt);
+                face_quad_nodes_[face][face_idx] = Vec2(lgl_1d_.nodes(it), lgl_1d_.nodes(jt));
+                face_quad_weights_[face](face_idx) = lgl_1d_.weights(it) * lgl_1d_.weights(jt);
 
                 // Build interpolation matrix row
                 // Evaluate volume basis at face quadrature point
@@ -510,25 +489,19 @@ void HexahedronBasis::build_face_interpolation() {
                             // point
                             if (normal_axis == 0) {
                                 // xi face: check if i corresponds to boundary
-                                bool at_face =
-                                    (normal_val < 0) ? (i == 0) : (i == np - 1);
+                                bool at_face = (normal_val < 0) ? (i == 0) : (i == np - 1);
                                 if (at_face && j == it && k == jt) {
-                                    interp_to_face_lgl_[face](
-                                        face_idx, vol_idx) = 1.0;
+                                    interp_to_face_lgl_[face](face_idx, vol_idx) = 1.0;
                                 }
                             } else if (normal_axis == 1) {
-                                bool at_face =
-                                    (normal_val < 0) ? (j == 0) : (j == np - 1);
+                                bool at_face = (normal_val < 0) ? (j == 0) : (j == np - 1);
                                 if (at_face && i == it && k == jt) {
-                                    interp_to_face_lgl_[face](
-                                        face_idx, vol_idx) = 1.0;
+                                    interp_to_face_lgl_[face](face_idx, vol_idx) = 1.0;
                                 }
                             } else {
-                                bool at_face =
-                                    (normal_val < 0) ? (k == 0) : (k == np - 1);
+                                bool at_face = (normal_val < 0) ? (k == 0) : (k == np - 1);
                                 if (at_face && i == it && j == jt) {
-                                    interp_to_face_lgl_[face](
-                                        face_idx, vol_idx) = 1.0;
+                                    interp_to_face_lgl_[face](face_idx, vol_idx) = 1.0;
                                 }
                             }
 
@@ -539,8 +512,7 @@ void HexahedronBasis::build_face_interpolation() {
                             VecX phi_gl_1d_zeta = gl_1d_.evaluate(xi_face(2));
 
                             interp_to_face_gl_[face](face_idx, vol_idx) =
-                                phi_gl_1d_xi(i) * phi_gl_1d_eta(j) *
-                                phi_gl_1d_zeta(k);
+                                phi_gl_1d_xi(i) * phi_gl_1d_eta(j) * phi_gl_1d_zeta(k);
                         }
                     }
                 }
@@ -549,9 +521,8 @@ void HexahedronBasis::build_face_interpolation() {
     }
 }
 
-MatX HexahedronBasis::interp_to_subface(
-    int face_id, int subface_idx, FaceConnectionType conn_type,
-    bool use_lgl) const {
+MatX HexahedronBasis::interp_to_subface(int face_id, int subface_idx, FaceConnectionType conn_type,
+                                        bool use_lgl) const {
     int np = order_ + 1;
     int nface = np * np;
 
@@ -672,8 +643,7 @@ MatX HexahedronBasis::interp_to_subface(
                         VecX phi_1d_eta = basis_1d.evaluate(xi_vol(1));
                         VecX phi_1d_zeta = basis_1d.evaluate(xi_vol(2));
 
-                        interp(face_idx, vol_idx) =
-                            phi_1d_xi(i) * phi_1d_eta(j) * phi_1d_zeta(k);
+                        interp(face_idx, vol_idx) = phi_1d_xi(i) * phi_1d_eta(j) * phi_1d_zeta(k);
                     }
                 }
             }

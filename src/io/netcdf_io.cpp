@@ -17,4 +17,4 @@ namespace drifter {
 // Prefer Zarr v3 for new output (better chunking, compression)
 // But NetCDF useful for compatibility with existing tools
 
-}  // namespace drifter
+} // namespace drifter

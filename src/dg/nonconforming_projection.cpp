@@ -4,9 +4,8 @@
 
 namespace drifter {
 
-void project_coarse_to_fine_2d(
-    const OctreeAdapter &mesh, std::vector<VecX> &element_data, int order,
-    SeabedInterpolation method) {
+void project_coarse_to_fine_2d(const OctreeAdapter &mesh, std::vector<VecX> &element_data,
+                               int order, SeabedInterpolation method) {
 
     const int n1d = order + 1;
     const int n2d = n1d * n1d;
@@ -21,20 +20,18 @@ void project_coarse_to_fine_2d(
     // For each element, check horizontal faces (0-3) for coarser neighbors
     for (size_t e = 0; e < num_elements; ++e) {
         const auto &my_bounds = elements[e]->bounds;
-        Real my_area = (my_bounds.xmax - my_bounds.xmin) *
-                       (my_bounds.ymax - my_bounds.ymin);
+        Real my_area = (my_bounds.xmax - my_bounds.xmin) * (my_bounds.ymax - my_bounds.ymin);
 
         // Check faces 0-3 (horizontal: -x, +x, -y, +y)
         for (int face_id = 0; face_id < 4; ++face_id) {
-            NeighborInfo info =
-                mesh.get_neighbor(static_cast<Index>(e), face_id);
+            NeighborInfo info = mesh.get_neighbor(static_cast<Index>(e), face_id);
             if (info.is_boundary() || info.neighbor_elements.empty())
                 continue;
 
             Index neigh_e = info.neighbor_elements[0];
             const auto &neigh_bounds = elements[neigh_e]->bounds;
-            Real neigh_area = (neigh_bounds.xmax - neigh_bounds.xmin) *
-                              (neigh_bounds.ymax - neigh_bounds.ymin);
+            Real neigh_area =
+                (neigh_bounds.xmax - neigh_bounds.xmin) * (neigh_bounds.ymax - neigh_bounds.ymin);
 
             // Check if neighbor is coarser (larger area)
             if (neigh_area <= my_area * 1.5)
@@ -67,29 +64,25 @@ void project_coarse_to_fine_2d(
                     Real eta_ref = lgl_nodes(j);
 
                     Real phys_x =
-                        my_bounds.xmin + 0.5 * (xi_ref + 1.0) *
-                                             (my_bounds.xmax - my_bounds.xmin);
+                        my_bounds.xmin + 0.5 * (xi_ref + 1.0) * (my_bounds.xmax - my_bounds.xmin);
                     Real phys_y =
-                        my_bounds.ymin + 0.5 * (eta_ref + 1.0) *
-                                             (my_bounds.ymax - my_bounds.ymin);
+                        my_bounds.ymin + 0.5 * (eta_ref + 1.0) * (my_bounds.ymax - my_bounds.ymin);
 
                     // Transform to coarse element's reference coordinates
-                    Real coarse_xi =
-                        2.0 * (phys_x - neigh_bounds.xmin) /
-                            (neigh_bounds.xmax - neigh_bounds.xmin) -
-                        1.0;
-                    Real coarse_eta =
-                        2.0 * (phys_y - neigh_bounds.ymin) /
-                            (neigh_bounds.ymax - neigh_bounds.ymin) -
-                        1.0;
+                    Real coarse_xi = 2.0 * (phys_x - neigh_bounds.xmin) /
+                                         (neigh_bounds.xmax - neigh_bounds.xmin) -
+                                     1.0;
+                    Real coarse_eta = 2.0 * (phys_y - neigh_bounds.ymin) /
+                                          (neigh_bounds.ymax - neigh_bounds.ymin) -
+                                      1.0;
 
                     // Clamp to [-1, 1] to avoid numerical issues at boundaries
                     coarse_xi = std::max(-1.0, std::min(1.0, coarse_xi));
                     coarse_eta = std::max(-1.0, std::min(1.0, coarse_eta));
 
                     // Interpolate coarse element's polynomial at this point
-                    Real projected_value = interp.evaluate_scalar_2d(
-                        coarse_data, coarse_xi, coarse_eta);
+                    Real projected_value =
+                        interp.evaluate_scalar_2d(coarse_data, coarse_xi, coarse_eta);
 
                     // Overwrite the fine element's DOF value
                     int idx = i + n1d * j;
@@ -100,9 +93,8 @@ void project_coarse_to_fine_2d(
     }
 }
 
-void project_coarse_to_fine_3d(
-    const OctreeAdapter &mesh, std::vector<VecX> &element_data, int order,
-    SeabedInterpolation method) {
+void project_coarse_to_fine_3d(const OctreeAdapter &mesh, std::vector<VecX> &element_data,
+                               int order, SeabedInterpolation method) {
 
     const int n1d = order + 1;
     const int n3d = n1d * n1d * n1d;
@@ -117,20 +109,18 @@ void project_coarse_to_fine_3d(
     // For each element, check horizontal faces (0-3) for coarser neighbors
     for (size_t e = 0; e < num_elements; ++e) {
         const auto &my_bounds = elements[e]->bounds;
-        Real my_area = (my_bounds.xmax - my_bounds.xmin) *
-                       (my_bounds.ymax - my_bounds.ymin);
+        Real my_area = (my_bounds.xmax - my_bounds.xmin) * (my_bounds.ymax - my_bounds.ymin);
 
         // Check faces 0-3 (horizontal: -x, +x, -y, +y)
         for (int face_id = 0; face_id < 4; ++face_id) {
-            NeighborInfo info =
-                mesh.get_neighbor(static_cast<Index>(e), face_id);
+            NeighborInfo info = mesh.get_neighbor(static_cast<Index>(e), face_id);
             if (info.is_boundary() || info.neighbor_elements.empty())
                 continue;
 
             Index neigh_e = info.neighbor_elements[0];
             const auto &neigh_bounds = elements[neigh_e]->bounds;
-            Real neigh_area = (neigh_bounds.xmax - neigh_bounds.xmin) *
-                              (neigh_bounds.ymax - neigh_bounds.ymin);
+            Real neigh_area =
+                (neigh_bounds.xmax - neigh_bounds.xmin) * (neigh_bounds.ymax - neigh_bounds.ymin);
 
             // Check if neighbor is coarser
             if (neigh_area <= my_area * 1.5)
@@ -173,28 +163,24 @@ void project_coarse_to_fine_3d(
                         Real eta_ref = lgl_nodes(j);
 
                         Real phys_x = my_bounds.xmin +
-                                      0.5 * (xi_ref + 1.0) *
-                                          (my_bounds.xmax - my_bounds.xmin);
+                                      0.5 * (xi_ref + 1.0) * (my_bounds.xmax - my_bounds.xmin);
                         Real phys_y = my_bounds.ymin +
-                                      0.5 * (eta_ref + 1.0) *
-                                          (my_bounds.ymax - my_bounds.ymin);
+                                      0.5 * (eta_ref + 1.0) * (my_bounds.ymax - my_bounds.ymin);
 
                         // Transform to coarse reference coordinates
-                        Real coarse_xi =
-                            2.0 * (phys_x - neigh_bounds.xmin) /
-                                (neigh_bounds.xmax - neigh_bounds.xmin) -
-                            1.0;
-                        Real coarse_eta =
-                            2.0 * (phys_y - neigh_bounds.ymin) /
-                                (neigh_bounds.ymax - neigh_bounds.ymin) -
-                            1.0;
+                        Real coarse_xi = 2.0 * (phys_x - neigh_bounds.xmin) /
+                                             (neigh_bounds.xmax - neigh_bounds.xmin) -
+                                         1.0;
+                        Real coarse_eta = 2.0 * (phys_y - neigh_bounds.ymin) /
+                                              (neigh_bounds.ymax - neigh_bounds.ymin) -
+                                          1.0;
 
                         coarse_xi = std::max(-1.0, std::min(1.0, coarse_xi));
                         coarse_eta = std::max(-1.0, std::min(1.0, coarse_eta));
 
                         // Interpolate coarse polynomial
-                        Real projected_value = interp.evaluate_scalar_2d(
-                            coarse_2d, coarse_xi, coarse_eta);
+                        Real projected_value =
+                            interp.evaluate_scalar_2d(coarse_2d, coarse_xi, coarse_eta);
 
                         // Overwrite fine element's DOF
                         int idx = i + n1d * (j + n1d * k);

@@ -43,11 +43,10 @@ namespace io {
 /// @param evaluate Function evaluating surface at (u,v) given coefficients
 /// @param resolution Number of LGL sample points per direction (default 11)
 /// @param scalar_name Name for the elevation/depth scalar field
-void write_bezier_surface_vtk(
-    const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<VecX(Index)> &get_coefficients,
-    const std::function<Real(const VecX &, Real, Real)> &evaluate,
-    int resolution = 11, const std::string &scalar_name = "elevation");
+void write_bezier_surface_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
+                              const std::function<VecX(Index)> &get_coefficients,
+                              const std::function<Real(const VecX &, Real, Real)> &evaluate,
+                              int resolution = 11, const std::string &scalar_name = "elevation");
 
 /// @brief Write Bezier control points to VTK format
 ///
@@ -61,10 +60,10 @@ void write_bezier_surface_vtk(
 /// @param control_point_position Function returning (u,v) for DOF index
 /// @param n1d Number of control points per direction (e.g., 6 for quintic, 4
 /// for cubic)
-void write_bezier_control_points_vtk(
-    const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<VecX(Index)> &get_coefficients,
-    const std::function<Vec2(int)> &control_point_position, int n1d);
+void write_bezier_control_points_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
+                                     const std::function<VecX(Index)> &get_coefficients,
+                                     const std::function<Vec2(int)> &control_point_position,
+                                     int n1d);
 
 /// @brief Write Lagrange surface to VTK format
 ///
@@ -76,11 +75,10 @@ void write_bezier_control_points_vtk(
 /// @param evaluate_in_element Function evaluating depth at (x,y) in element e
 /// @param evaluate_raw Optional function for raw bathymetry comparison
 /// @param resolution Number of sample points per direction (default 10)
-void write_lagrange_surface_vtk(
-    const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<Real(Index, Real, Real)> &evaluate_in_element,
-    const std::function<Real(Real, Real)> &evaluate_raw = nullptr,
-    int resolution = 10);
+void write_lagrange_surface_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
+                                const std::function<Real(Index, Real, Real)> &evaluate_in_element,
+                                const std::function<Real(Real, Real)> &evaluate_raw = nullptr,
+                                int resolution = 10);
 
 /// @brief Write seabed surface from 3D mesh to VTK format
 ///
@@ -94,12 +92,11 @@ void write_lagrange_surface_vtk(
 /// @param evaluate_2d Function evaluating depth at (xi, eta) in reference
 /// coords
 /// @param resolution Number of sample points per direction (default 10)
-void write_seabed_surface_vtk(
-    const std::string &filename, const OctreeAdapter &mesh,
-    const std::vector<VecX> &depth_coeffs,
-    const std::vector<Index> &bottom_elements,
-    const std::function<Real(const VecX &, Real, Real)> &evaluate_2d,
-    int resolution = 10);
+void write_seabed_surface_vtk(const std::string &filename, const OctreeAdapter &mesh,
+                              const std::vector<VecX> &depth_coeffs,
+                              const std::vector<Index> &bottom_elements,
+                              const std::function<Real(const VecX &, Real, Real)> &evaluate_2d,
+                              int resolution = 10);
 
 /// @brief Write CG Bezier/polynomial surface to VTK format with shared vertices
 ///
@@ -117,8 +114,7 @@ void write_cg_bezier_surface_vtk(
     const std::string &filename, const QuadtreeAdapter &mesh,
     const std::function<Real(Real, Real)> &evaluate_at, int resolution = 11,
     const std::string &scalar_name = "elevation",
-    const std::vector<std::pair<std::string, std::vector<Real>>>
-        &element_cell_data = {});
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data = {});
 
 /// @brief Write CG Bezier surface with explicit quantization parameters
 ///
@@ -136,11 +132,9 @@ void write_cg_bezier_surface_vtk(
 /// @param scalar_name Name for the elevation/depth scalar field
 void write_cg_bezier_surface_vtk(
     const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<Real(Real, Real)> &evaluate_at, Real xmin_domain,
-    Real ymin_domain, Real inv_quantization_tol, int resolution = 11,
-    const std::string &scalar_name = "elevation",
-    const std::vector<std::pair<std::string, std::vector<Real>>>
-        &element_cell_data = {});
+    const std::function<Real(Real, Real)> &evaluate_at, Real xmin_domain, Real ymin_domain,
+    Real inv_quantization_tol, int resolution = 11, const std::string &scalar_name = "elevation",
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data = {});
 
 /// @brief Write a polygon boundary to VTK PolyData format
 ///
@@ -151,10 +145,9 @@ void write_cg_bezier_surface_vtk(
 /// @param polygon_points Polygon vertices as (x, y) pairs in world coordinates
 /// @param z_value Z coordinate for all points (default 0 for 2D overlay)
 /// @param polygon_name Name attribute for the polygon (optional)
-void write_polygon_vtk(
-    const std::string &filename,
-    const std::vector<std::pair<Real, Real>> &polygon_points,
-    Real z_value = 0.0, const std::string &polygon_name = "polygon");
+void write_polygon_vtk(const std::string &filename,
+                       const std::vector<std::pair<Real, Real>> &polygon_points, Real z_value = 0.0,
+                       const std::string &polygon_name = "polygon");
 
 } // namespace io
 } // namespace drifter

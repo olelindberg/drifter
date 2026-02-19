@@ -13,4 +13,4 @@ namespace drifter {
 //
 // Main VTK output is in vtk_writer.cpp
 
-}  // namespace drifter
+} // namespace drifter

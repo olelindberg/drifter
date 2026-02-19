@@ -19,18 +19,18 @@ namespace drifter {
 
 /// @brief Vertical stretching function types for sigma coordinates
 enum class SigmaStretchType {
-    Uniform,       ///< Uniform spacing in sigma
-    Surface,       ///< Enhanced resolution near surface (wind-driven mixing)
-    Bottom,        ///< Enhanced resolution near bottom (BBL)
+    Uniform, ///< Uniform spacing in sigma
+    Surface, ///< Enhanced resolution near surface (wind-driven mixing)
+    Bottom, ///< Enhanced resolution near bottom (BBL)
     SurfaceBottom, ///< Enhanced at both surface and bottom (Song & Haidvogel)
-    ROMS           ///< ROMS-style stretching (UCLA ocean model)
+    ROMS ///< ROMS-style stretching (UCLA ocean model)
 };
 
 /// @brief Parameters for sigma stretching functions
 struct SigmaStretchParams {
     Real theta_s = 5.0; ///< Surface stretching parameter (0-10)
     Real theta_b = 0.4; ///< Bottom stretching parameter (0-1)
-    Real hc = 200.0;    ///< Critical depth (meters) for ROMS stretching
+    Real hc = 200.0; ///< Critical depth (meters) for ROMS stretching
 };
 
 /// @brief Sigma-coordinate transformation class
@@ -83,8 +83,7 @@ public:
     /// @brief Horizontal metric term dsigma/dx at constant z
     /// @details For sigma = (z - eta) / H where H = eta + h:
     ///          dsigma/dx|_z = -(deta/dx + sigma * dH/dx) / H
-    static Real
-    dsigma_dx(Real sigma, Real eta, Real h, Real deta_dx, Real dh_dx) {
+    static Real dsigma_dx(Real sigma, Real eta, Real h, Real deta_dx, Real dh_dx) {
         const Real H = eta + h;
         if (H < 1e-10)
             return 0.0;
@@ -95,8 +94,7 @@ public:
     /// @brief Horizontal metric term dsigma/dy at constant z
     /// @details For sigma = (z - eta) / H where H = eta + h:
     ///          dsigma/dy|_z = -(deta/dy + sigma * dH/dy) / H
-    static Real
-    dsigma_dy(Real sigma, Real eta, Real h, Real deta_dy, Real dh_dy) {
+    static Real dsigma_dy(Real sigma, Real eta, Real h, Real deta_dy, Real dh_dy) {
         const Real H = eta + h;
         if (H < 1e-10)
             return 0.0;
@@ -126,9 +124,7 @@ public:
 
     /// @brief Physical z derivative with respect to t at constant sigma
     /// @details dz/dt|_sigma = deta/dt * (1 + sigma)
-    static Real dz_dt_at_sigma(Real sigma, Real deta_dt) {
-        return deta_dt * (1.0 + sigma);
-    }
+    static Real dz_dt_at_sigma(Real sigma, Real deta_dt) { return deta_dt * (1.0 + sigma); }
 
     // =========================================================================
     // Vertical stretching functions
@@ -139,9 +135,8 @@ public:
     /// @param type Stretching type
     /// @param params Stretching parameters
     /// @return Stretched sigma value
-    static Real apply_stretching(
-        Real sigma_uniform, SigmaStretchType type,
-        const SigmaStretchParams &params = SigmaStretchParams()) {
+    static Real apply_stretching(Real sigma_uniform, SigmaStretchType type,
+                                 const SigmaStretchParams &params = SigmaStretchParams()) {
         switch (type) {
         case SigmaStretchType::Uniform:
             return sigma_uniform;
@@ -150,8 +145,7 @@ public:
         case SigmaStretchType::Bottom:
             return stretch_bottom(sigma_uniform, params.theta_b);
         case SigmaStretchType::SurfaceBottom:
-            return stretch_song_haidvogel(
-                sigma_uniform, params.theta_s, params.theta_b);
+            return stretch_song_haidvogel(sigma_uniform, params.theta_s, params.theta_b);
         case SigmaStretchType::ROMS:
             return stretch_roms(sigma_uniform, params.theta_s, params.theta_b);
         default:
@@ -161,9 +155,8 @@ public:
 
     /// @brief Get derivative of stretched sigma with respect to uniform sigma
     /// @details Needed for Jacobian computation
-    static Real stretching_derivative(
-        Real sigma_uniform, SigmaStretchType type,
-        const SigmaStretchParams &params = SigmaStretchParams()) {
+    static Real stretching_derivative(Real sigma_uniform, SigmaStretchType type,
+                                      const SigmaStretchParams &params = SigmaStretchParams()) {
         // Use central difference for general case
         constexpr Real eps = 1e-6;
         Real sigma_plus = std::min(sigma_uniform + eps, 0.0);
@@ -178,9 +171,8 @@ public:
     /// @param type Stretching type
     /// @param params Stretching parameters
     /// @return Vector of sigma values from -1 to 0
-    static VecX generate_sigma_levels(
-        int n, SigmaStretchType type,
-        const SigmaStretchParams &params = SigmaStretchParams()) {
+    static VecX generate_sigma_levels(int n, SigmaStretchType type,
+                                      const SigmaStretchParams &params = SigmaStretchParams()) {
         VecX sigma(n);
         for (int k = 0; k < n; ++k) {
             // Uniform sigma from -1 to 0
@@ -213,9 +205,8 @@ public:
     /// @param h_horiz Bathymetry at 2D horizontal nodes (n_horiz)
     /// @param sigma_1d Sigma values at vertical nodes (n_vert)
     /// @param sigma_3d Output: sigma at all 3D nodes (n_horiz * n_vert)
-    static void compute_sigma_3d(
-        const VecX &eta_horiz, const VecX &h_horiz, const VecX &sigma_1d,
-        VecX &sigma_3d) {
+    static void compute_sigma_3d(const VecX &eta_horiz, const VecX &h_horiz, const VecX &sigma_1d,
+                                 VecX &sigma_3d) {
         const int n_horiz = static_cast<int>(eta_horiz.size());
         const int n_vert = static_cast<int>(sigma_1d.size());
         sigma_3d.resize(n_horiz * n_vert);
@@ -231,9 +222,8 @@ public:
     }
 
     /// @brief Compute physical z at all DOFs
-    static void compute_z_3d(
-        const VecX &eta_horiz, const VecX &h_horiz, const VecX &sigma_1d,
-        VecX &z_3d) {
+    static void compute_z_3d(const VecX &eta_horiz, const VecX &h_horiz, const VecX &sigma_1d,
+                             VecX &z_3d) {
         const int n_horiz = static_cast<int>(eta_horiz.size());
         const int n_vert = static_cast<int>(sigma_1d.size());
         z_3d.resize(n_horiz * n_vert);
@@ -304,8 +294,7 @@ private:
 
         Real Csur = 0.0;
         if (theta_s > 0.0) {
-            const Real csrf =
-                (1.0 - std::cosh(theta_s * s)) / (std::cosh(theta_s) - 1.0);
+            const Real csrf = (1.0 - std::cosh(theta_s * s)) / (std::cosh(theta_s) - 1.0);
             Csur = csrf;
         } else {
             Csur = -s * s;
@@ -348,29 +337,25 @@ public:
     /// @param deta_dx, deta_dy Free surface gradients
     /// @param dh_dx, dh_dy Bathymetry gradients
     /// @param deta_dt Free surface time derivative
-    void update(
-        const VecX &sigma, const VecX &eta, const VecX &h, const VecX &deta_dx,
-        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy,
-        const VecX &deta_dt) {
+    void update(const VecX &sigma, const VecX &eta, const VecX &h, const VecX &deta_dx,
+                const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy, const VecX &deta_dt) {
         const int n = static_cast<int>(sigma.size());
         resize(n);
 
         for (int i = 0; i < n; ++i) {
             H_(i) = SigmaCoordinate::total_depth(eta(i), h(i));
             H_inv_(i) = (H_(i) > 1e-10) ? 1.0 / H_(i) : 0.0;
-            dsigma_dx_(i) = SigmaCoordinate::dsigma_dx(
-                sigma(i), eta(i), h(i), deta_dx(i), dh_dx(i));
-            dsigma_dy_(i) = SigmaCoordinate::dsigma_dy(
-                sigma(i), eta(i), h(i), deta_dy(i), dh_dy(i));
-            dsigma_dt_(i) =
-                SigmaCoordinate::dsigma_dt(sigma(i), eta(i), h(i), deta_dt(i));
+            dsigma_dx_(i) =
+                SigmaCoordinate::dsigma_dx(sigma(i), eta(i), h(i), deta_dx(i), dh_dx(i));
+            dsigma_dy_(i) =
+                SigmaCoordinate::dsigma_dy(sigma(i), eta(i), h(i), deta_dy(i), dh_dy(i));
+            dsigma_dt_(i) = SigmaCoordinate::dsigma_dt(sigma(i), eta(i), h(i), deta_dt(i));
         }
     }
 
     /// @brief Update metrics without time derivative (steady state)
-    void update_steady(
-        const VecX &sigma, const VecX &eta, const VecX &h, const VecX &deta_dx,
-        const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy) {
+    void update_steady(const VecX &sigma, const VecX &eta, const VecX &h, const VecX &deta_dx,
+                       const VecX &deta_dy, const VecX &dh_dx, const VecX &dh_dy) {
         VecX zero_dt = VecX::Zero(sigma.size());
         update(sigma, eta, h, deta_dx, deta_dy, dh_dx, dh_dy, zero_dt);
     }

@@ -7,4 +7,4 @@ namespace drifter {
 
 // Element implementation will go here
 
-}  // namespace drifter
+} // namespace drifter

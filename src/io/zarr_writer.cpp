@@ -1,10 +1,10 @@
 #include "io/zarr_writer.hpp"
-#include <stdexcept>
 #include <ctime>
-#include <sstream>
-#include <iomanip>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <stdexcept>
 
 namespace drifter {
 
@@ -12,9 +12,7 @@ namespace drifter {
 // ZarrWriter implementation
 // =============================================================================
 
-ZarrWriter::ZarrWriter(const ZarrConfig& config)
-    : config_(config)
-{
+ZarrWriter::ZarrWriter(const ZarrConfig &config) : config_(config) {
 #ifdef DRIFTER_USE_MPI
     int mpi_initialized = 0;
     MPI_Initialized(&mpi_initialized);
@@ -31,7 +29,7 @@ ZarrWriter::~ZarrWriter() {
     }
 
 #ifdef DRIFTER_HAS_ZARR
-    for (auto& [name, array] : arrays_) {
+    for (auto &[name, array] : arrays_) {
         if (array) {
             zarrs_array_free(array);
         }
@@ -42,14 +40,10 @@ ZarrWriter::~ZarrWriter() {
 #endif
 }
 
-ZarrWriter::ZarrWriter(ZarrWriter&& other) noexcept
-    : config_(std::move(other.config_))
-    , dimensions_(std::move(other.dimensions_))
-    , variables_(std::move(other.variables_))
-    , attributes_(std::move(other.attributes_))
-    , initialized_(other.initialized_)
-    , current_time_idx_(other.current_time_idx_)
-{
+ZarrWriter::ZarrWriter(ZarrWriter &&other) noexcept
+    : config_(std::move(other.config_)), dimensions_(std::move(other.dimensions_)),
+      variables_(std::move(other.variables_)), attributes_(std::move(other.attributes_)),
+      initialized_(other.initialized_), current_time_idx_(other.current_time_idx_) {
 #ifdef DRIFTER_HAS_ZARR
     storage_ = other.storage_;
     arrays_ = std::move(other.arrays_);
@@ -58,16 +52,18 @@ ZarrWriter::ZarrWriter(ZarrWriter&& other) noexcept
     other.initialized_ = false;
 }
 
-ZarrWriter& ZarrWriter::operator=(ZarrWriter&& other) noexcept {
+ZarrWriter &ZarrWriter::operator=(ZarrWriter &&other) noexcept {
     if (this != &other) {
         if (initialized_) {
             finalize();
         }
 #ifdef DRIFTER_HAS_ZARR
-        for (auto& [name, array] : arrays_) {
-            if (array) zarrs_array_free(array);
+        for (auto &[name, array] : arrays_) {
+            if (array)
+                zarrs_array_free(array);
         }
-        if (storage_) zarrs_storage_free(storage_);
+        if (storage_)
+            zarrs_storage_free(storage_);
 #endif
 
         config_ = std::move(other.config_);
@@ -87,23 +83,22 @@ ZarrWriter& ZarrWriter::operator=(ZarrWriter&& other) noexcept {
     return *this;
 }
 
-void ZarrWriter::add_dimension(const std::string& name, size_t size, bool unlimited) {
+void ZarrWriter::add_dimension(const std::string &name, size_t size, bool unlimited) {
     if (initialized_) {
         throw std::runtime_error("Cannot add dimension after initialization");
     }
     dimensions_[name] = ZarrDimension{name, size, unlimited};
 }
 
-void ZarrWriter::add_variable(const ZarrVariable& var) {
+void ZarrWriter::add_variable(const ZarrVariable &var) {
     if (initialized_) {
         throw std::runtime_error("Cannot add variable after initialization");
     }
     variables_[var.name] = var;
 }
 
-void ZarrWriter::add_variable(const std::string& name,
-                               const std::vector<std::string>& dimensions,
-                               ZarrDataType dtype) {
+void ZarrWriter::add_variable(const std::string &name, const std::vector<std::string> &dimensions,
+                              ZarrDataType dtype) {
     ZarrVariable var;
     var.name = name;
     var.dimensions = dimensions;
@@ -122,26 +117,25 @@ void ZarrWriter::add_variable(const std::string& name,
     add_variable(var);
 }
 
-void ZarrWriter::set_attribute(const std::string& var_name,
-                                const std::string& attr_name,
-                                const std::string& value) {
+void ZarrWriter::set_attribute(const std::string &var_name, const std::string &attr_name,
+                               const std::string &value) {
     attributes_[var_name][attr_name] = value;
 }
 
-void ZarrWriter::set_attribute(const std::string& var_name,
-                                const std::string& attr_name,
-                                Real value) {
+void ZarrWriter::set_attribute(const std::string &var_name, const std::string &attr_name,
+                               Real value) {
     std::ostringstream oss;
     oss << std::setprecision(15) << value;
     attributes_[var_name][attr_name] = oss.str();
 }
 
 void ZarrWriter::initialize() {
-    if (initialized_) return;
+    if (initialized_)
+        return;
 
     create_store();
 
-    for (const auto& [name, var] : variables_) {
+    for (const auto &[name, var] : variables_) {
         create_array(var);
     }
 
@@ -153,10 +147,7 @@ void ZarrWriter::initialize() {
 void ZarrWriter::create_store() {
 #ifdef DRIFTER_HAS_ZARR
     // Create filesystem store
-    ZarrsResult result = zarrs_storage_new_filesystem(
-        config_.store_path.c_str(),
-        &storage_
-    );
+    ZarrsResult result = zarrs_storage_new_filesystem(config_.store_path.c_str(), &storage_);
 
     if (result != ZARRS_SUCCESS) {
         throw std::runtime_error("Failed to create Zarr store at: " + config_.store_path);
@@ -167,7 +158,7 @@ void ZarrWriter::create_store() {
 #endif
 }
 
-void ZarrWriter::create_array(const ZarrVariable& var) {
+void ZarrWriter::create_array(const ZarrVariable &var) {
 #ifdef DRIFTER_HAS_ZARR
     // Determine chunk shape
     std::vector<uint64_t> shape(var.shape.begin(), var.shape.end());
@@ -188,7 +179,7 @@ void ZarrWriter::create_array(const ZarrVariable& var) {
         chunks.resize(var.shape.size());
         for (size_t i = 0; i < var.shape.size(); ++i) {
             if (i == 0 && var.dimensions[i] == "time") {
-                chunks[i] = 1;  // One timestep per chunk
+                chunks[i] = 1; // One timestep per chunk
             } else {
                 chunks[i] = std::min(static_cast<uint64_t>(64), shape[i]);
             }
@@ -198,28 +189,32 @@ void ZarrWriter::create_array(const ZarrVariable& var) {
     // Data type
     ZarrsDataType dtype;
     switch (var.dtype) {
-        case ZarrDataType::Float32: dtype = ZARRS_FLOAT32; break;
-        case ZarrDataType::Float64: dtype = ZARRS_FLOAT64; break;
-        case ZarrDataType::Int32: dtype = ZARRS_INT32; break;
-        case ZarrDataType::Int64: dtype = ZARRS_INT64; break;
-        case ZarrDataType::UInt8: dtype = ZARRS_UINT8; break;
-        default: dtype = ZARRS_FLOAT64;
+    case ZarrDataType::Float32:
+        dtype = ZARRS_FLOAT32;
+        break;
+    case ZarrDataType::Float64:
+        dtype = ZARRS_FLOAT64;
+        break;
+    case ZarrDataType::Int32:
+        dtype = ZARRS_INT32;
+        break;
+    case ZarrDataType::Int64:
+        dtype = ZARRS_INT64;
+        break;
+    case ZarrDataType::UInt8:
+        dtype = ZARRS_UINT8;
+        break;
+    default:
+        dtype = ZARRS_FLOAT64;
     }
 
     // Create array
     std::string path = "/" + var.name;
     ZarrsArray* array = nullptr;
 
-    ZarrsResult result = zarrs_array_new(
-        storage_,
-        path.c_str(),
-        shape.data(),
-        static_cast<size_t>(shape.size()),
-        chunks.data(),
-        dtype,
-        var.fill_value,
-        &array
-    );
+    ZarrsResult result =
+        zarrs_array_new(storage_, path.c_str(), shape.data(), static_cast<size_t>(shape.size()),
+                        chunks.data(), dtype, var.fill_value, &array);
 
     if (result != ZARRS_SUCCESS) {
         throw std::runtime_error("Failed to create Zarr array: " + var.name);
@@ -239,7 +234,8 @@ void ZarrWriter::create_array(const ZarrVariable& var) {
     meta << "  \"shape\": [";
     for (size_t i = 0; i < var.shape.size(); ++i) {
         meta << var.shape[i];
-        if (i < var.shape.size() - 1) meta << ", ";
+        if (i < var.shape.size() - 1)
+            meta << ", ";
     }
     meta << "],\n";
     meta << "  \"data_type\": \"float64\",\n";
@@ -247,10 +243,12 @@ void ZarrWriter::create_array(const ZarrVariable& var) {
     meta << "    \"name\": \"regular\",\n";
     meta << "    \"configuration\": {\"chunk_shape\": [";
     for (size_t i = 0; i < var.shape.size(); ++i) {
-        size_t chunk = (i == 0 && var.dimensions[i] == "time") ? 1 :
-                       std::min(static_cast<size_t>(64), var.shape[i]);
+        size_t chunk = (i == 0 && var.dimensions[i] == "time")
+                           ? 1
+                           : std::min(static_cast<size_t>(64), var.shape[i]);
         meta << chunk;
-        if (i < var.shape.size() - 1) meta << ", ";
+        if (i < var.shape.size() - 1)
+            meta << ", ";
     }
     meta << "]}\n";
     meta << "  },\n";
@@ -285,7 +283,7 @@ void ZarrWriter::write_metadata() {
     meta.close();
 }
 
-void ZarrWriter::write_coordinate(const std::string& name, const VecX& values) {
+void ZarrWriter::write_coordinate(const std::string &name, const VecX &values) {
     if (!initialized_) {
         throw std::runtime_error("Writer not initialized");
     }
@@ -299,30 +297,23 @@ void ZarrWriter::write_coordinate(const std::string& name, const VecX& values) {
     std::vector<uint64_t> start = {0};
     std::vector<uint64_t> count = {static_cast<uint64_t>(values.size())};
 
-    ZarrsResult result = zarrs_array_write(
-        it->second,
-        start.data(),
-        count.data(),
-        values.data(),
-        values.size() * sizeof(Real)
-    );
+    ZarrsResult result = zarrs_array_write(it->second, start.data(), count.data(), values.data(),
+                                           values.size() * sizeof(Real));
 
     if (result != ZARRS_SUCCESS) {
         throw std::runtime_error("Failed to write coordinate: " + name);
     }
 #else
     // Fallback: write binary chunk file
-    std::filesystem::path chunk_path =
-        std::filesystem::path(config_.store_path) / name / "c" / "0";
+    std::filesystem::path chunk_path = std::filesystem::path(config_.store_path) / name / "c" / "0";
     std::filesystem::create_directories(chunk_path.parent_path());
 
     std::ofstream out(chunk_path, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(values.data()),
-              values.size() * sizeof(Real));
+    out.write(reinterpret_cast<const char*>(values.data()), values.size() * sizeof(Real));
 #endif
 }
 
-void ZarrWriter::write_variable(const std::string& name, size_t time_idx, const VecX& data) {
+void ZarrWriter::write_variable(const std::string &name, size_t time_idx, const VecX &data) {
     if (!initialized_) {
         throw std::runtime_error("Writer not initialized");
     }
@@ -359,13 +350,8 @@ void ZarrWriter::write_variable(const std::string& name, size_t time_idx, const 
         }
     }
 
-    ZarrsResult result = zarrs_array_write(
-        arr_it->second,
-        start.data(),
-        count.data(),
-        data.data(),
-        data.size() * sizeof(Real)
-    );
+    ZarrsResult result = zarrs_array_write(arr_it->second, start.data(), count.data(), data.data(),
+                                           data.size() * sizeof(Real));
 
     if (result != ZARRS_SUCCESS) {
         throw std::runtime_error("Failed to write variable: " + name);
@@ -384,14 +370,13 @@ void ZarrWriter::write_variable(const std::string& name, size_t time_idx, const 
     std::filesystem::create_directories(chunk_path.parent_path());
 
     std::ofstream out(chunk_path, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(data.data()),
-              data.size() * sizeof(Real));
+    out.write(reinterpret_cast<const char*>(data.data()), data.size() * sizeof(Real));
 #endif
 }
 
-void ZarrWriter::write_variable_3d(const std::string& name, size_t time_idx,
-                                     const std::vector<VecX>& element_data,
-                                     const OctreeAdapter& mesh) {
+void ZarrWriter::write_variable_3d(const std::string &name, size_t time_idx,
+                                   const std::vector<VecX> &element_data,
+                                   const OctreeAdapter &mesh) {
     // Interpolate element data to structured output grid
     std::vector<Real> output_buffer;
     interpolate_to_output_grid(element_data, mesh, output_buffer);
@@ -411,13 +396,7 @@ void ZarrWriter::write_time(size_t time_idx, Real time_value) {
         std::vector<uint64_t> start = {time_idx};
         std::vector<uint64_t> count = {1};
 
-        zarrs_array_write(
-            it->second,
-            start.data(),
-            count.data(),
-            &time_value,
-            sizeof(Real)
-        );
+        zarrs_array_write(it->second, start.data(), count.data(), &time_value, sizeof(Real));
     }
 #else
     // Fallback: append to time chunk file
@@ -436,13 +415,10 @@ void ZarrWriter::write_time(size_t time_idx, Real time_value) {
     current_time_idx_ = time_idx + 1;
 }
 
-void ZarrWriter::write_timestep(size_t time_idx, Real time,
-                                  const OctreeAdapter& mesh,
-                                  const std::vector<VecX>& eta,
-                                  const std::vector<VecX>& u,
-                                  const std::vector<VecX>& v,
-                                  const std::vector<VecX>& temperature,
-                                  const std::vector<VecX>& salinity) {
+void ZarrWriter::write_timestep(size_t time_idx, Real time, const OctreeAdapter &mesh,
+                                const std::vector<VecX> &eta, const std::vector<VecX> &u,
+                                const std::vector<VecX> &v, const std::vector<VecX> &temperature,
+                                const std::vector<VecX> &salinity) {
     write_time(time_idx, time);
 
     if (variables_.count("eta")) {
@@ -472,11 +448,12 @@ void ZarrWriter::write_timestep(size_t time_idx, Real time,
 }
 
 void ZarrWriter::finalize() {
-    if (!initialized_) return;
+    if (!initialized_)
+        return;
 
 #ifdef DRIFTER_HAS_ZARR
     // Sync all arrays
-    for (auto& [name, array] : arrays_) {
+    for (auto &[name, array] : arrays_) {
         if (array) {
             zarrs_array_sync(array);
         }
@@ -489,22 +466,21 @@ void ZarrWriter::finalize() {
     initialized_ = false;
 }
 
-void ZarrWriter::interpolate_to_output_grid(const std::vector<VecX>& element_data,
-                                             const OctreeAdapter& mesh,
-                                             std::vector<Real>& output_buffer) {
+void ZarrWriter::interpolate_to_output_grid(const std::vector<VecX> &element_data,
+                                            const OctreeAdapter &mesh,
+                                            std::vector<Real> &output_buffer) {
     // Simple approach: flatten all element data
     // A full implementation would interpolate to a regular grid
 
     size_t total_size = 0;
-    for (const auto& data : element_data) {
+    for (const auto &data : element_data) {
         total_size += data.size();
     }
 
     output_buffer.resize(total_size);
     size_t offset = 0;
-    for (const auto& data : element_data) {
-        std::copy(data.data(), data.data() + data.size(),
-                  output_buffer.begin() + offset);
+    for (const auto &data : element_data) {
+        std::copy(data.data(), data.data() + data.size(), output_buffer.begin() + offset);
         offset += data.size();
     }
 }
@@ -516,17 +492,17 @@ void ZarrWriter::set_communicator(MPI_Comm comm) {
     MPI_Comm_size(comm_, &size_);
 }
 
-void ZarrWriter::write_variable_parallel(const std::string& name, size_t time_idx,
-                                          const std::vector<VecX>& local_data,
-                                          const OctreeAdapter& local_mesh) {
+void ZarrWriter::write_variable_parallel(const std::string &name, size_t time_idx,
+                                         const std::vector<VecX> &local_data,
+                                         const OctreeAdapter &local_mesh) {
     // Each rank writes its own elements
     // No coordination needed due to Zarr's chunk-based design
 
     // Get global element indices from Morton codes
-    const auto& elements = local_mesh.elements();
+    const auto &elements = local_mesh.elements();
 
     for (size_t i = 0; i < elements.size(); ++i) {
-        const auto& node = elements[i];
+        const auto &node = elements[i];
         // Morton code determines chunk index
         // This provides automatic spatial locality
 
@@ -543,12 +519,9 @@ void ZarrWriter::write_variable_parallel(const std::string& name, size_t time_id
 // OceanOutputWriter implementation
 // =============================================================================
 
-OceanOutputWriter::OceanOutputWriter(const std::string& path,
-                                       const OctreeAdapter& mesh,
-                                       int polynomial_order)
-    : mesh_(mesh)
-    , order_(polynomial_order)
-{
+OceanOutputWriter::OceanOutputWriter(const std::string &path, const OctreeAdapter &mesh,
+                                     int polynomial_order)
+    : mesh_(mesh), order_(polynomial_order) {
     ZarrConfig config;
     config.store_path = path;
     config.title = "DRIFTER Ocean Model Output";
@@ -573,9 +546,9 @@ void OceanOutputWriter::setup_dimensions() {
 
     nx_ = n_per_dim * (order_ + 1);
     ny_ = n_per_dim * (order_ + 1);
-    nz_ = (order_ + 1);  // Typically fewer vertical levels
+    nz_ = (order_ + 1); // Typically fewer vertical levels
 
-    writer_->add_dimension("time", 0, true);  // Unlimited
+    writer_->add_dimension("time", 0, true); // Unlimited
     writer_->add_dimension("z", nz_);
     writer_->add_dimension("y", ny_);
     writer_->add_dimension("x", nx_);
@@ -586,7 +559,7 @@ void OceanOutputWriter::setup_coordinates() {
     ZarrVariable time_var;
     time_var.name = "time";
     time_var.dimensions = {"time"};
-    time_var.shape = {0};  // Will grow
+    time_var.shape = {0}; // Will grow
     time_var.dtype = ZarrDataType::Float64;
     time_var.long_name = "time";
     time_var.units = "seconds since simulation start";
@@ -689,9 +662,8 @@ void OceanOutputWriter::setup_standard_variables() {
     writer_->add_variable(salt);
 }
 
-void OceanOutputWriter::add_tracer(const std::string& name,
-                                     const std::string& long_name,
-                                     const std::string& units) {
+void OceanOutputWriter::add_tracer(const std::string &name, const std::string &long_name,
+                                   const std::string &units) {
     ZarrVariable var;
     var.name = name;
     var.dimensions = {"time", "z", "y", "x"};
@@ -715,7 +687,7 @@ void OceanOutputWriter::initialize() {
     // Placeholder: uniform spacing
     VecX x_vals(nx_), y_vals(ny_);
     for (size_t i = 0; i < nx_; ++i) {
-        x_vals(i) = static_cast<Real>(i) * 1000.0;  // 1 km spacing
+        x_vals(i) = static_cast<Real>(i) * 1000.0; // 1 km spacing
     }
     for (size_t j = 0; j < ny_; ++j) {
         y_vals(j) = static_cast<Real>(j) * 1000.0;
@@ -724,13 +696,10 @@ void OceanOutputWriter::initialize() {
     writer_->write_coordinate("y", y_vals);
 }
 
-void OceanOutputWriter::write(Real time,
-                                const std::vector<VecX>& eta,
-                                const std::vector<VecX>& u,
-                                const std::vector<VecX>& v,
-                                const std::vector<VecX>& w,
-                                const std::vector<VecX>& temperature,
-                                const std::vector<VecX>& salinity) {
+void OceanOutputWriter::write(Real time, const std::vector<VecX> &eta, const std::vector<VecX> &u,
+                              const std::vector<VecX> &v, const std::vector<VecX> &w,
+                              const std::vector<VecX> &temperature,
+                              const std::vector<VecX> &salinity) {
     writer_->write_time(time_idx_, time);
     writer_->write_variable_3d("eta", time_idx_, eta, mesh_);
     writer_->write_variable_3d("u", time_idx_, u, mesh_);
@@ -742,8 +711,6 @@ void OceanOutputWriter::write(Real time,
     ++time_idx_;
 }
 
-void OceanOutputWriter::finalize() {
-    writer_->finalize();
-}
+void OceanOutputWriter::finalize() { writer_->finalize(); }
 
-}  // namespace drifter
+} // namespace drifter

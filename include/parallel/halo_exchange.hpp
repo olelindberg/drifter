@@ -31,10 +31,10 @@ class HexahedronBasis;
 
 /// @brief Field type for halo exchange
 enum class FieldType {
-    Scalar,         ///< Single scalar per DOF
-    Vector2D,       ///< 2D vector (u, v)
-    Vector3D,       ///< 3D vector (u, v, w)
-    MultiComponent  ///< Arbitrary number of components
+    Scalar, ///< Single scalar per DOF
+    Vector2D, ///< 2D vector (u, v)
+    Vector3D, ///< 3D vector (u, v, w)
+    MultiComponent ///< Arbitrary number of components
 };
 
 /// @brief Buffer for send/receive data
@@ -53,23 +53,23 @@ struct HaloBuffer {
 class HaloExchange {
 public:
     /// @brief Construct with domain decomposition
-    explicit HaloExchange(const DomainDecomposition& decomp);
+    explicit HaloExchange(const DomainDecomposition &decomp);
 
     ~HaloExchange();
 
     // Non-copyable
-    HaloExchange(const HaloExchange&) = delete;
-    HaloExchange& operator=(const HaloExchange&) = delete;
+    HaloExchange(const HaloExchange &) = delete;
+    HaloExchange &operator=(const HaloExchange &) = delete;
 
     /// @brief Set DOFs per element (must match solution vector layout)
     void set_dofs_per_element(size_t dofs);
 
     /// @brief Set element basis (for automatic DOF count)
-    void set_basis(const HexahedronBasis& basis);
+    void set_basis(const HexahedronBasis &basis);
 
     /// @brief Start non-blocking halo exchange
     /// @param solution Element data vector (local + ghost elements)
-    void start_exchange(std::vector<VecX>& solution);
+    void start_exchange(std::vector<VecX> &solution);
 
     /// @brief Start exchange for raw buffer
     void start_exchange(Real* data, size_t dofs_per_elem, size_t num_elements);
@@ -78,10 +78,10 @@ public:
     void finish_exchange();
 
     /// @brief Blocking halo exchange
-    void exchange(std::vector<VecX>& solution);
+    void exchange(std::vector<VecX> &solution);
 
     /// @brief Exchange multiple fields simultaneously
-    void exchange_multi(std::vector<std::vector<VecX>*>& fields);
+    void exchange_multi(std::vector<std::vector<VecX>*> &fields);
 
     /// @brief Check if exchange is in progress
     bool is_active() const { return exchange_active_; }
@@ -100,7 +100,7 @@ public:
     void reset_statistics() { stats_ = Statistics(); }
 
 private:
-    const DomainDecomposition& decomp_;
+    const DomainDecomposition &decomp_;
 
     size_t dofs_per_element_ = 0;
     const HexahedronBasis* basis_ = nullptr;
@@ -115,8 +115,8 @@ private:
     std::vector<VecX>* current_solution_ = nullptr;
 
     void allocate_buffers();
-    void pack_send_buffers(const std::vector<VecX>& solution);
-    void unpack_recv_buffers(std::vector<VecX>& solution);
+    void pack_send_buffers(const std::vector<VecX> &solution);
+    void unpack_recv_buffers(std::vector<VecX> &solution);
 
 #ifdef DRIFTER_USE_MPI
     void post_receives();
@@ -131,22 +131,22 @@ private:
 /// @brief Multi-field halo exchange (optimized for multiple variables)
 class MultiFieldHaloExchange {
 public:
-    explicit MultiFieldHaloExchange(const DomainDecomposition& decomp);
+    explicit MultiFieldHaloExchange(const DomainDecomposition &decomp);
 
     /// @brief Add a field to exchange
-    void add_field(const std::string& name, size_t dofs_per_elem);
+    void add_field(const std::string &name, size_t dofs_per_elem);
 
     /// @brief Start exchange for all registered fields
-    void start_exchange(std::map<std::string, std::vector<VecX>*>& fields);
+    void start_exchange(std::map<std::string, std::vector<VecX>*> &fields);
 
     /// @brief Finish exchange
     void finish_exchange();
 
     /// @brief Blocking exchange
-    void exchange(std::map<std::string, std::vector<VecX>*>& fields);
+    void exchange(std::map<std::string, std::vector<VecX>*> &fields);
 
 private:
-    const DomainDecomposition& decomp_;
+    const DomainDecomposition &decomp_;
 
     struct FieldInfo {
         std::string name;
@@ -174,19 +174,19 @@ private:
 /// @brief Asynchronous halo exchange with multiple overlap regions
 class AsyncHaloExchange {
 public:
-    AsyncHaloExchange(const DomainDecomposition& decomp);
+    AsyncHaloExchange(const DomainDecomposition &decomp);
 
     /// @brief Classify elements for overlapped computation
     struct ElementClassification {
-        std::vector<Index> interior;     ///< Elements with no ghost neighbors
-        std::vector<Index> boundary;     ///< Elements needing ghost data
+        std::vector<Index> interior; ///< Elements with no ghost neighbors
+        std::vector<Index> boundary; ///< Elements needing ghost data
     };
 
     /// @brief Get element classification
     ElementClassification classify_elements() const;
 
     /// @brief Start exchange (non-blocking)
-    void start(std::vector<VecX>& solution);
+    void start(std::vector<VecX> &solution);
 
     /// @brief Check if exchange is complete
     bool test();
@@ -195,17 +195,13 @@ public:
     void wait();
 
     /// @brief Get interior elements (can compute while exchanging)
-    const std::vector<Index>& interior_elements() const {
-        return classification_.interior;
-    }
+    const std::vector<Index> &interior_elements() const { return classification_.interior; }
 
     /// @brief Get boundary elements (need ghost data)
-    const std::vector<Index>& boundary_elements() const {
-        return classification_.boundary;
-    }
+    const std::vector<Index> &boundary_elements() const { return classification_.boundary; }
 
 private:
-    const DomainDecomposition& decomp_;
+    const DomainDecomposition &decomp_;
     HaloExchange exchanger_;
     ElementClassification classification_;
 
@@ -215,17 +211,16 @@ private:
 /// @brief Face-based halo exchange (for flux computations)
 class FaceHaloExchange {
 public:
-    FaceHaloExchange(const DomainDecomposition& decomp);
+    FaceHaloExchange(const DomainDecomposition &decomp);
 
     /// @brief Exchange face data only (smaller messages)
-    void exchange_faces(std::vector<std::vector<VecX>>& face_data);
+    void exchange_faces(std::vector<std::vector<VecX>> &face_data);
 
     /// @brief Get remote face data for inter-rank faces
-    const std::vector<VecX>& get_remote_face_data(Index local_elem,
-                                                    int face_id) const;
+    const std::vector<VecX> &get_remote_face_data(Index local_elem, int face_id) const;
 
 private:
-    const DomainDecomposition& decomp_;
+    const DomainDecomposition &decomp_;
 
     // Inter-rank face information
     struct InterRankFace {
@@ -242,4 +237,4 @@ private:
     void identify_inter_rank_faces();
 };
 
-}  // namespace drifter
+} // namespace drifter

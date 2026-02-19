@@ -18,7 +18,7 @@ namespace drifter {
 
 /// @brief Info for a lazily-loaded tile
 struct TileInfo {
-    std::string path;        ///< File path for lazy loading
+    std::string path; ///< File path for lazy loading
     BathymetryBounds bounds; ///< Pre-loaded bounds (EPSG:4326)
     mutable std::optional<BathymetryData> data; ///< Lazily loaded raster
 };
@@ -44,22 +44,17 @@ struct MultiSourceBathymetry::Impl {
     }
 
     // Check if point is inside BathymetryData bounds
-    static bool
-    is_inside_bounds(const BathymetryData &data, double x, double y) {
-        return x >= data.xmin && x <= data.xmax && y >= data.ymin &&
-               y <= data.ymax;
+    static bool is_inside_bounds(const BathymetryData &data, double x, double y) {
+        return x >= data.xmin && x <= data.xmax && y >= data.ymin && y <= data.ymax;
     }
 
     // Check if point is inside BathymetryBounds
-    static bool
-    is_inside_bounds(const BathymetryBounds &bounds, double x, double y) {
-        return x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin &&
-               y <= bounds.ymax;
+    static bool is_inside_bounds(const BathymetryBounds &bounds, double x, double y) {
+        return x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin && y <= bounds.ymax;
     }
 
     // Get depth from BathymetryData, handling nodata
-    static float
-    get_depth_or_nodata(const BathymetryData &data, double x, double y) {
+    static float get_depth_or_nodata(const BathymetryData &data, double x, double y) {
         float val = data.interpolate(x, y);
         if (is_nodata(val, data.nodata_value)) {
             return 0.0f; // Land
@@ -72,33 +67,29 @@ struct MultiSourceBathymetry::Impl {
 // MultiSourceBathymetry implementation
 // =============================================================================
 
-MultiSourceBathymetry::MultiSourceBathymetry(
-    const std::string &primary_file, const std::vector<std::string> &tile_files)
+MultiSourceBathymetry::MultiSourceBathymetry(const std::string &primary_file,
+                                             const std::vector<std::string> &tile_files)
     : impl_(std::make_unique<Impl>()) {
     // Load primary source (always loaded eagerly)
-    std::cout << "[MultiSourceBathymetry] Loading primary source: "
-              << primary_file << std::endl;
+    std::cout << "[MultiSourceBathymetry] Loading primary source: " << primary_file << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
 
     impl_->primary = impl_->reader.load(primary_file);
     if (!impl_->primary.is_valid()) {
-        throw std::runtime_error(
-            "Failed to load primary bathymetry: " + primary_file +
-            ". Error: " + impl_->reader.last_error());
+        throw std::runtime_error("Failed to load primary bathymetry: " + primary_file +
+                                 ". Error: " + impl_->reader.last_error());
     }
 
     auto end = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
     size_t bytes = impl_->primary.elevation.size() * sizeof(float);
-    std::cout << "[MultiSourceBathymetry] Primary loaded: "
-              << impl_->primary.sizex << "x" << impl_->primary.sizey << " ("
-              << bytes / (1024 * 1024) << " MB) in " << ms << " ms"
+    std::cout << "[MultiSourceBathymetry] Primary loaded: " << impl_->primary.sizex << "x"
+              << impl_->primary.sizey << " (" << bytes / (1024 * 1024) << " MB) in " << ms << " ms"
               << std::endl;
 
     // Read tile bounds only (deferred loading)
-    std::cout << "[MultiSourceBathymetry] Reading bounds for "
-              << tile_files.size() << " tiles (deferred loading)..."
-              << std::endl;
+    std::cout << "[MultiSourceBathymetry] Reading bounds for " << tile_files.size()
+              << " tiles (deferred loading)..." << std::endl;
     start = std::chrono::high_resolution_clock::now();
 
     impl_->tiles.reserve(tile_files.size());
@@ -107,9 +98,8 @@ MultiSourceBathymetry::MultiSourceBathymetry(
         info.path = tile_file;
         info.bounds = impl_->reader.load_bounds_only(tile_file);
         if (!info.bounds.is_valid()) {
-            throw std::runtime_error(
-                "Failed to read tile bounds: " + tile_file +
-                ". Error: " + impl_->reader.last_error());
+            throw std::runtime_error("Failed to read tile bounds: " + tile_file +
+                                     ". Error: " + impl_->reader.last_error());
         }
         // info.data remains empty (std::nullopt) - loaded on demand
         impl_->tiles.push_back(std::move(info));
@@ -117,11 +107,9 @@ MultiSourceBathymetry::MultiSourceBathymetry(
 
     end = std::chrono::high_resolution_clock::now();
     ms = std::chrono::duration<double, std::milli>(end - start).count();
-    std::cout << "[MultiSourceBathymetry] Tile bounds loaded in " << ms << " ms"
-              << std::endl;
-    std::cout << "[MultiSourceBathymetry] Ready: 1 primary + "
-              << tile_files.size() << " tiles available for on-demand loading"
-              << std::endl;
+    std::cout << "[MultiSourceBathymetry] Tile bounds loaded in " << ms << " ms" << std::endl;
+    std::cout << "[MultiSourceBathymetry] Ready: 1 primary + " << tile_files.size()
+              << " tiles available for on-demand loading" << std::endl;
 
     // Setup CRS transformation from EPSG:3034 to EPSG:4326
     OGRSpatialReference srcSRS, dstSRS;
@@ -134,9 +122,8 @@ MultiSourceBathymetry::MultiSourceBathymetry(
 
     impl_->to_4326.reset(OGRCreateCoordinateTransformation(&srcSRS, &dstSRS));
     if (!impl_->to_4326) {
-        throw std::runtime_error(
-            "Failed to create coordinate transformation from "
-            "EPSG:3034 to EPSG:4326");
+        throw std::runtime_error("Failed to create coordinate transformation from "
+                                 "EPSG:3034 to EPSG:4326");
     }
 
     // Compute combined bounds (primary bounds in EPSG:3034)
@@ -160,20 +147,17 @@ MultiSourceBathymetry::~MultiSourceBathymetry() {
                 total_bytes += tile.data->elevation.size() * sizeof(float);
             }
         }
-        std::cout << "[MultiSourceBathymetry] Summary: " << loaded << "/"
-                  << impl_->tiles.size() << " tiles were actually loaded ("
-                  << total_bytes / (1024 * 1024) << " MB)" << std::endl;
+        std::cout << "[MultiSourceBathymetry] Summary: " << loaded << "/" << impl_->tiles.size()
+                  << " tiles were actually loaded (" << total_bytes / (1024 * 1024) << " MB)"
+                  << std::endl;
         if (loaded < impl_->tiles.size()) {
-            std::cout
-                << "[MultiSourceBathymetry] Memory saved by deferred loading: "
-                << (impl_->tiles.size() - loaded) << " tiles not loaded"
-                << std::endl;
+            std::cout << "[MultiSourceBathymetry] Memory saved by deferred loading: "
+                      << (impl_->tiles.size() - loaded) << " tiles not loaded" << std::endl;
         }
     }
 }
 
-MultiSourceBathymetry::MultiSourceBathymetry(
-    MultiSourceBathymetry &&) noexcept = default;
+MultiSourceBathymetry::MultiSourceBathymetry(MultiSourceBathymetry &&) noexcept = default;
 MultiSourceBathymetry &
 MultiSourceBathymetry::operator=(MultiSourceBathymetry &&) noexcept = default;
 
@@ -203,21 +187,18 @@ Real MultiSourceBathymetry::evaluate(Real x, Real y) const {
             // Load tile data if not already loaded (lazy loading)
             if (!tile.data.has_value()) {
                 auto start = std::chrono::high_resolution_clock::now();
-                std::cout << "[MultiSourceBathymetry] Loading tile on demand: "
-                          << tile.path << std::endl;
+                std::cout << "[MultiSourceBathymetry] Loading tile on demand: " << tile.path
+                          << std::endl;
 
                 tile.data = impl_->reader.load(tile.path);
 
                 auto end = std::chrono::high_resolution_clock::now();
-                double ms =
-                    std::chrono::duration<double, std::milli>(end - start)
-                        .count();
+                double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
                 if (tile.data->is_valid()) {
                     size_t bytes = tile.data->elevation.size() * sizeof(float);
-                    std::cout << "[MultiSourceBathymetry] Tile loaded: "
-                              << tile.data->sizex << "x" << tile.data->sizey
-                              << " (" << bytes / (1024 * 1024) << " MB) in "
+                    std::cout << "[MultiSourceBathymetry] Tile loaded: " << tile.data->sizex << "x"
+                              << tile.data->sizey << " (" << bytes / (1024 * 1024) << " MB) in "
                               << ms << " ms" << std::endl;
 
                     impl_->tiles_loaded++;
@@ -275,17 +256,14 @@ bool MultiSourceBathymetry::contains(Real x, Real y) const {
     return false;
 }
 
-void MultiSourceBathymetry::get_bounds(
-    Real &xmin, Real &xmax, Real &ymin, Real &ymax) const {
+void MultiSourceBathymetry::get_bounds(Real &xmin, Real &xmax, Real &ymin, Real &ymax) const {
     xmin = impl_->bounds_xmin;
     xmax = impl_->bounds_xmax;
     ymin = impl_->bounds_ymin;
     ymax = impl_->bounds_ymax;
 }
 
-size_t MultiSourceBathymetry::num_sources() const {
-    return 1 + impl_->tiles.size();
-}
+size_t MultiSourceBathymetry::num_sources() const { return 1 + impl_->tiles.size(); }
 
 LoadingStats MultiSourceBathymetry::get_loading_stats() const {
     LoadingStats stats;
@@ -295,8 +273,6 @@ LoadingStats MultiSourceBathymetry::get_loading_stats() const {
     return stats;
 }
 
-bool MultiSourceBathymetry::is_available() {
-    return true;
-}
+bool MultiSourceBathymetry::is_available() { return true; }
 
 } // namespace drifter

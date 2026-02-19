@@ -6,8 +6,7 @@
 
 namespace drifter {
 
-CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
-    : mesh_(mesh) {
+CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh) : mesh_(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {
@@ -30,8 +29,7 @@ CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
         xmax = std::max(xmax, b.xmax);
         ymin = std::min(ymin, b.ymin);
         ymax = std::max(ymax, b.ymax);
-        min_element_size = std::min(
-            min_element_size, std::min(b.xmax - b.xmin, b.ymax - b.ymin));
+        min_element_size = std::min(min_element_size, std::min(b.xmax - b.xmin, b.ymax - b.ymin));
     }
 
     xmin_domain_ = xmin;
@@ -53,21 +51,17 @@ CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
 
 Index CGLinearBezierDofManager::global_dof(Index elem, int local_dof) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range(
-            "CGLinearBezierDofManager: element index out of range");
+        throw std::out_of_range("CGLinearBezierDofManager: element index out of range");
     }
     if (local_dof < 0 || local_dof >= LinearBezierBasis2D::NDOF) {
-        throw std::out_of_range(
-            "CGLinearBezierDofManager: local DOF index out of range");
+        throw std::out_of_range("CGLinearBezierDofManager: local DOF index out of range");
     }
     return elem_to_global_[elem][local_dof];
 }
 
-const std::vector<Index> &
-CGLinearBezierDofManager::element_dofs(Index elem) const {
+const std::vector<Index> &CGLinearBezierDofManager::element_dofs(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range(
-            "CGLinearBezierDofManager: element index out of range");
+        throw std::out_of_range("CGLinearBezierDofManager: element index out of range");
     }
     return elem_to_global_[elem];
 }
@@ -122,19 +116,16 @@ SpMat CGLinearBezierDofManager::build_constraint_matrix() const {
 // Position handling
 // =============================================================================
 
-std::pair<int64_t, int64_t>
-CGLinearBezierDofManager::quantize_position(const Vec2 &pos) const {
+std::pair<int64_t, int64_t> CGLinearBezierDofManager::quantize_position(const Vec2 &pos) const {
     // Normalize to domain origin to reduce floating-point error for large
     // coords
     Real x_rel = pos(0) - xmin_domain_;
     Real y_rel = pos(1) - ymin_domain_;
-    return std::make_pair(
-        static_cast<int64_t>(std::round(x_rel * inv_quantization_tol_)),
-        static_cast<int64_t>(std::round(y_rel * inv_quantization_tol_)));
+    return std::make_pair(static_cast<int64_t>(std::round(x_rel * inv_quantization_tol_)),
+                          static_cast<int64_t>(std::round(y_rel * inv_quantization_tol_)));
 }
 
-Vec2 CGLinearBezierDofManager::get_dof_position(
-    Index elem, int local_dof) const {
+Vec2 CGLinearBezierDofManager::get_dof_position(Index elem, int local_dof) const {
     const auto &bounds = mesh_.element_bounds(elem);
     Vec2 param = basis_.control_point_position(local_dof);
     Real x = bounds.xmin + param(0) * (bounds.xmax - bounds.xmin);
@@ -164,8 +155,7 @@ void CGLinearBezierDofManager::assign_vertex_dofs() {
     //   u=0  u=1
 
     for (Index e = 0; e < mesh_.num_elements(); ++e) {
-        for (int local_dof = 0; local_dof < LinearBezierBasis2D::NDOF;
-             ++local_dof) {
+        for (int local_dof = 0; local_dof < LinearBezierBasis2D::NDOF; ++local_dof) {
             Vec2 pos = get_dof_position(e, local_dof);
             auto key = quantize_position(pos);
 
@@ -248,10 +238,8 @@ void CGLinearBezierDofManager::build_hanging_node_constraints() {
 
                 if (is_shared) {
                     // Ensure the DOF is properly shared
-                    int coarse_local =
-                        coarse_dofs[info.subedge_index == 0 ? 0 : 1];
-                    elem_to_global_[elem][fine_local] =
-                        elem_to_global_[coarse_elem][coarse_local];
+                    int coarse_local = coarse_dofs[info.subedge_index == 0 ? 0 : 1];
+                    elem_to_global_[elem][fine_local] = elem_to_global_[coarse_elem][coarse_local];
                     continue;
                 }
 
@@ -268,8 +256,7 @@ void CGLinearBezierDofManager::build_hanging_node_constraints() {
 
                 for (int m = 0; m < static_cast<int>(coarse_dofs.size()); ++m) {
                     int coarse_local = coarse_dofs[m];
-                    Index coarse_global =
-                        elem_to_global_[coarse_elem][coarse_local];
+                    Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
 
                     if (std::abs(weights(m)) > 1e-14) {
                         constraint.master_dofs.push_back(coarse_global);

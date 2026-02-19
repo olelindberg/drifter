@@ -32,10 +32,9 @@ public:
     /// @param basis Hexahedron basis for DOF locations
     /// @param stretch_type Vertical stretching type
     /// @param stretch_params Stretching parameters
-    VerticalTFI(
-        const HexahedronBasis &basis,
-        SigmaStretchType stretch_type = SigmaStretchType::Uniform,
-        const SigmaStretchParams &stretch_params = SigmaStretchParams());
+    VerticalTFI(const HexahedronBasis &basis,
+                SigmaStretchType stretch_type = SigmaStretchType::Uniform,
+                const SigmaStretchParams &stretch_params = SigmaStretchParams());
 
     /// @brief Get the basis
     const HexahedronBasis &basis() const { return basis_; }
@@ -59,8 +58,7 @@ public:
     /// @param h Bathymetry at horizontal nodes (n_horiz, positive downward)
     /// @param[in,out] nodes Physical node positions (3D array, modified in
     /// place)
-    void update_node_positions(
-        const VecX &eta, const VecX &h, std::vector<Vec3> &nodes) const;
+    void update_node_positions(const VecX &eta, const VecX &h, std::vector<Vec3> &nodes) const;
 
     /// @brief Update only z-coordinates of nodes (x,y unchanged)
     /// @param eta Free surface at horizontal nodes
@@ -74,9 +72,8 @@ public:
     /// @param eta Free surface at horizontal nodes
     /// @param h Bathymetry at horizontal nodes
     /// @param[out] nodes Output node positions
-    void compute_node_positions(
-        const VecX &x_horiz, const VecX &y_horiz, const VecX &eta,
-        const VecX &h, std::vector<Vec3> &nodes) const;
+    void compute_node_positions(const VecX &x_horiz, const VecX &y_horiz, const VecX &eta,
+                                const VecX &h, std::vector<Vec3> &nodes) const;
 
     // =========================================================================
     // Mesh velocity (ALE formulation)
@@ -88,8 +85,7 @@ public:
     /// @param deta_dt Time derivative of free surface at horizontal nodes
     /// @param sigma_values Sigma at each 3D node
     /// @param[out] w_mesh Mesh velocity at all nodes
-    void compute_mesh_velocity(
-        const VecX &deta_dt, const VecX &sigma_values, VecX &w_mesh) const;
+    void compute_mesh_velocity(const VecX &deta_dt, const VecX &sigma_values, VecX &w_mesh) const;
 
     /// @brief Compute mesh velocity (using internal sigma values)
     /// @param deta_dt Time derivative of free surface at horizontal nodes
@@ -102,9 +98,8 @@ public:
     /// @param eta Free surface
     /// @param h Bathymetry
     /// @param[out] w_mesh Mesh velocity at all nodes
-    void compute_mesh_velocity_full(
-        const VecX &deta_dt, const VecX &dh_dt, const VecX &eta, const VecX &h,
-        VecX &w_mesh) const;
+    void compute_mesh_velocity_full(const VecX &deta_dt, const VecX &dh_dt, const VecX &eta,
+                                    const VecX &h, VecX &w_mesh) const;
 
     // =========================================================================
     // Geometric factors
@@ -119,20 +114,17 @@ public:
     /// @param nodes Physical node positions
     /// @param[out] jacobians Jacobian matrices at quad points
     /// @param[out] det_J Jacobian determinants
-    void compute_jacobians(
-        const std::vector<Vec3> &nodes, std::vector<Mat3> &jacobians,
-        VecX &det_J) const;
+    void compute_jacobians(const std::vector<Vec3> &nodes, std::vector<Mat3> &jacobians,
+                           VecX &det_J) const;
 
     /// @brief Compute inverse Jacobians
-    void compute_jacobian_inverses(
-        const std::vector<Mat3> &jacobians,
-        std::vector<Mat3> &jacobian_inv) const;
+    void compute_jacobian_inverses(const std::vector<Mat3> &jacobians,
+                                   std::vector<Mat3> &jacobian_inv) const;
 
     /// @brief Update full geometric factors structure
     /// @param nodes Physical node positions
     /// @param[out] gf Geometric factors (filled)
-    void update_geometric_factors(
-        const std::vector<Vec3> &nodes, GeometricFactors &gf) const;
+    void update_geometric_factors(const std::vector<Vec3> &nodes, GeometricFactors &gf) const;
 
     // =========================================================================
     // Coordinate derivatives for sigma metrics
@@ -142,12 +134,10 @@ public:
     /// @param deta_dx Free surface x-gradient at horizontal nodes
     /// @param dh_dx Bathymetry x-gradient at horizontal nodes
     /// @param[out] dz_dx Output: dz/dx at all 3D nodes
-    void
-    compute_dz_dx(const VecX &deta_dx, const VecX &dh_dx, VecX &dz_dx) const;
+    void compute_dz_dx(const VecX &deta_dx, const VecX &dh_dx, VecX &dz_dx) const;
 
     /// @brief Compute dz/dy at constant sigma
-    void
-    compute_dz_dy(const VecX &deta_dy, const VecX &dh_dy, VecX &dz_dy) const;
+    void compute_dz_dy(const VecX &deta_dy, const VecX &dh_dy, VecX &dz_dy) const;
 
     // =========================================================================
     // Index mapping between horizontal and 3D
@@ -162,21 +152,17 @@ public:
     }
 
     /// @brief Get horizontal index from 3D node index
-    int horizontal_index(Index idx_3d) const {
-        return static_cast<int>(idx_3d) / n_vert_;
-    }
+    int horizontal_index(Index idx_3d) const { return static_cast<int>(idx_3d) / n_vert_; }
 
     /// @brief Get vertical level from 3D node index
-    int vertical_level(Index idx_3d) const {
-        return static_cast<int>(idx_3d) % n_vert_;
-    }
+    int vertical_level(Index idx_3d) const { return static_cast<int>(idx_3d) % n_vert_; }
 
 private:
     const HexahedronBasis &basis_;
     SigmaStretchType stretch_type_;
     SigmaStretchParams stretch_params_;
 
-    int n_vert_;  // Number of vertical levels (order + 1)
+    int n_vert_; // Number of vertical levels (order + 1)
     int n_horiz_; // Number of horizontal nodes per level
 
     // Sigma values at vertical LGL nodes (from -1 at bottom to 0 at surface)
@@ -189,14 +175,13 @@ private:
 /// @brief Geometric factors for a single element
 /// @details Stores Jacobians and metric terms needed for integration
 struct GeometricFactors {
-    std::vector<Mat3> jacobian;     ///< Jacobian at each quad point
+    std::vector<Mat3> jacobian; ///< Jacobian at each quad point
     std::vector<Mat3> jacobian_inv; ///< Inverse Jacobian
-    VecX det_J;                     ///< Jacobian determinant
+    VecX det_J; ///< Jacobian determinant
 
     // Face geometric factors
     std::array<VecX, 6> face_det_J; ///< Face Jacobian determinants
-    std::array<std::vector<Vec3>, 6>
-        face_normals; ///< Outward normals at face quad pts
+    std::array<std::vector<Vec3>, 6> face_normals; ///< Outward normals at face quad pts
 
     /// @brief Resize storage for given number of quad points
     void resize(int num_vol_quad, int num_face_quad) {
@@ -215,9 +200,8 @@ struct GeometricFactors {
     /// @param basis Hexahedron basis functions
     /// @param num_quad_1d Number of 1D quadrature points per direction
     /// @param physical_nodes Physical node positions
-    static GeometricFactors compute(
-        const HexahedronBasis &basis, int num_quad_1d,
-        const std::vector<Vec3> &physical_nodes);
+    static GeometricFactors compute(const HexahedronBasis &basis, int num_quad_1d,
+                                    const std::vector<Vec3> &physical_nodes);
 };
 
 } // namespace drifter

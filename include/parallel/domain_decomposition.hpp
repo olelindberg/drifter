@@ -30,17 +30,17 @@ namespace drifter {
 
 /// @brief Partitioning strategy
 enum class PartitionStrategy {
-    Morton,   ///< Morton curve (space-filling, preserves locality)
-    Hilbert,  ///< Hilbert curve (better locality than Morton)
-    Metis,    ///< METIS graph partitioning
+    Morton, ///< Morton curve (space-filling, preserves locality)
+    Hilbert, ///< Hilbert curve (better locality than Morton)
+    Metis, ///< METIS graph partitioning
     ParMetis, ///< Parallel METIS (for large meshes)
     PTScotch, ///< PT-Scotch partitioner
-    Uniform   ///< Uniform block distribution (simple but poor locality)
+    Uniform ///< Uniform block distribution (simple but poor locality)
 };
 
 /// @brief Ghost layer configuration
 struct GhostConfig {
-    int num_layers = 1;           ///< Number of ghost element layers
+    int num_layers = 1; ///< Number of ghost element layers
     bool include_diagonal = true; ///< Include face-diagonal neighbors
     bool include_corners = false; ///< Include corner neighbors
 };
@@ -48,18 +48,18 @@ struct GhostConfig {
 /// @brief Element ownership info
 struct ElementOwnership {
     Index global_id; ///< Global element ID
-    Index local_id;  ///< Local element ID (on owning rank)
-    int owner_rank;  ///< Rank that owns this element
-    bool is_ghost;   ///< True if this is a ghost element
+    Index local_id; ///< Local element ID (on owning rank)
+    int owner_rank; ///< Rank that owns this element
+    bool is_ghost; ///< True if this is a ghost element
 };
 
 /// @brief Communication neighbor info
 struct NeighborComm {
-    int rank;                         ///< Neighbor rank
+    int rank; ///< Neighbor rank
     std::vector<Index> send_elements; ///< Local IDs to send
     std::vector<Index> recv_elements; ///< Ghost IDs to receive into
-    size_t send_size = 0;             ///< Total send buffer size (DOFs)
-    size_t recv_size = 0;             ///< Total receive buffer size (DOFs)
+    size_t send_size = 0; ///< Total send buffer size (DOFs)
+    size_t recv_size = 0; ///< Total receive buffer size (DOFs)
 };
 
 /// @brief Domain decomposition manager
@@ -145,11 +145,11 @@ private:
     int rank_ = 0;
     int size_ = 1;
 
-    const OctreeAdapter *mesh_ = nullptr;
+    const OctreeAdapter* mesh_ = nullptr;
 
-    std::vector<int> partition_;             // Global element → rank
-    std::vector<Index> local_elements_;      // Global IDs owned by this rank
-    std::vector<Index> ghost_elements_;      // Global IDs needed as ghosts
+    std::vector<int> partition_; // Global element → rank
+    std::vector<Index> local_elements_; // Global IDs owned by this rank
+    std::vector<Index> ghost_elements_; // Global IDs needed as ghosts
     std::map<Index, Index> global_to_local_; // Global ID → local ID
     std::map<Index, Index> local_to_global_; // Local ID → global ID
 
@@ -174,24 +174,21 @@ public:
     Real compute_imbalance(const DomainDecomposition &decomp) const;
 
     /// @brief Check if rebalancing is needed
-    bool needs_rebalance(
-        const DomainDecomposition &decomp, Real threshold = 1.2) const;
+    bool needs_rebalance(const DomainDecomposition &decomp, Real threshold = 1.2) const;
 
     /// @brief Compute new partition with better balance
-    std::vector<int> compute_balanced_partition(
-        const OctreeAdapter &mesh, const DomainDecomposition &current_decomp);
+    std::vector<int> compute_balanced_partition(const OctreeAdapter &mesh,
+                                                const DomainDecomposition &current_decomp);
 
     /// @brief Compute migration plan
     struct MigrationPlan {
         std::map<Index, int> element_destinations; // Element → new rank
         std::map<int, std::vector<Index>> send_to; // Rank → elements to send
-        std::map<int, std::vector<Index>>
-            recv_from; // Rank → elements to receive
+        std::map<int, std::vector<Index>> recv_from; // Rank → elements to receive
     };
 
-    MigrationPlan compute_migration(
-        const std::vector<int> &old_partition,
-        const std::vector<int> &new_partition);
+    MigrationPlan compute_migration(const std::vector<int> &old_partition,
+                                    const std::vector<int> &new_partition);
 
 private:
 #ifdef DRIFTER_USE_MPI
@@ -215,9 +212,8 @@ public:
     Index balance_step(DomainDecomposition &decomp, OctreeAdapter &mesh);
 
     /// @brief Iterate until balanced
-    void balance(
-        DomainDecomposition &decomp, OctreeAdapter &mesh, Real tolerance = 0.1,
-        int max_iterations = 10);
+    void balance(DomainDecomposition &decomp, OctreeAdapter &mesh, Real tolerance = 0.1,
+                 int max_iterations = 10);
 
 private:
 #ifdef DRIFTER_USE_MPI
@@ -226,8 +222,8 @@ private:
     int rank_ = 0;
     int size_ = 1;
 
-    std::vector<Index> select_boundary_elements(
-        const DomainDecomposition &decomp, int neighbor_rank, Index count);
+    std::vector<Index> select_boundary_elements(const DomainDecomposition &decomp,
+                                                int neighbor_rank, Index count);
 };
 
 } // namespace drifter

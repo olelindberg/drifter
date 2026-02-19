@@ -89,18 +89,18 @@ public:
     Real gradient_weight() const { return gradient_weight_; }
 
 private:
-    int ngauss_;           ///< Number of Gauss points per direction
+    int ngauss_; ///< Number of Gauss points per direction
     Real gradient_weight_; ///< Weight for gradient penalty term
-    MatX H_;               ///< Precomputed Hessian (36 x 36)
-    MatX D2U_;             ///< d^2/du^2 at Gauss points (ngauss^2 x 36)
-    MatX D2V_;             ///< d^2/dv^2 at Gauss points (ngauss^2 x 36)
-    MatX D2UV_;            ///< d^2/dudv at Gauss points (ngauss^2 x 36)
-    MatX D1U_;             ///< d/du at Gauss points (ngauss^2 x 36)
-    MatX D1V_;             ///< d/dv at Gauss points (ngauss^2 x 36)
-    MatX H_u_u_;           ///< Gradient Hessian component D1U^T * W * D1U
-    MatX H_v_v_;           ///< Gradient Hessian component D1V^T * W * D1V
-    VecX gauss_weights_;   ///< Quadrature weights (ngauss^2)
-    VecX gauss_nodes_;     ///< 1D Gauss nodes in [0,1]
+    MatX H_; ///< Precomputed Hessian (36 x 36)
+    MatX D2U_; ///< d^2/du^2 at Gauss points (ngauss^2 x 36)
+    MatX D2V_; ///< d^2/dv^2 at Gauss points (ngauss^2 x 36)
+    MatX D2UV_; ///< d^2/dudv at Gauss points (ngauss^2 x 36)
+    MatX D1U_; ///< d/du at Gauss points (ngauss^2 x 36)
+    MatX D1V_; ///< d/dv at Gauss points (ngauss^2 x 36)
+    MatX H_u_u_; ///< Gradient Hessian component D1U^T * W * D1U
+    MatX H_v_v_; ///< Gradient Hessian component D1V^T * W * D1V
+    VecX gauss_weights_; ///< Quadrature weights (ngauss^2)
+    VecX gauss_nodes_; ///< 1D Gauss nodes in [0,1]
 
     std::unique_ptr<BezierBasis2D> basis_;
 

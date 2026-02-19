@@ -18,8 +18,8 @@ DRIFTER is a 3D Discontinuous Galerkin (DG) adaptive multi-resolution coastal oc
 # Configure (from project root)
 cmake -B build
 
-# Build
-LD_LIBRARY_PATH=/home/ole/.local/lib cmake --build build --parallel
+# Build (use max 6 parallel jobs to avoid memory issues)
+LD_LIBRARY_PATH=/home/ole/.local/lib cmake --build build --parallel 6
 
 # Run all tests
 LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build --output-on-failure
@@ -118,6 +118,10 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 - `NumericalFlux` - Interface flux computations (Lax-Friedrichs, HLLC, Roe, Central)
 - Provides upwinding and stability at element interfaces
 
+**parallel/** - MPI parallelization
+- `DomainDecomposition` - Spatial decomposition for MPI
+- `HaloExchange` - Ghost cell communication at partition boundaries
+
 ### Key Patterns
 
 1. **Element data storage**: Per-element `VecX` vectors containing all DOFs
@@ -166,6 +170,33 @@ Solved via KKT system with constraint projection for exact satisfaction.
 
 **Non-conforming meshes:** Hanging node constraints via de Casteljau subdivision ensure continuity at 2:1 T-junctions.
 
+### WENO Smoothness Indicators (`bathymetry/adaptive_cg_*_smoother.hpp`)
+
+WENO-style smoothness indicators measure local complexity of raw bathymetry data for adaptive refinement. Unlike fitting error (data vs approximation), these capture intrinsic terrain roughness.
+
+**Indicator types** (`ErrorMetricType` enum) — all dimensionless:
+| Indicator | Formula | Purpose |
+|-----------|---------|---------|
+| `GradientIndicator` | mean(\|∇z\|²) | Steep slopes (slope² is dimensionless) |
+| `CurvatureIndicator` | h² × mean(\|H\|²_F) | High curvature regions (ridges, canyons) |
+| `WenoIndicator` | w_g × gradient + w_c × curvature | Combined (configurable weights) |
+
+**Definitions:**
+- `|∇z|² = (∂z/∂x)² + (∂z/∂y)²` — squared gradient magnitude (slope²)
+- `|H|²_F = (∂²z/∂x²)² + 2·(∂²z/∂x∂y)² + (∂²z/∂y²)²` — Frobenius norm of Hessian squared
+
+**Dimensional analysis:**
+- Gradient: `[m/m]² = dimensionless`
+- Curvature: `h² × [1/m]² = [m²] × [1/m²] = dimensionless`
+- Combined: dimensionless, enabling mesh-size-independent thresholds
+
+**Configuration** (`AdaptiveCG*BezierConfig`):
+- `error_metric_type` - Select which metric drives refinement
+- `weno_gradient_weight` / `weno_curvature_weight` - Weights for combined indicator
+- Requires `set_gradient_function()` and `set_curvature_function()` or `set_bathymetry_surface()`
+
+**Use cases**: Pre-adaptation before solving, feature-driven refinement (coastlines, submarine canyons), or when fitting error alone misses important terrain features.
+
 ## Testing
 
 Tests use GoogleTest framework with fixtures in `tests/test_utils.hpp`:
@@ -192,6 +223,8 @@ Test files in `tests/integration/`:
 | `test_cg_triharmonic_bezier_bathymetry_smoother.cpp` | CG quintic with triharmonic energy |
 | `test_adaptive_cg_bezier_smoother.cpp` | Adaptive refinement for CG quintic smoother |
 | `test_adaptive_cg_cubic_bezier_smoother.cpp` | Adaptive refinement for CG cubic smoother |
+| `test_adaptive_cg_linear_bezier_smoother.cpp` | Adaptive refinement for CG linear smoother |
+| `test_multi_source_bathymetry.cpp` | Multi-source bathymetry loading and blending |
 | `test_bathymetry.cpp` | GeoTIFF loading, coastline-adaptive refinement, seabed VTK output |
 | `test_mesh.cpp` | Octree mesh creation, face connectivity |
 | `test_dg_operators.cpp` | Gradient/divergence operators, mass matrix, face interpolation, discrete Green's identity |
@@ -204,5 +237,14 @@ Run specific tests with gtest filter: `./build/tests/drifter_integration_tests -
 
 ## Dependencies
 
-Required: Eigen3, Boost (Geometry), MPI, OpenMP, GTest
-Optional: GDAL (geospatial), VTK, zarrs_ffi (Zarr output)
+Required: Eigen3, Boost (Geometry), GDAL
+Optional (default ON): MPI, OpenMP, GTest (for tests)
+Optional: VTK, zarrs_ffi (Zarr output), netCDF, HDF5
+
+CMake build options (set with `-D`):
+- `DRIFTER_USE_MPI=ON` - MPI parallelization (default ON)
+- `DRIFTER_USE_OPENMP=ON` - OpenMP threading (default ON)
+- `DRIFTER_USE_CUDA=OFF` - CUDA GPU acceleration (default OFF)
+- `DRIFTER_USE_ZARR=ON` - Zarr v3 output via zarrs_ffi (default ON)
+- `DRIFTER_USE_VTK=ON` - VTK output (default ON)
+- `ZARRS_FFI_DIR=/path` - Custom path to zarrs_ffi library

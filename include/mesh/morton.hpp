@@ -23,8 +23,7 @@ public:
     }
 
     /// Decode a Morton code back to 3D grid indices
-    static inline void
-    decode(uint64_t code, uint32_t &x, uint32_t &y, uint32_t &z) {
+    static inline void decode(uint64_t code, uint32_t &x, uint32_t &y, uint32_t &z) {
         x = compact1by2(code);
         y = compact1by2(code >> 1);
         z = compact1by2(code >> 2);
@@ -132,9 +131,8 @@ public:
     /// @param code Current Morton code
     /// @param ix, iy, iz Child index in each direction (0 or 1)
     /// @param refine_x, refine_y, refine_z Whether to refine in each direction
-    static inline uint64_t refine(
-        uint64_t code, int ix, int iy, int iz, bool refine_x, bool refine_y,
-        bool refine_z) {
+    static inline uint64_t refine(uint64_t code, int ix, int iy, int iz, bool refine_x,
+                                  bool refine_y, bool refine_z) {
         if (refine_x)
             code = child_x(code, ix);
         if (refine_y)

@@ -93,15 +93,15 @@ public:
     Real gradient_weight() const { return gradient_weight_; }
 
 private:
-    int ngauss_;           ///< Number of Gauss points per direction
+    int ngauss_; ///< Number of Gauss points per direction
     Real gradient_weight_; ///< Weight for gradient penalty term
-    MatX H_;               ///< Precomputed Hessian (36 x 36)
-    MatX D3UUU_;           ///< d^3/du^3 at Gauss points (ngauss^2 x 36)
-    MatX D3UUV_;           ///< d^3/du^2 dv at Gauss points (ngauss^2 x 36)
-    MatX D3UVV_;           ///< d^3/du dv^2 at Gauss points (ngauss^2 x 36)
-    MatX D3VVV_;           ///< d^3/dv^3 at Gauss points (ngauss^2 x 36)
-    MatX D1U_;             ///< d/du at Gauss points (ngauss^2 x 36)
-    MatX D1V_;             ///< d/dv at Gauss points (ngauss^2 x 36)
+    MatX H_; ///< Precomputed Hessian (36 x 36)
+    MatX D3UUU_; ///< d^3/du^3 at Gauss points (ngauss^2 x 36)
+    MatX D3UUV_; ///< d^3/du^2 dv at Gauss points (ngauss^2 x 36)
+    MatX D3UVV_; ///< d^3/du dv^2 at Gauss points (ngauss^2 x 36)
+    MatX D3VVV_; ///< d^3/dv^3 at Gauss points (ngauss^2 x 36)
+    MatX D1U_; ///< d/du at Gauss points (ngauss^2 x 36)
+    MatX D1V_; ///< d/dv at Gauss points (ngauss^2 x 36)
 
     // Component Hessians for scaled assembly
     MatX H_uuu_uuu_; ///< D3UUU^T * W * D3UUU
@@ -110,11 +110,11 @@ private:
     MatX H_vvv_vvv_; ///< D3VVV^T * W * D3VVV
     MatX H_uuu_uvv_; ///< D3UUU^T * W * D3UVV (cross term)
     MatX H_uuv_vvv_; ///< D3UUV^T * W * D3VVV (cross term)
-    MatX H_u_u_;     ///< Gradient Hessian component D1U^T * W * D1U
-    MatX H_v_v_;     ///< Gradient Hessian component D1V^T * W * D1V
+    MatX H_u_u_; ///< Gradient Hessian component D1U^T * W * D1U
+    MatX H_v_v_; ///< Gradient Hessian component D1V^T * W * D1V
 
     VecX gauss_weights_; ///< Quadrature weights (ngauss^2)
-    VecX gauss_nodes_;   ///< 1D Gauss nodes in [0,1]
+    VecX gauss_nodes_; ///< 1D Gauss nodes in [0,1]
 
     std::unique_ptr<BezierBasis2D> basis_;
 

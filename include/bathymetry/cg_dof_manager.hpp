@@ -68,9 +68,9 @@ struct C2Constraint {
 
     /// Constraint type (for debugging)
     enum class Type {
-        Value,    // u constraint
+        Value, // u constraint
         Gradient, // ∂u/∂n constraint (reserved for future use)
-        Hessian   // ∂²u/∂n² constraint (reserved for future use)
+        Hessian // ∂²u/∂n² constraint (reserved for future use)
     };
     Type type = Type::Value;
 };
@@ -103,9 +103,7 @@ public:
     const std::vector<Index> &element_dofs(Index elem) const;
 
     /// Get local-to-global DOF mapping for all elements
-    const std::vector<std::vector<Index>> &all_element_dofs() const {
-        return elem_to_global_;
-    }
+    const std::vector<std::vector<Index>> &all_element_dofs() const { return elem_to_global_; }
 
     /// Check if a DOF is on the domain boundary
     bool is_boundary_dof(Index dof) const;
@@ -131,9 +129,7 @@ public:
     void apply_single_dirichlet(Index dof, Real value);
 
     /// Get all constraints
-    const std::vector<C2Constraint> &constraints() const {
-        return constraints_;
-    }
+    const std::vector<C2Constraint> &constraints() const { return constraints_; }
 
     /// Check if a DOF is constrained (slave)
     bool is_constrained(Index dof) const;
@@ -258,8 +254,7 @@ private:
     Index find_dof_at_position(const Vec2 &pos, Real tol = 1e-10) const;
 
     /// Position lookup for DOF sharing
-    std::map<std::pair<int64_t, int64_t>, Index>
-        position_to_dof_; // Quantized position -> DOF
+    std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_; // Quantized position -> DOF
 
     /// Convert position to quantized key
     std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const;

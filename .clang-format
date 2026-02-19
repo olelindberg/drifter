@@ -1,0 +1,19 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+PointerAlignment: Left
+ReferenceAlignment: Right
+ColumnLimit: 0
+AccessModifierOffset: -4
+AlignTrailingComments:
+  Kind: Leave
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+IndentCaseLabels: false
+IndentPPDirectives: None
+NamespaceIndentation: None
+SortIncludes: Never
+SpaceAfterTemplateKeyword: true

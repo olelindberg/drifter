@@ -88,8 +88,7 @@ void remove_small_polygons_impl(MultiPolygon2D &mp, double min_area) {
 CoastlineReader::CoastlineReader() : impl_(std::make_unique<Impl>()) {}
 CoastlineReader::~CoastlineReader() = default;
 CoastlineReader::CoastlineReader(CoastlineReader &&) noexcept = default;
-CoastlineReader &
-CoastlineReader::operator=(CoastlineReader &&) noexcept = default;
+CoastlineReader &CoastlineReader::operator=(CoastlineReader &&) noexcept = default;
 
 // CoastlineIndex constructor/destructor
 CoastlineIndex::CoastlineIndex() : impl_(std::make_unique<Impl>()) {}
@@ -103,7 +102,7 @@ CoastlineIndex &CoastlineIndex::operator=(CoastlineIndex &&) noexcept = default;
 
 namespace {
 
-void ogr_linear_ring_to_boost_ring(const OGRLinearRing *lr, Ring2D &ring) {
+void ogr_linear_ring_to_boost_ring(const OGRLinearRing* lr, Ring2D &ring) {
     if (!lr)
         return;
     int n = lr->getNumPoints();
@@ -116,12 +115,12 @@ void ogr_linear_ring_to_boost_ring(const OGRLinearRing *lr, Ring2D &ring) {
     }
 }
 
-bool ogr_polygon_to_boost_polygon(const OGRPolygon *opoly, Polygon2D &bp) {
+bool ogr_polygon_to_boost_polygon(const OGRPolygon* opoly, Polygon2D &bp) {
     if (!opoly)
         return false;
 
     // Exterior ring
-    const OGRLinearRing *ext = opoly->getExteriorRing();
+    const OGRLinearRing* ext = opoly->getExteriorRing();
     if (!ext || ext->getNumPoints() < 4)
         return false;
 
@@ -134,7 +133,7 @@ bool ogr_polygon_to_boost_polygon(const OGRPolygon *opoly, Polygon2D &bp) {
     const int nh = opoly->getNumInteriorRings();
     bp.inners().reserve(nh);
     for (int i = 0; i < nh; ++i) {
-        const OGRLinearRing *in = opoly->getInteriorRing(i);
+        const OGRLinearRing* in = opoly->getInteriorRing(i);
         if (!in || in->getNumPoints() < 4)
             continue;
         Ring2D inner;
@@ -148,8 +147,7 @@ bool ogr_polygon_to_boost_polygon(const OGRPolygon *opoly, Polygon2D &bp) {
     return true;
 }
 
-void collect_polygons(
-    const OGRGeometry *g, std::vector<const OGRPolygon *> &out) {
+void collect_polygons(const OGRGeometry* g, std::vector<const OGRPolygon*> &out) {
     if (!g)
         return;
     OGRwkbGeometryType t = wkbFlatten(g->getGeometryType());
@@ -159,14 +157,14 @@ void collect_polygons(
         return;
     }
     if (t == wkbMultiPolygon) {
-        const OGRMultiPolygon *mp = g->toMultiPolygon();
+        const OGRMultiPolygon* mp = g->toMultiPolygon();
         for (int i = 0; i < mp->getNumGeometries(); ++i) {
             out.push_back(mp->getGeometryRef(i));
         }
         return;
     }
     if (t == wkbGeometryCollection) {
-        const OGRGeometryCollection *gc = g->toGeometryCollection();
+        const OGRGeometryCollection* gc = g->toGeometryCollection();
         for (int i = 0; i < gc->getNumGeometries(); ++i) {
             collect_polygons(gc->getGeometryRef(i), out);
         }
@@ -177,19 +175,18 @@ void collect_polygons(
 
 } // anonymous namespace
 
-bool CoastlineReader::load(
-    const std::string &filename, const std::string &layer_name,
-    const std::string &target_srs) {
+bool CoastlineReader::load(const std::string &filename, const std::string &layer_name,
+                           const std::string &target_srs) {
     GDALAllRegister();
 
-    std::unique_ptr<GDALDataset> ds(static_cast<GDALDataset *>(GDALOpenEx(
-        filename.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr)));
+    std::unique_ptr<GDALDataset> ds(static_cast<GDALDataset*>(
+        GDALOpenEx(filename.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr)));
     if (!ds) {
         impl_->error = "Failed to open: " + filename;
         return false;
     }
 
-    OGRLayer *layer = nullptr;
+    OGRLayer* layer = nullptr;
     if (!layer_name.empty()) {
         layer = ds->GetLayerByName(layer_name.c_str());
         if (!layer) {
@@ -225,10 +222,10 @@ bool CoastlineReader::load(
     impl_->polygons.clear();
 
     layer->ResetReading();
-    OGRFeature *feat = nullptr;
+    OGRFeature* feat = nullptr;
     while ((feat = layer->GetNextFeature()) != nullptr) {
         std::unique_ptr<OGRFeature> feat_guard(feat);
-        OGRGeometry *geom = feat->GetGeometryRef();
+        OGRGeometry* geom = feat->GetGeometryRef();
         if (!geom)
             continue;
 
@@ -242,9 +239,9 @@ bool CoastlineReader::load(
             }
         }
 
-        std::vector<const OGRPolygon *> polys;
+        std::vector<const OGRPolygon*> polys;
         collect_polygons(g2d.get(), polys);
-        for (const OGRPolygon *op : polys) {
+        for (const OGRPolygon* op : polys) {
             Polygon2D bp;
             if (ogr_polygon_to_boost_polygon(op, bp)) {
                 impl_->polygons.push_back(std::move(bp));
@@ -268,8 +265,7 @@ size_t CoastlineReader::num_polygons() const { return impl_->polygons.size(); }
 
 const std::string &CoastlineReader::last_error() const { return impl_->error; }
 
-void CoastlineReader::bounding_box(
-    Real &xmin, Real &ymin, Real &xmax, Real &ymax) const {
+void CoastlineReader::bounding_box(Real &xmin, Real &ymin, Real &xmax, Real &ymax) const {
     Box2D bbox;
     bg::envelope(impl_->polygons, bbox);
     xmin = bg::get<0>(bbox.min_corner());
@@ -292,8 +288,7 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
         // Outer ring
         const auto &outer = poly.outer();
         for (size_t i = 0; i + 1 < outer.size(); ++i) {
-            index->impl_->rtree->insert(
-                {Segment2D(outer[i], outer[i + 1]), {p, 0, i}});
+            index->impl_->rtree->insert({Segment2D(outer[i], outer[i + 1]), {p, 0, i}});
             ++index->impl_->num_segments;
         }
 
@@ -301,8 +296,7 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
         for (size_t r = 0; r < poly.inners().size(); ++r) {
             const auto &inner = poly.inners()[r];
             for (size_t i = 0; i + 1 < inner.size(); ++i) {
-                index->impl_->rtree->insert(
-                    {Segment2D(inner[i], inner[i + 1]), {p, r + 1, i}});
+                index->impl_->rtree->insert({Segment2D(inner[i], inner[i + 1]), {p, r + 1, i}});
                 ++index->impl_->num_segments;
             }
         }
@@ -317,8 +311,7 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
 
 size_t CoastlineIndex::num_segments() const { return impl_->num_segments; }
 
-bool CoastlineIndex::intersects(
-    Real xmin, Real ymin, Real xmax, Real ymax) const {
+bool CoastlineIndex::intersects(Real xmin, Real ymin, Real xmax, Real ymax) const {
     if (!impl_->rtree)
         return false;
     Box2D box(Point2D(xmin, ymin), Point2D(xmax, ymax));
@@ -331,21 +324,17 @@ bool CoastlineIndex::intersects(
 // CoastlineRefinement implementation
 // =============================================================================
 
-CoastlineRefinement::CoastlineRefinement(
-    std::shared_ptr<CoastlineIndex> index, int max_level)
+CoastlineRefinement::CoastlineRefinement(std::shared_ptr<CoastlineIndex> index, int max_level)
     : index_(std::move(index)), max_level_(max_level) {}
 
-bool CoastlineRefinement::should_refine(
-    const ElementBounds &bounds, int level) const {
+bool CoastlineRefinement::should_refine(const ElementBounds &bounds, int level) const {
     if (level >= max_level_)
         return false;
-    return index_->intersects(
-        bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax);
+    return index_->intersects(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax);
 }
 
 RefineMask CoastlineRefinement::get_mask(const ElementBounds &bounds) const {
-    if (index_->intersects(
-            bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax)) {
+    if (index_->intersects(bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax)) {
         return RefineMask::X | RefineMask::Y; // Refine horizontally
     }
     return RefineMask::NONE;

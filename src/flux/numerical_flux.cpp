@@ -10,8 +10,7 @@ namespace drifter {
 ShallowWaterRoeFlux::ShallowWaterRoeFlux(Real g, Real entropy_fix)
     : g_(g), entropy_fix_(entropy_fix) {}
 
-VecX ShallowWaterRoeFlux::flux(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n) const {
+VecX ShallowWaterRoeFlux::flux(const VecX &U_L, const VecX &U_R, const Vec3 &n) const {
     // State: [h, hu, hv]
     Real h_L = U_L(0);
     Real hu_L = U_L(1);
@@ -107,21 +106,17 @@ VecX ShallowWaterRoeFlux::flux(
     Real r3_3 = alpha3 * (v_roe + c_roe * ny);
 
     result(0) =
-        0.5 * (F1_L + F1_R) -
-        0.5 * (abs_lambda1 * r1_1 + abs_lambda2 * r2_1 + abs_lambda3 * r3_1);
+        0.5 * (F1_L + F1_R) - 0.5 * (abs_lambda1 * r1_1 + abs_lambda2 * r2_1 + abs_lambda3 * r3_1);
     result(1) =
-        0.5 * (F2_L + F2_R) -
-        0.5 * (abs_lambda1 * r1_2 + abs_lambda2 * r2_2 + abs_lambda3 * r3_2);
+        0.5 * (F2_L + F2_R) - 0.5 * (abs_lambda1 * r1_2 + abs_lambda2 * r2_2 + abs_lambda3 * r3_2);
     result(2) =
-        0.5 * (F3_L + F3_R) -
-        0.5 * (abs_lambda1 * r1_3 + abs_lambda2 * r2_3 + abs_lambda3 * r3_3);
+        0.5 * (F3_L + F3_R) - 0.5 * (abs_lambda1 * r1_3 + abs_lambda2 * r2_3 + abs_lambda3 * r3_3);
 
     return result;
 }
 
-void ShallowWaterRoeFlux::roe_average(
-    Real h_L, Real u_L, Real v_L, Real h_R, Real u_R, Real v_R, Real &h_roe,
-    Real &u_roe, Real &v_roe) const {
+void ShallowWaterRoeFlux::roe_average(Real h_L, Real u_L, Real v_L, Real h_R, Real u_R, Real v_R,
+                                      Real &h_roe, Real &u_roe, Real &v_roe) const {
 
     Real sqrt_h_L = std::sqrt(h_L);
     Real sqrt_h_R = std::sqrt(h_R);
@@ -136,8 +131,7 @@ void ShallowWaterRoeFlux::roe_average(
 // NumericalFluxFactory implementation
 // =============================================================================
 
-std::unique_ptr<NumericalFlux>
-NumericalFluxFactory::shallow_water_lax_friedrichs(Real g) {
+std::unique_ptr<NumericalFlux> NumericalFluxFactory::shallow_water_lax_friedrichs(Real g) {
     auto physical_flux = [g](const VecX &U) -> Tensor3 {
         Real h = U(0);
         Real hu = U(1);
@@ -168,8 +162,7 @@ NumericalFluxFactory::shallow_water_lax_friedrichs(Real g) {
         return F;
     };
 
-    auto max_wave_speed = [g](const VecX &U_L, const VecX &U_R,
-                              const Vec3 &n) -> Real {
+    auto max_wave_speed = [g](const VecX &U_L, const VecX &U_R, const Vec3 &n) -> Real {
         Real h_L = std::max(U_L(0), 1e-10);
         Real h_R = std::max(U_R(0), 1e-10);
         Real u_L = U_L(1) / h_L;
@@ -186,12 +179,10 @@ NumericalFluxFactory::shallow_water_lax_friedrichs(Real g) {
         return std::max(std::abs(un_L) + c_L, std::abs(un_R) + c_R);
     };
 
-    return std::make_unique<LaxFriedrichsFlux>(
-        physical_flux, max_wave_speed, 3);
+    return std::make_unique<LaxFriedrichsFlux>(physical_flux, max_wave_speed, 3);
 }
 
-std::unique_ptr<NumericalFlux>
-NumericalFluxFactory::shallow_water_hllc(Real g) {
+std::unique_ptr<NumericalFlux> NumericalFluxFactory::shallow_water_hllc(Real g) {
     return std::make_unique<ShallowWaterHLLCFlux>(g);
 }
 
@@ -199,13 +190,12 @@ std::unique_ptr<NumericalFlux> NumericalFluxFactory::shallow_water_roe(Real g) {
     return std::make_unique<ShallowWaterRoeFlux>(g);
 }
 
-std::unique_ptr<NumericalFlux>
-NumericalFluxFactory::advection_upwind(const Vec3 &velocity) {
+std::unique_ptr<NumericalFlux> NumericalFluxFactory::advection_upwind(const Vec3 &velocity) {
     return std::make_unique<UpwindFlux>(velocity);
 }
 
-std::unique_ptr<NumericalFlux>
-NumericalFluxFactory::central(PhysicalFluxFunc phys_flux, int nvars) {
+std::unique_ptr<NumericalFlux> NumericalFluxFactory::central(PhysicalFluxFunc phys_flux,
+                                                             int nvars) {
     return std::make_unique<CentralFlux>(std::move(phys_flux), nvars);
 }
 

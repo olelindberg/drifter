@@ -7,4 +7,4 @@ namespace drifter {
 
 // Geometry implementation will go here
 
-}  // namespace drifter
+} // namespace drifter

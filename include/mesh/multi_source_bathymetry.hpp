@@ -25,9 +25,8 @@ namespace drifter {
 /// @brief Statistics about on-demand tile loading
 struct LoadingStats {
     size_t tiles_registered; ///< Total tiles available for loading
-    size_t tiles_loaded;     ///< Number of tiles actually loaded
-    size_t
-        bytes_loaded; ///< Total bytes loaded for tiles (not including primary)
+    size_t tiles_loaded; ///< Number of tiles actually loaded
+    size_t bytes_loaded; ///< Total bytes loaded for tiles (not including primary)
 };
 
 /// @brief Multi-source bathymetry with cascading lookup
@@ -48,9 +47,8 @@ public:
     /// @param primary_file Path to primary bathymetry (EPSG:3034)
     /// @param tile_files Paths to fallback tiles (EPSG:4326)
     /// @throws std::runtime_error if files cannot be loaded or CRS setup fails
-    MultiSourceBathymetry(
-        const std::string &primary_file,
-        const std::vector<std::string> &tile_files);
+    MultiSourceBathymetry(const std::string &primary_file,
+                          const std::vector<std::string> &tile_files);
 
     ~MultiSourceBathymetry();
 

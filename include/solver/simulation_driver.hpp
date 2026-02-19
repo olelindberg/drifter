@@ -32,12 +32,12 @@ namespace drifter {
 /// @brief Simulation configuration parameters
 struct SimulationConfig {
     // Time stepping
-    Real t_start = 0.0;     ///< Start time [s]
-    Real t_end = 86400.0;   ///< End time [s] (default 1 day)
+    Real t_start = 0.0; ///< Start time [s]
+    Real t_end = 86400.0; ///< End time [s] (default 1 day)
     Real dt_initial = 10.0; ///< Initial time step [s]
-    Real cfl = 0.5;         ///< CFL number
-    Real dt_min = 1e-6;     ///< Minimum time step [s]
-    Real dt_max = 3600.0;   ///< Maximum time step [s]
+    Real cfl = 0.5; ///< CFL number
+    Real dt_min = 1e-6; ///< Minimum time step [s]
+    Real dt_max = 3600.0; ///< Maximum time step [s]
 
     // Mode splitting
     bool use_mode_splitting = true;
@@ -72,10 +72,8 @@ struct SimulationDiagnostics {
 };
 
 /// @brief Callback types for user hooks
-using OutputCallback =
-    std::function<void(Real time, const std::vector<PrimitiveState> &states)>;
-using DiagnosticCallback =
-    std::function<void(const SimulationDiagnostics &diag)>;
+using OutputCallback = std::function<void(Real time, const std::vector<PrimitiveState> &states)>;
+using DiagnosticCallback = std::function<void(const SimulationDiagnostics &diag)>;
 
 /// @brief Main simulation driver
 class SimulationDriver {
@@ -91,11 +89,10 @@ public:
     /// @param dh_dy Bathymetry y-gradient
     /// @param y_positions Y-coordinates at DOFs (for Coriolis)
     /// @param initial_states Initial primitive states
-    void initialize(
-        int num_elements, const std::vector<VecX> &bathymetry,
-        const std::vector<VecX> &dh_dx, const std::vector<VecX> &dh_dy,
-        const std::vector<VecX> &y_positions,
-        const std::vector<PrimitiveState> &initial_states);
+    void initialize(int num_elements, const std::vector<VecX> &bathymetry,
+                    const std::vector<VecX> &dh_dx, const std::vector<VecX> &dh_dy,
+                    const std::vector<VecX> &y_positions,
+                    const std::vector<PrimitiveState> &initial_states);
 
     /// @brief Set Coriolis parameter
     void set_coriolis(const CoriolisParameter &coriolis);
@@ -107,8 +104,7 @@ public:
     void set_boundary_conditions(const std::vector<BoundaryCondition> &bcs);
 
     /// @brief Set face connections for DG
-    void set_face_connections(
-        const std::vector<std::vector<FaceConnection>> &connections);
+    void set_face_connections(const std::vector<std::vector<FaceConnection>> &connections);
 
     /// @brief Register output callback
     void set_output_callback(OutputCallback callback);
@@ -215,20 +211,22 @@ private:
 };
 
 /// @brief Simple test case: quiescent ocean
-std::vector<PrimitiveState> create_quiescent_initial_condition(
-    int num_elements, int dofs_per_element, Real initial_temperature = 15.0,
-    Real initial_salinity = 35.0);
+std::vector<PrimitiveState> create_quiescent_initial_condition(int num_elements,
+                                                               int dofs_per_element,
+                                                               Real initial_temperature = 15.0,
+                                                               Real initial_salinity = 35.0);
 
 /// @brief Test case: barotropic Kelvin wave
-std::vector<PrimitiveState> create_kelvin_wave_initial_condition(
-    int num_elements, int dofs_per_element,
-    const std::vector<VecX> &x_positions, const std::vector<VecX> &y_positions,
-    Real amplitude = 0.1, Real wavelength = 100000.0, Real depth = 100.0);
+std::vector<PrimitiveState>
+create_kelvin_wave_initial_condition(int num_elements, int dofs_per_element,
+                                     const std::vector<VecX> &x_positions,
+                                     const std::vector<VecX> &y_positions, Real amplitude = 0.1,
+                                     Real wavelength = 100000.0, Real depth = 100.0);
 
 /// @brief Test case: lock exchange (gravity current)
-std::vector<PrimitiveState> create_lock_exchange_initial_condition(
-    int num_elements, int dofs_per_element,
-    const std::vector<VecX> &x_positions, Real T_cold = 10.0,
-    Real T_warm = 20.0, Real x_interface = 0.5);
+std::vector<PrimitiveState>
+create_lock_exchange_initial_condition(int num_elements, int dofs_per_element,
+                                       const std::vector<VecX> &x_positions, Real T_cold = 10.0,
+                                       Real T_warm = 20.0, Real x_interface = 0.5);
 
 } // namespace drifter

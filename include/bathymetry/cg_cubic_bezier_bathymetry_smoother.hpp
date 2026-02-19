@@ -64,14 +64,12 @@ struct CGCubicBezierSmootherConfig {
 class CGCubicBezierBathymetrySmoother {
 public:
     /// @brief Construct smoother for a quadtree mesh
-    explicit CGCubicBezierBathymetrySmoother(
-        const QuadtreeAdapter &mesh,
-        const CGCubicBezierSmootherConfig &config = {});
+    explicit CGCubicBezierBathymetrySmoother(const QuadtreeAdapter &mesh,
+                                             const CGCubicBezierSmootherConfig &config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
-    explicit CGCubicBezierBathymetrySmoother(
-        const OctreeAdapter &octree,
-        const CGCubicBezierSmootherConfig &config = {});
+    explicit CGCubicBezierBathymetrySmoother(const OctreeAdapter &octree,
+                                             const CGCubicBezierSmootherConfig &config = {});
 
     // =========================================================================
     // Data input
@@ -145,7 +143,7 @@ public:
 
 private:
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter *quadtree_ = nullptr;
+    const QuadtreeAdapter* quadtree_ = nullptr;
 
     CGCubicBezierSmootherConfig config_;
 

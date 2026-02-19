@@ -107,9 +107,8 @@ struct FaceConnection {
 /// @param coarse_level Directional level of coarse element
 /// @param fine_levels Directional levels of fine elements at face
 /// @param face_id Face ID (0-5) to determine tangent directions
-inline FaceConnectionType get_connection_type(
-    const DirectionalLevel &coarse_level, const DirectionalLevel &fine_level,
-    int face_id) {
+inline FaceConnectionType get_connection_type(const DirectionalLevel &coarse_level,
+                                              const DirectionalLevel &fine_level, int face_id) {
     // Determine tangent directions for this face
     // Face 0,1 (X normal): tangent dirs are Y, Z
     // Face 2,3 (Y normal): tangent dirs are X, Z

@@ -12,4 +12,4 @@ namespace drifter {
 // - WENO-based limiting
 // - Positivity-preserving limiters for tracers
 
-}  // namespace drifter
+} // namespace drifter

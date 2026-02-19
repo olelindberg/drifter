@@ -29,32 +29,31 @@ namespace drifter {
 
 /// @brief Pressure gradient computation method
 enum class PressureGradientMethod {
-    Standard,            ///< Direct sigma-to-z transform
-    DensityJacobian,     ///< Shchepetkin & McWilliams (2003)
-    Polynomial           ///< High-order polynomial reconstruction
+    Standard, ///< Direct sigma-to-z transform
+    DensityJacobian, ///< Shchepetkin & McWilliams (2003)
+    Polynomial ///< High-order polynomial reconstruction
 };
 
 /// @brief Pressure gradient parameters
 struct PressureGradientParams {
     PressureGradientMethod method = PressureGradientMethod::DensityJacobian;
-    Real rho_0 = 1025.0;    ///< Reference density [kg/m³]
-    Real g = 9.81;          ///< Gravitational acceleration [m/s²]
-    bool use_split = true;  ///< Split barotropic/baroclinic
+    Real rho_0 = 1025.0; ///< Reference density [kg/m³]
+    Real g = 9.81; ///< Gravitational acceleration [m/s²]
+    bool use_split = true; ///< Split barotropic/baroclinic
 };
 
 /// @brief Pressure gradient computation for a single element
 class PressureGradientElement {
 public:
     /// @brief Construct pressure gradient calculator
-    PressureGradientElement(const HexahedronBasis& basis,
-                             const GaussQuadrature3D& quad,
-                             const PressureGradientParams& params = PressureGradientParams());
+    PressureGradientElement(const HexahedronBasis &basis, const GaussQuadrature3D &quad,
+                            const PressureGradientParams &params = PressureGradientParams());
 
     /// @brief Set bathymetry
-    void set_bathymetry(const VecX& h, const VecX& dh_dx, const VecX& dh_dy);
+    void set_bathymetry(const VecX &h, const VecX &dh_dx, const VecX &dh_dy);
 
     /// @brief Set equation of state
-    void set_eos(const EquationOfState& eos) { eos_ = &eos; }
+    void set_eos(const EquationOfState &eos) { eos_ = &eos; }
 
     // =========================================================================
     // Barotropic pressure gradient
@@ -65,8 +64,7 @@ public:
     /// @param H Water depth
     /// @param[out] pg_x X-component of pressure gradient force
     /// @param[out] pg_y Y-component
-    void barotropic_gradient(const VecX& eta, const VecX& H,
-                              VecX& pg_x, VecX& pg_y) const;
+    void barotropic_gradient(const VecX &eta, const VecX &H, VecX &pg_x, VecX &pg_y) const;
 
     // =========================================================================
     // Baroclinic pressure gradient
@@ -79,20 +77,17 @@ public:
     /// @param sigma Sigma values at DOFs
     /// @param[out] pg_x X-component
     /// @param[out] pg_y Y-component
-    void baroclinic_gradient_standard(const VecX& rho, const VecX& eta, const VecX& H,
-                                        const VecX& sigma,
-                                        VecX& pg_x, VecX& pg_y) const;
+    void baroclinic_gradient_standard(const VecX &rho, const VecX &eta, const VecX &H,
+                                      const VecX &sigma, VecX &pg_x, VecX &pg_y) const;
 
     /// @brief Compute baroclinic pressure gradient using Density Jacobian method
     /// @details More accurate over steep topography
-    void baroclinic_gradient_density_jacobian(const VecX& rho, const VecX& z,
-                                                 const VecX& H,
-                                                 VecX& pg_x, VecX& pg_y) const;
+    void baroclinic_gradient_density_jacobian(const VecX &rho, const VecX &z, const VecX &H,
+                                              VecX &pg_x, VecX &pg_y) const;
 
     /// @brief Compute full pressure gradient (barotropic + baroclinic)
-    void full_gradient(const VecX& eta, const VecX& rho, const VecX& H,
-                        const VecX& sigma,
-                        VecX& pg_x, VecX& pg_y) const;
+    void full_gradient(const VecX &eta, const VecX &rho, const VecX &H, const VecX &sigma,
+                       VecX &pg_x, VecX &pg_y) const;
 
     // =========================================================================
     // Hydrostatic pressure
@@ -100,16 +95,14 @@ public:
 
     /// @brief Compute hydrostatic pressure from density
     /// @details p(sigma) = g * integral_sigma^0 rho * H dsigma'
-    void hydrostatic_pressure(const VecX& rho, const VecX& H,
-                               VecX& pressure) const;
+    void hydrostatic_pressure(const VecX &rho, const VecX &H, VecX &pressure) const;
 
     /// @brief Compute pressure at specific depth
-    Real pressure_at_depth(const VecX& rho, const VecX& H,
-                            int i_horiz, Real sigma) const;
+    Real pressure_at_depth(const VecX &rho, const VecX &H, int i_horiz, Real sigma) const;
 
 private:
-    const HexahedronBasis& basis_;
-    const GaussQuadrature3D& quad_;
+    const HexahedronBasis &basis_;
+    const GaussQuadrature3D &quad_;
     PressureGradientParams params_;
     const EquationOfState* eos_ = nullptr;
 
@@ -131,9 +124,8 @@ private:
 
     /// @brief Horizontal density gradient at constant z
     /// @details drho/dx|_z = drho/dx|_sigma - (dsigma/dx) * drho/dsigma
-    void horizontal_rho_gradient_at_z(const VecX& rho, const VecX& sigma,
-                                        const VecX& eta, const VecX& H,
-                                        VecX& drho_dx, VecX& drho_dy) const;
+    void horizontal_rho_gradient_at_z(const VecX &rho, const VecX &sigma, const VecX &eta,
+                                      const VecX &H, VecX &drho_dx, VecX &drho_dy) const;
 };
 
 /// @brief Global pressure gradient solver
@@ -141,16 +133,14 @@ class PressureGradientSolver {
 public:
     /// @brief Construct solver
     PressureGradientSolver(int order,
-                            const PressureGradientParams& params = PressureGradientParams());
+                           const PressureGradientParams &params = PressureGradientParams());
 
     /// @brief Initialize with mesh
-    void initialize(int num_elements,
-                     const std::vector<VecX>& bathymetry,
-                     const std::vector<VecX>& dh_dx,
-                     const std::vector<VecX>& dh_dy);
+    void initialize(int num_elements, const std::vector<VecX> &bathymetry,
+                    const std::vector<VecX> &dh_dx, const std::vector<VecX> &dh_dy);
 
     /// @brief Set equation of state
-    void set_eos(const EquationOfState& eos);
+    void set_eos(const EquationOfState &eos);
 
     /// @brief Compute pressure gradient for all elements
     /// @param eta Free surface at each element
@@ -159,21 +149,15 @@ public:
     /// @param sigma Sigma values at each element
     /// @param[out] pg_x X-component at each element
     /// @param[out] pg_y Y-component at each element
-    void compute(const std::vector<VecX>& eta,
-                  const std::vector<VecX>& rho,
-                  const std::vector<VecX>& H,
-                  const std::vector<VecX>& sigma,
-                  std::vector<VecX>& pg_x,
-                  std::vector<VecX>& pg_y) const;
+    void compute(const std::vector<VecX> &eta, const std::vector<VecX> &rho,
+                 const std::vector<VecX> &H, const std::vector<VecX> &sigma,
+                 std::vector<VecX> &pg_x, std::vector<VecX> &pg_y) const;
 
     /// @brief Compute pressure gradient from T, S (using EOS)
-    void compute_from_tracers(const std::vector<VecX>& eta,
-                                const std::vector<VecX>& T,
-                                const std::vector<VecX>& S,
-                                const std::vector<VecX>& H,
-                                const std::vector<VecX>& sigma,
-                                std::vector<VecX>& pg_x,
-                                std::vector<VecX>& pg_y) const;
+    void compute_from_tracers(const std::vector<VecX> &eta, const std::vector<VecX> &T,
+                              const std::vector<VecX> &S, const std::vector<VecX> &H,
+                              const std::vector<VecX> &sigma, std::vector<VecX> &pg_x,
+                              std::vector<VecX> &pg_y) const;
 
 private:
     int order_;
@@ -190,17 +174,13 @@ private:
 // Inline implementations
 // =============================================================================
 
-inline PressureGradientElement::PressureGradientElement(
-    const HexahedronBasis& basis, const GaussQuadrature3D& quad,
-    const PressureGradientParams& params)
-    : basis_(basis)
-    , quad_(quad)
-    , params_(params)
-    , n_horiz_((basis.order() + 1) * (basis.order() + 1))
-    , n_vert_(basis.order() + 1)
-{
+inline PressureGradientElement::PressureGradientElement(const HexahedronBasis &basis,
+                                                        const GaussQuadrature3D &quad,
+                                                        const PressureGradientParams &params)
+    : basis_(basis), quad_(quad), params_(params),
+      n_horiz_((basis.order() + 1) * (basis.order() + 1)), n_vert_(basis.order() + 1) {
     // Set up vertical integration weights
-    const VecX& lgl_weights = basis.lgl_weights_1d();
+    const VecX &lgl_weights = basis.lgl_weights_1d();
     sigma_weights_.resize(n_vert_);
     for (int k = 0; k < n_vert_; ++k) {
         sigma_weights_(k) = 0.5 * lgl_weights(k);
@@ -209,8 +189,8 @@ inline PressureGradientElement::PressureGradientElement(
     build_integration_matrix();
 }
 
-inline void PressureGradientElement::set_bathymetry(
-    const VecX& h, const VecX& dh_dx, const VecX& dh_dy) {
+inline void PressureGradientElement::set_bathymetry(const VecX &h, const VecX &dh_dx,
+                                                    const VecX &dh_dy) {
     h_ = h;
     dh_dx_ = dh_dx;
     dh_dy_ = dh_dy;
@@ -230,8 +210,8 @@ inline void PressureGradientElement::build_integration_matrix() {
     }
 }
 
-inline void PressureGradientElement::barotropic_gradient(
-    const VecX& eta, const VecX& H, VecX& pg_x, VecX& pg_y) const {
+inline void PressureGradientElement::barotropic_gradient(const VecX &eta, const VecX &H, VecX &pg_x,
+                                                         VecX &pg_y) const {
 
     int ndof = static_cast<int>(eta.size());
     pg_x.resize(ndof);
@@ -249,8 +229,8 @@ inline void PressureGradientElement::barotropic_gradient(
     }
 }
 
-inline void PressureGradientElement::hydrostatic_pressure(
-    const VecX& rho, const VecX& H, VecX& pressure) const {
+inline void PressureGradientElement::hydrostatic_pressure(const VecX &rho, const VecX &H,
+                                                          VecX &pressure) const {
 
     int n_total = n_horiz_ * n_vert_;
     pressure.resize(n_total);
@@ -268,9 +248,9 @@ inline void PressureGradientElement::hydrostatic_pressure(
     }
 }
 
-inline void PressureGradientElement::baroclinic_gradient_standard(
-    const VecX& rho, const VecX& eta, const VecX& H, const VecX& sigma,
-    VecX& pg_x, VecX& pg_y) const {
+inline void PressureGradientElement::baroclinic_gradient_standard(const VecX &rho, const VecX &eta,
+                                                                  const VecX &H, const VecX &sigma,
+                                                                  VecX &pg_x, VecX &pg_y) const {
 
     int n_total = n_horiz_ * n_vert_;
     pg_x.resize(n_total);
@@ -294,7 +274,7 @@ inline void PressureGradientElement::baroclinic_gradient_standard(
     for (int i = 0; i < n_total; ++i) {
         // dsigma/dx = (sigma * dH/dx - deta/dx) / H
         int i_h = i / n_vert_;
-        Real deta_dx = 0.0;  // Need to compute from eta gradient
+        Real deta_dx = 0.0; // Need to compute from eta gradient
         Real deta_dy = 0.0;
         Real dH_dx = deta_dx + dh_dx_(i_h);
         Real dH_dy = deta_dy + dh_dy_(i_h);
@@ -312,8 +292,10 @@ inline void PressureGradientElement::baroclinic_gradient_standard(
     }
 }
 
-inline void PressureGradientElement::baroclinic_gradient_density_jacobian(
-    const VecX& rho, const VecX& z, const VecX& H, VecX& pg_x, VecX& pg_y) const {
+inline void PressureGradientElement::baroclinic_gradient_density_jacobian(const VecX &rho,
+                                                                          const VecX &z,
+                                                                          const VecX &H, VecX &pg_x,
+                                                                          VecX &pg_y) const {
 
     // Density Jacobian method (Shchepetkin & McWilliams, 2003)
     // Uses coordinate-invariant formulation to reduce sigma-coordinate errors
@@ -359,9 +341,9 @@ inline void PressureGradientElement::baroclinic_gradient_density_jacobian(
     }
 }
 
-inline void PressureGradientElement::full_gradient(
-    const VecX& eta, const VecX& rho, const VecX& H, const VecX& sigma,
-    VecX& pg_x, VecX& pg_y) const {
+inline void PressureGradientElement::full_gradient(const VecX &eta, const VecX &rho, const VecX &H,
+                                                   const VecX &sigma, VecX &pg_x,
+                                                   VecX &pg_y) const {
 
     // Barotropic component
     VecX pg_baro_x, pg_baro_y;
@@ -387,4 +369,4 @@ inline void PressureGradientElement::full_gradient(
     pg_y = pg_baro_y + pg_clinic_y;
 }
 
-}  // namespace drifter
+} // namespace drifter

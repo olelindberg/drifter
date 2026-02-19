@@ -132,9 +132,9 @@ private:
 
 /// @brief Interpolation method for seabed surface
 enum class SeabedInterpolation {
-    Lagrange,  // Standard Lagrange interpolation (may overshoot)
+    Lagrange, // Standard Lagrange interpolation (may overshoot)
     Bernstein, // Bernstein basis with convex hull property (bounded)
-    Quintic    // Quintic Lagrange basis (order 5) for C² continuity
+    Quintic // Quintic Lagrange basis (order 5) for C² continuity
 };
 
 /// @brief Seabed interpolator with selectable basis
@@ -146,8 +146,7 @@ public:
     /// @brief Construct interpolator
     /// @param order Polynomial order
     /// @param method Interpolation method (Lagrange or Bernstein)
-    SeabedInterpolator(
-        int order, SeabedInterpolation method = SeabedInterpolation::Bernstein);
+    SeabedInterpolator(int order, SeabedInterpolation method = SeabedInterpolation::Bernstein);
 
     /// @brief Interpolate 3D coordinates on bottom face
     /// @param coords Interleaved coordinates [x0,y0,z0, x1,y1,z1, ...] at DOFs

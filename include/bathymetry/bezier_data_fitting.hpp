@@ -7,10 +7,10 @@
 /// to bathymetry data. Supports both scattered XYZ point clouds and
 /// gridded data from BathymetrySource (e.g., GeoTIFF).
 
-#include "core/types.hpp"
-#include "bathymetry/quadtree_adapter.hpp"
 #include "bathymetry/bezier_basis_2d.hpp"
-#include "bathymetry/biharmonic_assembler.hpp"  // For BathymetrySource
+#include "bathymetry/biharmonic_assembler.hpp" // For BathymetrySource
+#include "bathymetry/quadtree_adapter.hpp"
+#include "core/types.hpp"
 #include <memory>
 #include <vector>
 
@@ -18,13 +18,12 @@ namespace drifter {
 
 /// @brief Data point for scattered bathymetry fitting
 struct BathymetryPoint {
-    Real x, y;     ///< Horizontal position
-    Real z;        ///< Depth/elevation
-    Real weight;   ///< Optional weight (default 1.0)
+    Real x, y; ///< Horizontal position
+    Real z; ///< Depth/elevation
+    Real weight; ///< Optional weight (default 1.0)
 
     BathymetryPoint() : x(0), y(0), z(0), weight(1.0) {}
-    BathymetryPoint(Real x_, Real y_, Real z_, Real w = 1.0)
-        : x(x_), y(y_), z(z_), weight(w) {}
+    BathymetryPoint(Real x_, Real y_, Real z_, Real w = 1.0) : x(x_), y(y_), z(z_), weight(w) {}
 };
 
 /// @brief Assembles data fitting matrices for Bezier surface least squares
@@ -36,7 +35,7 @@ class BezierDataFittingAssembler {
 public:
     /// @brief Construct assembler for a mesh
     /// @param mesh 2D quadtree mesh
-    explicit BezierDataFittingAssembler(const QuadtreeAdapter& mesh);
+    explicit BezierDataFittingAssembler(const QuadtreeAdapter &mesh);
 
     // =========================================================================
     // Data input methods
@@ -44,16 +43,16 @@ public:
 
     /// @brief Set scattered data points
     /// @param points Vector of (x, y, z, weight) points
-    void set_scattered_points(const std::vector<BathymetryPoint>& points);
+    void set_scattered_points(const std::vector<BathymetryPoint> &points);
 
     /// @brief Set scattered data from Vec3 (x, y, z), uniform weights
     /// @param points Vector of (x, y, z) points
-    void set_scattered_points(const std::vector<Vec3>& points);
+    void set_scattered_points(const std::vector<Vec3> &points);
 
     /// @brief Sample from BathymetrySource at Gauss quadrature points
     /// @param source Bathymetry data source (e.g., GeoTIFF)
     /// @param ngauss Number of Gauss points per direction per element
-    void set_from_bathymetry_source(const BathymetrySource& source, int ngauss = 4);
+    void set_from_bathymetry_source(const BathymetrySource &source, int ngauss = 4);
 
     /// @brief Sample from BathymetrySource using a function interface
     /// @param bathy_func Function taking (x, y) -> depth
@@ -75,7 +74,7 @@ public:
     /// @param B Output sparse evaluation matrix
     /// @param b Output RHS vector
     /// @param w Output weight vector
-    void assemble(SpMat& B, VecX& b, VecX& w) const;
+    void assemble(SpMat &B, VecX &b, VecX &w) const;
 
     /// @brief Build normal equations directly: (B^T W B) and (B^T W b)
     ///
@@ -84,7 +83,7 @@ public:
     ///
     /// @param AtWA Output: B^T * diag(w) * B (total_dofs x total_dofs)
     /// @param AtWb Output: B^T * diag(w) * b (total_dofs)
-    void assemble_normal_equations(MatX& AtWA, VecX& AtWb) const;
+    void assemble_normal_equations(MatX &AtWA, VecX &AtWb) const;
 
     /// @brief Build normal equations with sparse output (memory-efficient)
     ///
@@ -98,7 +97,7 @@ public:
     ///
     /// @param AtWA Output: B^T * diag(w) * B (sparse, total_dofs x total_dofs)
     /// @param AtWb Output: B^T * diag(w) * b (total_dofs)
-    void assemble_normal_equations_sparse(SpMat& AtWA, VecX& AtWb) const;
+    void assemble_normal_equations_sparse(SpMat &AtWA, VecX &AtWb) const;
 
     // =========================================================================
     // Queries
@@ -111,9 +110,7 @@ public:
     int dofs_per_element() const { return BezierBasis2D::NDOF; }
 
     /// @brief Total number of DOFs
-    Index total_dofs() const {
-        return dofs_per_element() * mesh_.num_elements();
-    }
+    Index total_dofs() const { return dofs_per_element() * mesh_.num_elements(); }
 
     /// @brief Get global DOF index
     Index global_dof(Index elem, int local_dof) const {
@@ -121,7 +118,7 @@ public:
     }
 
     /// @brief Get the data points
-    const std::vector<BathymetryPoint>& points() const { return points_; }
+    const std::vector<BathymetryPoint> &points() const { return points_; }
 
     /// @brief Check if data has been set
     bool has_data() const { return !points_.empty(); }
@@ -136,14 +133,14 @@ public:
         if (bathy_func_) {
             return bathy_func_(x, y);
         }
-        return 0.0;  // No function stored, fallback
+        return 0.0; // No function stored, fallback
     }
 
     /// @brief Check if bathymetry function is available for point evaluation
     bool has_bathymetry_function() const { return bathy_func_ != nullptr; }
 
 private:
-    const QuadtreeAdapter& mesh_;
+    const QuadtreeAdapter &mesh_;
     std::unique_ptr<BezierBasis2D> basis_;
 
     /// Stored bathymetry function for point evaluation (optional)
@@ -172,4 +169,4 @@ private:
     void compute_gauss_quadrature(int ngauss);
 };
 
-}  // namespace drifter
+} // namespace drifter

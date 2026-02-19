@@ -10,8 +10,7 @@ namespace drifter {
 // GaussQuadrature1D
 // =============================================================================
 
-GaussQuadrature1D::GaussQuadrature1D(int order, QuadratureType type)
-    : order_(order), type_(type) {
+GaussQuadrature1D::GaussQuadrature1D(int order, QuadratureType type) : order_(order), type_(type) {
 
     // 'order' specifies the number of quadrature points directly
     // For GL: n points integrate exactly polynomials up to degree 2n-1
@@ -51,8 +50,8 @@ GaussQuadrature2D::GaussQuadrature2D(int order, QuadratureType type)
     build_tensor_product();
 }
 
-GaussQuadrature2D::GaussQuadrature2D(
-    const GaussQuadrature1D &quad_xi, const GaussQuadrature1D &quad_eta)
+GaussQuadrature2D::GaussQuadrature2D(const GaussQuadrature1D &quad_xi,
+                                     const GaussQuadrature1D &quad_eta)
     : quad_xi_(quad_xi), quad_eta_(quad_eta) {
     build_tensor_product();
 }
@@ -83,9 +82,9 @@ GaussQuadrature3D::GaussQuadrature3D(int order, QuadratureType type)
     build_tensor_product();
 }
 
-GaussQuadrature3D::GaussQuadrature3D(
-    const GaussQuadrature1D &quad_xi, const GaussQuadrature1D &quad_eta,
-    const GaussQuadrature1D &quad_zeta)
+GaussQuadrature3D::GaussQuadrature3D(const GaussQuadrature1D &quad_xi,
+                                     const GaussQuadrature1D &quad_eta,
+                                     const GaussQuadrature1D &quad_zeta)
     : quad_xi_(quad_xi), quad_eta_(quad_eta), quad_zeta_(quad_zeta) {
     build_tensor_product();
 }
@@ -103,11 +102,10 @@ void GaussQuadrature3D::build_tensor_product() {
         for (int j = 0; j < n_eta; ++j) {
             for (int i = 0; i < n_xi; ++i) {
                 int idx = index(i, j, k);
-                nodes_[idx] = Vec3(
-                    quad_xi_.nodes()(i), quad_eta_.nodes()(j),
-                    quad_zeta_.nodes()(k));
-                weights_(idx) = quad_xi_.weights()(i) * quad_eta_.weights()(j) *
-                                quad_zeta_.weights()(k);
+                nodes_[idx] =
+                    Vec3(quad_xi_.nodes()(i), quad_eta_.nodes()(j), quad_zeta_.nodes()(k));
+                weights_(idx) =
+                    quad_xi_.weights()(i) * quad_eta_.weights()(j) * quad_zeta_.weights()(k);
             }
         }
     }
@@ -149,26 +147,25 @@ Vec3 FaceQuadrature::normal() const {
 // QuadratureFactory
 // =============================================================================
 
-std::array<FaceQuadrature, 6>
-QuadratureFactory::create_face_quadratures(int order, QuadratureType type) {
-    return {
-        {FaceQuadrature(0, order, type), FaceQuadrature(1, order, type),
-         FaceQuadrature(2, order, type), FaceQuadrature(3, order, type),
-         FaceQuadrature(4, order, type), FaceQuadrature(5, order, type)}};
+std::array<FaceQuadrature, 6> QuadratureFactory::create_face_quadratures(int order,
+                                                                         QuadratureType type) {
+    return {{FaceQuadrature(0, order, type), FaceQuadrature(1, order, type),
+             FaceQuadrature(2, order, type), FaceQuadrature(3, order, type),
+             FaceQuadrature(4, order, type), FaceQuadrature(5, order, type)}};
 }
 
 // =============================================================================
 // Integration utilities
 // =============================================================================
 
-MatX compute_mass_matrix(
-    const HexahedronBasis &basis, const GaussQuadrature3D &quad, bool use_lgl) {
+MatX compute_mass_matrix(const HexahedronBasis &basis, const GaussQuadrature3D &quad,
+                         bool use_lgl) {
     int ndof = use_lgl ? basis.num_dofs_velocity() : basis.num_dofs_tracer();
     MatX M = MatX::Zero(ndof, ndof);
 
     for (int q = 0; q < quad.size(); ++q) {
-        VecX phi = use_lgl ? basis.evaluate_lgl(quad.nodes()[q])
-                           : basis.evaluate_gl(quad.nodes()[q]);
+        VecX phi =
+            use_lgl ? basis.evaluate_lgl(quad.nodes()[q]) : basis.evaluate_gl(quad.nodes()[q]);
         Real w = quad.weights()(q);
 
         // M_ij += w * phi_i * phi_j
@@ -182,8 +179,9 @@ MatX compute_mass_matrix(
     return M;
 }
 
-std::tuple<MatX, MatX, MatX> compute_stiffness_matrices(
-    const HexahedronBasis &basis, const GaussQuadrature3D &quad, bool use_lgl) {
+std::tuple<MatX, MatX, MatX> compute_stiffness_matrices(const HexahedronBasis &basis,
+                                                        const GaussQuadrature3D &quad,
+                                                        bool use_lgl) {
 
     int ndof = use_lgl ? basis.num_dofs_velocity() : basis.num_dofs_tracer();
     MatX S_xi = MatX::Zero(ndof, ndof);
@@ -191,8 +189,8 @@ std::tuple<MatX, MatX, MatX> compute_stiffness_matrices(
     MatX S_zeta = MatX::Zero(ndof, ndof);
 
     for (int q = 0; q < quad.size(); ++q) {
-        VecX phi = use_lgl ? basis.evaluate_lgl(quad.nodes()[q])
-                           : basis.evaluate_gl(quad.nodes()[q]);
+        VecX phi =
+            use_lgl ? basis.evaluate_lgl(quad.nodes()[q]) : basis.evaluate_gl(quad.nodes()[q]);
         MatX grad_phi = use_lgl ? basis.evaluate_gradient_lgl(quad.nodes()[q])
                                 : basis.evaluate_gradient_gl(quad.nodes()[q]);
         Real w = quad.weights()(q);

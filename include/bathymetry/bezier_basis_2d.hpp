@@ -110,8 +110,7 @@ public:
     VecX evaluate_d2uv(Real u, Real v) const;
 
     /// Evaluate all second derivatives at once
-    void evaluate_second_derivatives(
-        Real u, Real v, VecX &d2u, VecX &d2v, VecX &d2uv) const;
+    void evaluate_second_derivatives(Real u, Real v, VecX &d2u, VecX &d2v, VecX &d2uv) const;
 
     // =========================================================================
     // Higher derivatives (for C^2 constraints at vertices)
@@ -157,9 +156,7 @@ public:
     }
 
     /// Get matrix to convert from parameter [0,1]^2 to reference [-1,1]^2
-    static Vec2 param_to_ref(Real u, Real v) {
-        return Vec2(2.0 * u - 1.0, 2.0 * v - 1.0);
-    }
+    static Vec2 param_to_ref(Real u, Real v) { return Vec2(2.0 * u - 1.0, 2.0 * v - 1.0); }
 
     // =========================================================================
     // Scalar interpolation

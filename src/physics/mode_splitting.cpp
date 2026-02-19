@@ -1,7 +1,7 @@
 #include "physics/mode_splitting.hpp"
-#include <omp.h>
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <omp.h>
 
 namespace drifter {
 
@@ -10,15 +10,18 @@ namespace drifter {
 // =============================================================================
 
 void BarotropicState::resize(int n) {
-    eta.resize(n); eta.setZero();
-    HU_bar.resize(n); HU_bar.setZero();
-    HV_bar.resize(n); HV_bar.setZero();
+    eta.resize(n);
+    eta.setZero();
+    HU_bar.resize(n);
+    HU_bar.setZero();
+    HV_bar.resize(n);
+    HV_bar.setZero();
     H.resize(n);
     U_bar.resize(n);
     V_bar.resize(n);
 }
 
-void BarotropicState::update_derived(const VecX& h) {
+void BarotropicState::update_derived(const VecX &h) {
     int n = static_cast<int>(eta.size());
     H.resize(n);
     U_bar.resize(n);
@@ -37,11 +40,16 @@ void BarotropicState::update_derived(const VecX& h) {
 // =============================================================================
 
 void BaroclinicState::resize(int n) {
-    u_prime.resize(n); u_prime.setZero();
-    v_prime.resize(n); v_prime.setZero();
-    HT.resize(n); HT.setZero();
-    HS.resize(n); HS.setZero();
-    omega.resize(n); omega.setZero();
+    u_prime.resize(n);
+    u_prime.setZero();
+    v_prime.resize(n);
+    v_prime.setZero();
+    HT.resize(n);
+    HT.setZero();
+    HS.resize(n);
+    HS.setZero();
+    omega.resize(n);
+    omega.setZero();
 }
 
 // =============================================================================
@@ -64,21 +72,16 @@ void BarotropicTendencies::set_zero() {
 // ModeSplittingElement implementation
 // =============================================================================
 
-ModeSplittingElement::ModeSplittingElement(
-    const HexahedronBasis& basis,
-    const GaussQuadrature3D& quad,
-    const OceanConstants& constants)
-    : basis_(basis)
-    , quad_(quad)
-    , constants_(constants)
-    , n_horiz_((basis.order() + 1) * (basis.order() + 1))
-    , n_vert_(basis.order() + 1)
-{
+ModeSplittingElement::ModeSplittingElement(const HexahedronBasis &basis,
+                                           const GaussQuadrature3D &quad,
+                                           const OceanConstants &constants)
+    : basis_(basis), quad_(quad), constants_(constants),
+      n_horiz_((basis.order() + 1) * (basis.order() + 1)), n_vert_(basis.order() + 1) {
     // Set up vertical integration weights
-    const VecX& lgl_weights = basis.lgl_basis_1d().weights;
+    const VecX &lgl_weights = basis.lgl_basis_1d().weights;
     sigma_weights_.resize(n_vert_);
     for (int k = 0; k < n_vert_; ++k) {
-        sigma_weights_(k) = 0.5 * lgl_weights(k);  // Scale for [-1, 0]
+        sigma_weights_(k) = 0.5 * lgl_weights(k); // Scale for [-1, 0]
     }
 
     build_2d_operators();
@@ -92,7 +95,7 @@ void ModeSplittingElement::build_2d_operators() {
     int n1d = order + 1;
 
     // Get 1D differentiation matrix
-    const MatX& D_1d = basis_.D_xi_lgl().topLeftCorner(n1d, n1d);
+    const MatX &D_1d = basis_.D_xi_lgl().topLeftCorner(n1d, n1d);
 
     // 2D operators via tensor product
     D_x_2d_.resize(n_horiz_, n_horiz_);
@@ -106,8 +109,8 @@ void ModeSplittingElement::build_2d_operators() {
         for (int i = 0; i < n1d; ++i) {
             int row = i + j * n1d;
             for (int ii = 0; ii < n1d; ++ii) {
-                int col_x = ii + j * n1d;  // x-derivative: vary i
-                int col_y = i + ii * n1d;  // y-derivative: vary j
+                int col_x = ii + j * n1d; // x-derivative: vary i
+                int col_y = i + ii * n1d; // y-derivative: vary j
                 D_x_2d_(row, col_x) = D_1d(i, ii);
                 D_y_2d_(row, col_y) = D_1d(j, ii);
             }
@@ -115,25 +118,22 @@ void ModeSplittingElement::build_2d_operators() {
     }
 }
 
-void ModeSplittingElement::set_bathymetry(
-    const VecX& h, const VecX& dh_dx, const VecX& dh_dy) {
+void ModeSplittingElement::set_bathymetry(const VecX &h, const VecX &dh_dx, const VecX &dh_dy) {
     h_ = h;
     dh_dx_ = dh_dx;
     dh_dy_ = dh_dy;
 }
 
-void ModeSplittingElement::set_coriolis(const VecX& f) {
-    f_ = f;
-}
+void ModeSplittingElement::set_coriolis(const VecX &f) { f_ = f; }
 
-VecX ModeSplittingElement::compute_2d_divergence(const VecX& HU_bar, const VecX& HV_bar) const {
+VecX ModeSplittingElement::compute_2d_divergence(const VecX &HU_bar, const VecX &HV_bar) const {
     // Compute divergence: div = d(HU_bar)/dx + d(HV_bar)/dy
     VecX dHU_dx = D_x_2d_ * HU_bar;
     VecX dHV_dy = D_y_2d_ * HV_bar;
     return dHU_dx + dHV_dy;
 }
 
-void ModeSplittingElement::depth_average(const VecX& u_3d, VecX& U_bar) const {
+void ModeSplittingElement::depth_average(const VecX &u_3d, VecX &U_bar) const {
     U_bar.resize(n_horiz_);
 
     for (int i_h = 0; i_h < n_horiz_; ++i_h) {
@@ -148,7 +148,7 @@ void ModeSplittingElement::depth_average(const VecX& u_3d, VecX& U_bar) const {
     }
 }
 
-void ModeSplittingElement::depth_integrate(const VecX& u_3d, const VecX& H, VecX& HU_bar) const {
+void ModeSplittingElement::depth_integrate(const VecX &u_3d, const VecX &H, VecX &HU_bar) const {
     HU_bar.resize(n_horiz_);
 
     for (int i_h = 0; i_h < n_horiz_; ++i_h) {
@@ -161,8 +161,8 @@ void ModeSplittingElement::depth_integrate(const VecX& u_3d, const VecX& H, VecX
     }
 }
 
-void ModeSplittingElement::compute_deviation(const VecX& u_3d, const VecX& U_bar,
-                                               VecX& u_prime) const {
+void ModeSplittingElement::compute_deviation(const VecX &u_3d, const VecX &U_bar,
+                                             VecX &u_prime) const {
     int n_total = n_horiz_ * n_vert_;
     u_prime.resize(n_total);
 
@@ -174,8 +174,7 @@ void ModeSplittingElement::compute_deviation(const VecX& u_3d, const VecX& U_bar
     }
 }
 
-void ModeSplittingElement::barotropic_eta_rhs(const BarotropicState& state,
-                                                VecX& deta_dt) const {
+void ModeSplittingElement::barotropic_eta_rhs(const BarotropicState &state, VecX &deta_dt) const {
     // deta/dt = -d(HU_bar)/dx - d(HV_bar)/dy
 
     VecX dHU_dx = D_x_2d_ * state.HU_bar;
@@ -184,12 +183,9 @@ void ModeSplittingElement::barotropic_eta_rhs(const BarotropicState& state,
     deta_dt = -(dHU_dx + dHV_dy);
 }
 
-void ModeSplittingElement::barotropic_momentum_rhs(
-    const BarotropicState& state,
-    const VecX& forcing_x,
-    const VecX& forcing_y,
-    VecX& dHU_bar_dt,
-    VecX& dHV_bar_dt) const {
+void ModeSplittingElement::barotropic_momentum_rhs(const BarotropicState &state,
+                                                   const VecX &forcing_x, const VecX &forcing_y,
+                                                   VecX &dHU_bar_dt, VecX &dHV_bar_dt) const {
 
     int n = n_horiz_;
     dHU_bar_dt.resize(n);
@@ -214,21 +210,18 @@ void ModeSplittingElement::barotropic_momentum_rhs(
     }
 }
 
-void ModeSplittingElement::barotropic_rhs(
-    const BarotropicState& state,
-    const VecX& forcing_x,
-    const VecX& forcing_y,
-    BarotropicTendencies& tendency) const {
+void ModeSplittingElement::barotropic_rhs(const BarotropicState &state, const VecX &forcing_x,
+                                          const VecX &forcing_y,
+                                          BarotropicTendencies &tendency) const {
 
     tendency.resize(n_horiz_);
 
     barotropic_eta_rhs(state, tendency.deta_dt);
-    barotropic_momentum_rhs(state, forcing_x, forcing_y,
-                             tendency.dHU_bar_dt, tendency.dHV_bar_dt);
+    barotropic_momentum_rhs(state, forcing_x, forcing_y, tendency.dHU_bar_dt, tendency.dHV_bar_dt);
 }
 
-void ModeSplittingElement::baroclinic_pressure_forcing(
-    const VecX& rho, const VecX& H, VecX& forcing_x, VecX& forcing_y) const {
+void ModeSplittingElement::baroclinic_pressure_forcing(const VecX &rho, const VecX &H,
+                                                       VecX &forcing_x, VecX &forcing_y) const {
 
     forcing_x.resize(n_horiz_);
     forcing_y.resize(n_horiz_);
@@ -255,9 +248,8 @@ void ModeSplittingElement::baroclinic_pressure_forcing(
     }
 }
 
-void ModeSplittingElement::bottom_stress_forcing(
-    const VecX& u_bot, const VecX& v_bot, Real Cd,
-    VecX& tau_x, VecX& tau_y) const {
+void ModeSplittingElement::bottom_stress_forcing(const VecX &u_bot, const VecX &v_bot, Real Cd,
+                                                 VecX &tau_x, VecX &tau_y) const {
 
     tau_x.resize(n_horiz_);
     tau_y.resize(n_horiz_);
@@ -269,9 +261,9 @@ void ModeSplittingElement::bottom_stress_forcing(
     }
 }
 
-void ModeSplittingElement::wind_stress_forcing(
-    const VecX& tau_wind_x, const VecX& tau_wind_y, const VecX& H,
-    VecX& forcing_x, VecX& forcing_y) const {
+void ModeSplittingElement::wind_stress_forcing(const VecX &tau_wind_x, const VecX &tau_wind_y,
+                                               const VecX &H, VecX &forcing_x,
+                                               VecX &forcing_y) const {
 
     forcing_x.resize(n_horiz_);
     forcing_y.resize(n_horiz_);
@@ -284,9 +276,9 @@ void ModeSplittingElement::wind_stress_forcing(
     }
 }
 
-void ModeSplittingElement::barotropic_step_euler(
-    Real dt, const VecX& forcing_x, const VecX& forcing_y,
-    BarotropicState& state) const {
+void ModeSplittingElement::barotropic_step_euler(Real dt, const VecX &forcing_x,
+                                                 const VecX &forcing_y,
+                                                 BarotropicState &state) const {
 
     BarotropicTendencies tendency;
     barotropic_rhs(state, forcing_x, forcing_y, tendency);
@@ -298,9 +290,9 @@ void ModeSplittingElement::barotropic_step_euler(
     state.update_derived(h_);
 }
 
-void ModeSplittingElement::barotropic_step_predictor_corrector(
-    Real dt, const VecX& forcing_x, const VecX& forcing_y,
-    BarotropicState& state) const {
+void ModeSplittingElement::barotropic_step_predictor_corrector(Real dt, const VecX &forcing_x,
+                                                               const VecX &forcing_y,
+                                                               BarotropicState &state) const {
 
     // Predictor (forward Euler)
     BarotropicTendencies tend_n;
@@ -324,10 +316,9 @@ void ModeSplittingElement::barotropic_step_predictor_corrector(
     state.update_derived(h_);
 }
 
-void ModeSplittingElement::subcycle(
-    Real dt_3d, int n_subcycles,
-    const VecX& forcing_x, const VecX& forcing_y,
-    BarotropicState& state, VecX& eta_avg) const {
+void ModeSplittingElement::subcycle(Real dt_3d, int n_subcycles, const VecX &forcing_x,
+                                    const VecX &forcing_y, BarotropicState &state,
+                                    VecX &eta_avg) const {
 
     Real dt_baro = dt_3d / n_subcycles;
     eta_avg = VecX::Zero(n_horiz_);
@@ -344,28 +335,19 @@ void ModeSplittingElement::subcycle(
 // ModeSplittingSolver implementation
 // =============================================================================
 
-ModeSplittingSolver::ModeSplittingSolver(
-    int order, const OceanConstants& constants, const ModeSplittingParams& params)
-    : order_(order)
-    , constants_(constants)
-    , params_(params)
-    , basis_(order)
-    , quad_(order, QuadratureType::GaussLegendre)
-{
-}
+ModeSplittingSolver::ModeSplittingSolver(int order, const OceanConstants &constants,
+                                         const ModeSplittingParams &params)
+    : order_(order), constants_(constants), params_(params), basis_(order),
+      quad_(order, QuadratureType::GaussLegendre) {}
 
-void ModeSplittingSolver::initialize(
-    int num_elements,
-    const std::vector<VecX>& bathymetry,
-    const std::vector<VecX>& dh_dx,
-    const std::vector<VecX>& dh_dy,
-    const std::vector<VecX>& coriolis) {
+void ModeSplittingSolver::initialize(int num_elements, const std::vector<VecX> &bathymetry,
+                                     const std::vector<VecX> &dh_dx, const std::vector<VecX> &dh_dy,
+                                     const std::vector<VecX> &coriolis) {
 
     elements_.resize(num_elements);
 
     for (int e = 0; e < num_elements; ++e) {
-        elements_[e] = std::make_unique<ModeSplittingElement>(
-            basis_, quad_, constants_);
+        elements_[e] = std::make_unique<ModeSplittingElement>(basis_, quad_, constants_);
         elements_[e]->set_bathymetry(bathymetry[e], dh_dx[e], dh_dy[e]);
         elements_[e]->set_coriolis(coriolis[e]);
     }
@@ -374,16 +356,15 @@ void ModeSplittingSolver::initialize(
     baroclinic_forcing_y_.resize(num_elements);
 }
 
-void ModeSplittingSolver::decompose(
-    const std::vector<PrimitiveState>& full_state,
-    std::vector<BarotropicState>& baro_state,
-    std::vector<BaroclinicState>& clinic_state) const {
+void ModeSplittingSolver::decompose(const std::vector<PrimitiveState> &full_state,
+                                    std::vector<BarotropicState> &baro_state,
+                                    std::vector<BaroclinicState> &clinic_state) const {
 
     size_t num_elems = full_state.size();
     baro_state.resize(num_elems);
     clinic_state.resize(num_elems);
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         int n_horiz = (order_ + 1) * (order_ + 1);
         int n_total = full_state[e].u.size();
@@ -404,9 +385,9 @@ void ModeSplittingSolver::decompose(
 
         // Compute baroclinic deviation
         elements_[e]->compute_deviation(full_state[e].u, baro_state[e].U_bar,
-                                          clinic_state[e].u_prime);
+                                        clinic_state[e].u_prime);
         elements_[e]->compute_deviation(full_state[e].v, baro_state[e].V_bar,
-                                          clinic_state[e].v_prime);
+                                        clinic_state[e].v_prime);
 
         clinic_state[e].HT = full_state[e].HT;
         clinic_state[e].HS = full_state[e].HS;
@@ -414,14 +395,13 @@ void ModeSplittingSolver::decompose(
     }
 }
 
-void ModeSplittingSolver::recombine(
-    const std::vector<BarotropicState>& baro_state,
-    const std::vector<BaroclinicState>& clinic_state,
-    std::vector<PrimitiveState>& full_state) const {
+void ModeSplittingSolver::recombine(const std::vector<BarotropicState> &baro_state,
+                                    const std::vector<BaroclinicState> &clinic_state,
+                                    std::vector<PrimitiveState> &full_state) const {
 
     size_t num_elems = baro_state.size();
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         int n_horiz = (order_ + 1) * (order_ + 1);
         int n_vert = order_ + 1;
@@ -451,7 +431,7 @@ void ModeSplittingSolver::recombine(
     }
 }
 
-void ModeSplittingSolver::step(Real dt_3d, std::vector<PrimitiveState>& full_state) {
+void ModeSplittingSolver::step(Real dt_3d, std::vector<PrimitiveState> &full_state) {
     std::vector<BarotropicState> baro_state;
     std::vector<BaroclinicState> clinic_state;
 
@@ -473,12 +453,12 @@ void ModeSplittingSolver::step(Real dt_3d, std::vector<PrimitiveState>& full_sta
 }
 
 void ModeSplittingSolver::compute_baroclinic_forcing(
-    const std::vector<BaroclinicState>& clinic_state,
-    const std::vector<PrimitiveState>& full_state) {
+    const std::vector<BaroclinicState> &clinic_state,
+    const std::vector<PrimitiveState> &full_state) {
 
     size_t num_elems = clinic_state.size();
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
         int n_horiz = (order_ + 1) * (order_ + 1);
         baroclinic_forcing_x_[e].resize(n_horiz);
@@ -486,44 +466,40 @@ void ModeSplittingSolver::compute_baroclinic_forcing(
 
         // Baroclinic pressure gradient forcing
         elements_[e]->baroclinic_pressure_forcing(
-            full_state[e].rho, full_state[e].H,
-            baroclinic_forcing_x_[e], baroclinic_forcing_y_[e]);
+            full_state[e].rho, full_state[e].H, baroclinic_forcing_x_[e], baroclinic_forcing_y_[e]);
 
         // Could add wind stress, bottom friction here
     }
 }
 
-void ModeSplittingSolver::subcycle_barotropic(
-    Real dt_3d, std::vector<BarotropicState>& baro_state,
-    std::vector<VecX>& eta_avg) {
+void ModeSplittingSolver::subcycle_barotropic(Real dt_3d, std::vector<BarotropicState> &baro_state,
+                                              std::vector<VecX> &eta_avg) {
 
     size_t num_elems = baro_state.size();
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
-        elements_[e]->subcycle(dt_3d, params_.subcycles,
-                                baroclinic_forcing_x_[e],
-                                baroclinic_forcing_y_[e],
-                                baro_state[e], eta_avg[e]);
+        elements_[e]->subcycle(dt_3d, params_.subcycles, baroclinic_forcing_x_[e],
+                               baroclinic_forcing_y_[e], baro_state[e], eta_avg[e]);
     }
 }
 
-void ModeSplittingSolver::update_baroclinic(
-    Real dt_3d, const std::vector<VecX>& eta_avg,
-    std::vector<BaroclinicState>& clinic_state,
-    std::vector<PrimitiveState>& full_state) {
+void ModeSplittingSolver::update_baroclinic(Real dt_3d, const std::vector<VecX> &eta_avg,
+                                            std::vector<BaroclinicState> &clinic_state,
+                                            std::vector<PrimitiveState> &full_state) {
 
-    // Update baroclinic state using the time-averaged eta from barotropic subcycling
-    // This implements the slow (3D) part of the mode-split time stepping
+    // Update baroclinic state using the time-averaged eta from barotropic
+    // subcycling This implements the slow (3D) part of the mode-split time
+    // stepping
 
     size_t num_elems = full_state.size();
     int n_horiz = (order_ + 1) * (order_ + 1);
     int n_vert = order_ + 1;
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (size_t e = 0; e < num_elems; ++e) {
-        const ModeSplittingElement& elem = *elements_[e];
-        const VecX& h = elements_[e]->bathymetry();
+        const ModeSplittingElement &elem = *elements_[e];
+        const VecX &h = elements_[e]->bathymetry();
 
         // 1. Update eta in full_state using time-averaged value from barotropic
         // Expand 2D eta_avg to 3D state (same eta at all vertical levels)
@@ -582,8 +558,9 @@ void ModeSplittingSolver::update_baroclinic(
         }
 
         // 5. Diagnose omega from continuity equation
-        // omega(sigma) = -(1/H) * integral_{-1}^{sigma} [d(Hu)/dx + d(Hv)/dy] dsigma
-        // For now, use a simplified estimate based on depth-averaged divergence
+        // omega(sigma) = -(1/H) * integral_{-1}^{sigma} [d(Hu)/dx + d(Hv)/dy]
+        // dsigma For now, use a simplified estimate based on depth-averaged
+        // divergence
         VecX HU_bar(n_horiz), HV_bar(n_horiz);
         elem.depth_integrate(full_state[e].u, full_state[e].H, HU_bar);
         elem.depth_integrate(full_state[e].v, full_state[e].H, HV_bar);
@@ -592,7 +569,8 @@ void ModeSplittingSolver::update_baroclinic(
         // Note: Full implementation would use DG gradient operators
         VecX div_HU = elem.compute_2d_divergence(HU_bar, HV_bar);
 
-        // Simple omega diagnosis: linear profile from 0 at bottom to div/H at surface
+        // Simple omega diagnosis: linear profile from 0 at bottom to div/H at
+        // surface
         for (int i_h = 0; i_h < n_horiz; ++i_h) {
             Real H_val = full_state[e].H(i_h * n_vert);
             Real H_inv = (H_val > 1e-10) ? 1.0 / H_val : 0.0;
@@ -615,18 +593,18 @@ void ModeSplittingSolver::update_baroclinic(
             Real S = full_state[e].S(idx);
             // Linear EOS: rho = rho_0 * (1 - alpha*(T-T0) + beta*(S-S0))
             Real T0 = 10.0, S0 = 35.0;
-            full_state[e].rho(idx) = constants_.rho_0 * (
-                1.0 - constants_.alpha * (T - T0) + constants_.beta * (S - S0));
+            full_state[e].rho(idx) =
+                constants_.rho_0 * (1.0 - constants_.alpha * (T - T0) + constants_.beta * (S - S0));
         }
     }
 }
 
-Real ModeSplittingSolver::compute_barotropic_dt(
-    const std::vector<BarotropicState>& states, Real dx_min) const {
+Real ModeSplittingSolver::compute_barotropic_dt(const std::vector<BarotropicState> &states,
+                                                Real dx_min) const {
 
     // CFL for surface gravity waves: c = sqrt(g * H_max)
     Real H_max = 0.0;
-    for (const auto& state : states) {
+    for (const auto &state : states) {
         H_max = std::max(H_max, state.H.maxCoeff());
     }
 
@@ -634,19 +612,19 @@ Real ModeSplittingSolver::compute_barotropic_dt(
     return params_.barotropic_cfl * dx_min / c_max;
 }
 
-Real ModeSplittingSolver::compute_baroclinic_dt(
-    const std::vector<PrimitiveState>& states, Real dx_min) const {
+Real ModeSplittingSolver::compute_baroclinic_dt(const std::vector<PrimitiveState> &states,
+                                                Real dx_min) const {
 
     // CFL for advection: max velocity
     Real u_max = 0.0;
-    for (const auto& state : states) {
-        Real u_elem = std::max(state.u.cwiseAbs().maxCoeff(),
-                                state.v.cwiseAbs().maxCoeff());
+    for (const auto &state : states) {
+        Real u_elem = std::max(state.u.cwiseAbs().maxCoeff(), state.v.cwiseAbs().maxCoeff());
         u_max = std::max(u_max, u_elem);
     }
 
-    if (u_max < 1e-10) u_max = 1.0;  // Fallback
+    if (u_max < 1e-10)
+        u_max = 1.0; // Fallback
     return 0.8 * dx_min / u_max;
 }
 
-}  // namespace drifter
+} // namespace drifter

@@ -13,7 +13,7 @@ namespace drifter {
 /// @brief Quadrature node type
 enum class QuadratureType : uint8_t {
     GaussLegendre, ///< Interior Gauss-Legendre nodes
-    GaussLobatto   ///< Gauss-Lobatto (includes boundary points)
+    GaussLobatto ///< Gauss-Lobatto (includes boundary points)
 };
 
 /// @brief 1D Gauss quadrature rule
@@ -23,8 +23,7 @@ public:
     /// @param order Polynomial order to integrate exactly (uses (order+1)/2 + 1
     /// points for GL)
     /// @param type Quadrature type (GaussLegendre or GaussLobatto)
-    GaussQuadrature1D(
-        int order, QuadratureType type = QuadratureType::GaussLegendre);
+    GaussQuadrature1D(int order, QuadratureType type = QuadratureType::GaussLegendre);
 
     /// Number of quadrature points
     int size() const { return static_cast<int>(nodes_.size()); }
@@ -57,12 +56,10 @@ public:
     /// @brief Construct 2D quadrature rule using tensor product
     /// @param order Polynomial order to integrate exactly
     /// @param type Quadrature type
-    GaussQuadrature2D(
-        int order, QuadratureType type = QuadratureType::GaussLegendre);
+    GaussQuadrature2D(int order, QuadratureType type = QuadratureType::GaussLegendre);
 
     /// @brief Construct from two 1D rules (may have different types/orders)
-    GaussQuadrature2D(
-        const GaussQuadrature1D &quad_xi, const GaussQuadrature1D &quad_eta);
+    GaussQuadrature2D(const GaussQuadrature1D &quad_xi, const GaussQuadrature1D &quad_eta);
 
     /// Number of quadrature points
     int size() const { return static_cast<int>(nodes_.size()); }
@@ -100,13 +97,11 @@ public:
     /// @brief Construct 3D quadrature rule using tensor product
     /// @param order Polynomial order to integrate exactly
     /// @param type Quadrature type (same in all directions)
-    GaussQuadrature3D(
-        int order, QuadratureType type = QuadratureType::GaussLegendre);
+    GaussQuadrature3D(int order, QuadratureType type = QuadratureType::GaussLegendre);
 
     /// @brief Construct from three 1D rules (for anisotropic quadrature)
-    GaussQuadrature3D(
-        const GaussQuadrature1D &quad_xi, const GaussQuadrature1D &quad_eta,
-        const GaussQuadrature1D &quad_zeta);
+    GaussQuadrature3D(const GaussQuadrature1D &quad_xi, const GaussQuadrature1D &quad_eta,
+                      const GaussQuadrature1D &quad_zeta);
 
     /// Number of quadrature points
     int size() const { return static_cast<int>(nodes_.size()); }
@@ -136,9 +131,7 @@ public:
     int size_zeta() const { return quad_zeta_.size(); }
 
     /// Convert (i, j, k) indices to linear index
-    int index(int i, int j, int k) const {
-        return i + size_xi() * (j + size_eta() * k);
-    }
+    int index(int i, int j, int k) const { return i + size_xi() * (j + size_eta() * k); }
 
 private:
     GaussQuadrature1D quad_xi_;
@@ -157,9 +150,7 @@ public:
     /// @param face_id Face ID (0-5)
     /// @param order Polynomial order to integrate exactly
     /// @param type Quadrature type
-    FaceQuadrature(
-        int face_id, int order,
-        QuadratureType type = QuadratureType::GaussLegendre);
+    FaceQuadrature(int face_id, int order, QuadratureType type = QuadratureType::GaussLegendre);
 
     /// Face ID
     int face_id() const { return face_id_; }
@@ -184,9 +175,7 @@ public:
     Vec3 normal() const;
 
     /// Get tangent axes for this face
-    std::pair<int, int> tangent_axes() const {
-        return get_face_tangent_axes(face_id_);
-    }
+    std::pair<int, int> tangent_axes() const { return get_face_tangent_axes(face_id_); }
 
 private:
     int face_id_;
@@ -213,19 +202,17 @@ public:
     /// @param basis_order Polynomial order of the basis
     /// @param nonlinearity_degree Degree of nonlinearity (2 for quadratic, 3
     /// for cubic)
-    static GaussQuadrature3D
-    create_over_integrated(int basis_order, int nonlinearity_degree) {
+    static GaussQuadrature3D create_over_integrated(int basis_order, int nonlinearity_degree) {
         int quad_order = basis_order * nonlinearity_degree;
         return GaussQuadrature3D(quad_order, QuadratureType::GaussLegendre);
     }
 
     /// Create face quadrature for all 6 faces
-    static std::array<FaceQuadrature, 6> create_face_quadratures(
-        int order, QuadratureType type = QuadratureType::GaussLegendre);
+    static std::array<FaceQuadrature, 6>
+    create_face_quadratures(int order, QuadratureType type = QuadratureType::GaussLegendre);
 
     /// Create face quadrature matching LGL face nodes (collocated)
-    static std::array<FaceQuadrature, 6>
-    create_lgl_face_quadratures(int order) {
+    static std::array<FaceQuadrature, 6> create_lgl_face_quadratures(int order) {
         return create_face_quadratures(order, QuadratureType::GaussLobatto);
     }
 };
@@ -274,7 +261,8 @@ Real inner_product_l2(const GaussQuadrature3D &quad, Func1 &&f, Func2 &&g) {
 }
 
 /// @brief Compute L2 norm of a function on reference element
-template <typename Func> Real norm_l2(const GaussQuadrature3D &quad, Func &&f) {
+template <typename Func>
+Real norm_l2(const GaussQuadrature3D &quad, Func &&f) {
     return std::sqrt(inner_product_l2(quad, f, f));
 }
 
@@ -283,9 +271,8 @@ template <typename Func> Real norm_l2(const GaussQuadrature3D &quad, Func &&f) {
 /// @param quad Quadrature rule
 /// @param use_lgl Use LGL basis (true) or GL basis (false)
 /// @return Mass matrix (num_dofs x num_dofs)
-MatX compute_mass_matrix(
-    const HexahedronBasis &basis, const GaussQuadrature3D &quad,
-    bool use_lgl = true);
+MatX compute_mass_matrix(const HexahedronBasis &basis, const GaussQuadrature3D &quad,
+                         bool use_lgl = true);
 
 /// @brief Compute weak gradient operator matrices
 /// @details Returns S_xi, S_eta, S_zeta where S = M^{-1} * D^T * M_quad
@@ -295,8 +282,8 @@ MatX compute_mass_matrix(
 /// @param quad Quadrature rule
 /// @param use_lgl Use LGL basis
 /// @return Tuple of (S_xi, S_eta, S_zeta)
-std::tuple<MatX, MatX, MatX> compute_stiffness_matrices(
-    const HexahedronBasis &basis, const GaussQuadrature3D &quad,
-    bool use_lgl = true);
+std::tuple<MatX, MatX, MatX> compute_stiffness_matrices(const HexahedronBasis &basis,
+                                                        const GaussQuadrature3D &quad,
+                                                        bool use_lgl = true);
 
 } // namespace drifter

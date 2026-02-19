@@ -32,9 +32,8 @@ namespace drifter {
 /// @param element_data Per-element 2D data at DOFs (modified in-place)
 /// @param order Polynomial order
 /// @param method Interpolation method to use (Lagrange or Bernstein)
-void project_coarse_to_fine_2d(
-    const OctreeAdapter &mesh, std::vector<VecX> &element_data, int order,
-    SeabedInterpolation method);
+void project_coarse_to_fine_2d(const OctreeAdapter &mesh, std::vector<VecX> &element_data,
+                               int order, SeabedInterpolation method);
 
 /// @brief Project coarse element data onto fine elements at non-conforming
 /// interfaces (3D)
@@ -46,8 +45,7 @@ void project_coarse_to_fine_2d(
 /// @param element_data Per-element 3D data at DOFs (modified in-place)
 /// @param order Polynomial order
 /// @param method Interpolation method to use (Lagrange or Bernstein)
-void project_coarse_to_fine_3d(
-    const OctreeAdapter &mesh, std::vector<VecX> &element_data, int order,
-    SeabedInterpolation method);
+void project_coarse_to_fine_3d(const OctreeAdapter &mesh, std::vector<VecX> &element_data,
+                               int order, SeabedInterpolation method);
 
 } // namespace drifter

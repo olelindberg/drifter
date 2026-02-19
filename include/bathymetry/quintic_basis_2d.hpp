@@ -24,7 +24,7 @@ namespace drifter {
 class QuinticBasis2D {
 public:
     static constexpr int ORDER = 5;
-    static constexpr int N1D = 6;   ///< Nodes per direction (order + 1)
+    static constexpr int N1D = 6; ///< Nodes per direction (order + 1)
     static constexpr int NDOF = 36; ///< Total DOFs per element (6 x 6)
 
     /// @brief Construct quintic basis with LGL nodes
@@ -91,9 +91,8 @@ public:
     /// @param d2_dxi2 Output: d^2 phi / dxi^2 (36 values)
     /// @param d2_deta2 Output: d^2 phi / deta^2 (36 values)
     /// @param d2_dxideta Output: d^2 phi / dxi deta (36 values)
-    void evaluate_second_derivatives(
-        Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
-        VecX &d2_dxideta) const;
+    void evaluate_second_derivatives(Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
+                                     VecX &d2_dxideta) const;
 
     /// Evaluate Hessian matrices of all basis functions at (xi, eta)
     /// @return Vector of 36 2x2 matrices: H[dof](i,j) = d^2 phi_dof / dx_i dx_j
@@ -115,9 +114,7 @@ public:
 
     /// 2D quadrature weights for tensor-product rule
     /// Weight for DOF (i,j) = weights_1d(i) * weights_1d(j)
-    Real quadrature_weight(int i, int j) const {
-        return weights_(i) * weights_(j);
-    }
+    Real quadrature_weight(int i, int j) const { return weights_(i) * weights_(j); }
 
     /// Total 2D quadrature weight for a DOF
     Real quadrature_weight(int dof) const {
@@ -150,11 +147,11 @@ public:
     std::vector<int> interior_dofs() const;
 
 private:
-    VecX nodes_;   ///< 6 LGL nodes in [-1, 1]
+    VecX nodes_; ///< 6 LGL nodes in [-1, 1]
     VecX weights_; ///< LGL quadrature weights
-    VecX bary_;    ///< Barycentric weights for interpolation
-    MatX D_;       ///< 1D derivative matrix (6 x 6)
-    MatX D2_;      ///< 1D second derivative matrix (6 x 6)
+    VecX bary_; ///< Barycentric weights for interpolation
+    MatX D_; ///< 1D derivative matrix (6 x 6)
+    MatX D2_; ///< 1D second derivative matrix (6 x 6)
 
     /// Compute LGL nodes and weights
     void compute_nodes_and_weights();

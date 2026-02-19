@@ -9,8 +9,7 @@ namespace drifter {
 // Using 1e8 with int64_t to support coordinates up to ~92,000,000
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGBezierDofManager::CGBezierDofManager(const QuadtreeAdapter &mesh)
-    : mesh_(mesh) {
+CGBezierDofManager::CGBezierDofManager(const QuadtreeAdapter &mesh) : mesh_(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {
@@ -45,20 +44,17 @@ CGBezierDofManager::CGBezierDofManager(const QuadtreeAdapter &mesh)
 
 Index CGBezierDofManager::global_dof(Index elem, int local_dof) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range(
-            "CGBezierDofManager: element index out of range");
+        throw std::out_of_range("CGBezierDofManager: element index out of range");
     }
     if (local_dof < 0 || local_dof >= BezierBasis2D::NDOF) {
-        throw std::out_of_range(
-            "CGBezierDofManager: local DOF index out of range");
+        throw std::out_of_range("CGBezierDofManager: local DOF index out of range");
     }
     return elem_to_global_[elem][local_dof];
 }
 
 const std::vector<Index> &CGBezierDofManager::element_dofs(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range(
-            "CGBezierDofManager: element index out of range");
+        throw std::out_of_range("CGBezierDofManager: element index out of range");
     }
     return elem_to_global_[elem];
 }
@@ -117,11 +113,9 @@ SpMat CGBezierDofManager::build_constraint_matrix() const {
 // Position handling
 // =============================================================================
 
-std::pair<int64_t, int64_t>
-CGBezierDofManager::quantize_position(const Vec2 &pos) const {
-    return std::make_pair(
-        static_cast<int64_t>(std::round(pos(0) * POSITION_SCALE)),
-        static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE)));
+std::pair<int64_t, int64_t> CGBezierDofManager::quantize_position(const Vec2 &pos) const {
+    return std::make_pair(static_cast<int64_t>(std::round(pos(0) * POSITION_SCALE)),
+                          static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE)));
 }
 
 Vec2 CGBezierDofManager::get_dof_position(Index elem, int local_dof) const {
@@ -153,8 +147,7 @@ Index CGBezierDofManager::find_dof_at_position(const Vec2 &pos) const {
 bool CGBezierDofManager::is_corner_dof(int local_dof) const {
     // Corners are at (i,j) = (0,0), (5,0), (0,5), (5,5)
     // DOF indices: 0, 5, 30, 35
-    return local_dof == 0 || local_dof == 5 || local_dof == 30 ||
-           local_dof == 35;
+    return local_dof == 0 || local_dof == 5 || local_dof == 30 || local_dof == 35;
 }
 
 bool CGBezierDofManager::is_edge_dof(int local_dof) const {
@@ -297,8 +290,7 @@ void CGBezierDofManager::assign_edge_dofs_nonconforming() {
             // Mark coarse interior DOFs (m=1,2,3,4) as not to be shared
             for (int m = 1; m <= 4; ++m) {
                 int coarse_local = coarse_dofs[m];
-                Index coarse_global =
-                    elem_to_global_[coarse_elem][coarse_local];
+                Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
                 coarse_interior_dofs.insert(coarse_global);
             }
         }
@@ -334,8 +326,7 @@ void CGBezierDofManager::assign_edge_dofs_nonconforming() {
                 if (k == shared_k) {
                     // This corner DOF should share with the coarse corner
                     int coarse_local = coarse_dofs[shared_m];
-                    elem_to_global_[elem][fine_local] =
-                        elem_to_global_[coarse_elem][coarse_local];
+                    elem_to_global_[elem][fine_local] = elem_to_global_[coarse_elem][coarse_local];
                 } else if (k == tjunction_k) {
                     // T-junction: keep the position-based sharing with adjacent
                     // fine element (assign_edge_dofs already handled this via
@@ -468,13 +459,11 @@ void CGBezierDofManager::build_hanging_node_constraints() {
 
                 for (size_t m = 0; m < coarse_dofs.size(); ++m) {
                     int coarse_local = coarse_dofs[m];
-                    Index coarse_global =
-                        elem_to_global_[coarse_elem][coarse_local];
+                    Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
 
                     if (std::abs(weights(static_cast<int>(m))) > 1e-14) {
                         constraint.master_dofs.push_back(coarse_global);
-                        constraint.weights.push_back(
-                            weights(static_cast<int>(m)));
+                        constraint.weights.push_back(weights(static_cast<int>(m)));
                     }
                 }
 
@@ -529,8 +518,7 @@ void CGBezierDofManager::build_edge_derivative_constraints(int ngauss) {
 
     // Build a map from edge midpoints to (element, edge_id) pairs
     // This identifies which elements share each edge (conforming edges only)
-    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<Index, int>>>
-        edge_map;
+    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<Index, int>>> edge_map;
 
     for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
         for (int edge = 0; edge < 4; ++edge) {
@@ -646,10 +634,8 @@ void CGBezierDofManager::build_edge_derivative_constraints(int ngauss) {
                 c.deriv_order = std::max(nu, nv);
 
                 // Evaluate basis derivatives at the edge points
-                c.coeffs1 =
-                    basis_.evaluate_derivative(param1(0), param1(1), nu, nv);
-                c.coeffs2 =
-                    basis_.evaluate_derivative(param2(0), param2(1), nu, nv);
+                c.coeffs1 = basis_.evaluate_derivative(param1(0), param1(1), nu, nv);
+                c.coeffs2 = basis_.evaluate_derivative(param2(0), param2(1), nu, nv);
 
                 // Scale factors: dx^nu * dy^nv
                 c.scale1 = std::pow(dx1, nu) * std::pow(dy1, nv);

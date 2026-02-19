@@ -12,14 +12,13 @@ namespace drifter {
 // Constructors
 // =============================================================================
 
-AdaptiveCGBezierSmoother::AdaptiveCGBezierSmoother(
-    Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny,
-    const AdaptiveCGBezierConfig &config)
+AdaptiveCGBezierSmoother::AdaptiveCGBezierSmoother(Real xmin, Real xmax, Real ymin, Real ymax,
+                                                   int nx, int ny,
+                                                   const AdaptiveCGBezierConfig &config)
     : config_(config) {
     // Create owned octree with domain bounds
     // Use z = [-1, 0] as a dummy vertical extent (only bottom face matters)
-    octree_owned_ =
-        std::make_unique<OctreeAdapter>(xmin, xmax, ymin, ymax, -1.0, 0.0);
+    octree_owned_ = std::make_unique<OctreeAdapter>(xmin, xmax, ymin, ymax, -1.0, 0.0);
     octree_owned_->build_uniform(nx, ny, 1); // 1 layer in z
     octree_ = octree_owned_.get();
 
@@ -30,8 +29,8 @@ AdaptiveCGBezierSmoother::AdaptiveCGBezierSmoother(
     init_gauss_quadrature();
 }
 
-AdaptiveCGBezierSmoother::AdaptiveCGBezierSmoother(
-    OctreeAdapter &octree, const AdaptiveCGBezierConfig &config)
+AdaptiveCGBezierSmoother::AdaptiveCGBezierSmoother(OctreeAdapter &octree,
+                                                   const AdaptiveCGBezierConfig &config)
     : config_(config), octree_(&octree) {
     // Create quadtree from bottom face of provided octree
     quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
@@ -64,22 +63,20 @@ void AdaptiveCGBezierSmoother::init_gauss_quadrature() {
         gauss_weights_ << 5.0 / 18.0, 8.0 / 18.0, 5.0 / 18.0;
     } else if (ngauss == 4) {
         // Nodes and weights for 4-point GL on [0,1]
-        gauss_nodes_ << 0.0694318442029737, 0.3300094782075719,
-            0.6699905217924281, 0.9305681557970262;
-        gauss_weights_ << 0.1739274225687269, 0.3260725774312731,
-            0.3260725774312731, 0.1739274225687269;
+        gauss_nodes_ << 0.0694318442029737, 0.3300094782075719, 0.6699905217924281,
+            0.9305681557970262;
+        gauss_weights_ << 0.1739274225687269, 0.3260725774312731, 0.3260725774312731,
+            0.1739274225687269;
     } else if (ngauss == 5) {
-        gauss_nodes_ << 0.0469100770306680, 0.2307653449471585, 0.5,
-            0.7692346550528415, 0.9530899229693319;
-        gauss_weights_ << 0.1184634425280945, 0.2393143352496832,
-            0.2844444444444444, 0.2393143352496832, 0.1184634425280945;
+        gauss_nodes_ << 0.0469100770306680, 0.2307653449471585, 0.5, 0.7692346550528415,
+            0.9530899229693319;
+        gauss_weights_ << 0.1184634425280945, 0.2393143352496832, 0.2844444444444444,
+            0.2393143352496832, 0.1184634425280945;
     } else if (ngauss == 6) {
-        gauss_nodes_ << 0.0337652428984240, 0.1693953067668677,
-            0.3806904069584015, 0.6193095930415985, 0.8306046932331323,
-            0.9662347571015760;
-        gauss_weights_ << 0.0856622461895852, 0.1803807865240693,
-            0.2339569672863455, 0.2339569672863455, 0.1803807865240693,
-            0.0856622461895852;
+        gauss_nodes_ << 0.0337652428984240, 0.1693953067668677, 0.3806904069584015,
+            0.6193095930415985, 0.8306046932331323, 0.9662347571015760;
+        gauss_weights_ << 0.0856622461895852, 0.1803807865240693, 0.2339569672863455,
+            0.2339569672863455, 0.1803807865240693, 0.0856622461895852;
     } else {
         throw std::invalid_argument(
             "AdaptiveCGBezierSmoother: ngauss_error must be between 1 and 6");
@@ -90,17 +87,13 @@ void AdaptiveCGBezierSmoother::init_gauss_quadrature() {
 // Data input
 // =============================================================================
 
-void AdaptiveCGBezierSmoother::set_bathymetry_data(
-    const BathymetrySource &source) {
+void AdaptiveCGBezierSmoother::set_bathymetry_data(const BathymetrySource &source) {
     // Wrap BathymetrySource in a lambda that captures by reference
     // Note: The source must outlive this smoother
-    bathy_func_ = [&source](Real x, Real y) -> Real {
-        return source.evaluate(x, y);
-    };
+    bathy_func_ = [&source](Real x, Real y) -> Real { return source.evaluate(x, y); };
 }
 
-void AdaptiveCGBezierSmoother::set_bathymetry_data(
-    std::function<Real(Real, Real)> bathy_func) {
+void AdaptiveCGBezierSmoother::set_bathymetry_data(std::function<Real(Real, Real)> bathy_func) {
     bathy_func_ = std::move(bathy_func);
 }
 
@@ -113,8 +106,7 @@ void AdaptiveCGBezierSmoother::rebuild_smoother() {
     quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
 
     // Create new CG smoother for updated mesh
-    smoother_ = std::make_unique<CGBezierBathymetrySmoother>(
-        *quadtree_, config_.smoother_config);
+    smoother_ = std::make_unique<CGBezierBathymetrySmoother>(*quadtree_, config_.smoother_config);
 
     // Apply bathymetry data
     apply_bathymetry_to_smoother();
@@ -122,12 +114,10 @@ void AdaptiveCGBezierSmoother::rebuild_smoother() {
 
 void AdaptiveCGBezierSmoother::apply_bathymetry_to_smoother() {
     if (!smoother_) {
-        throw std::runtime_error(
-            "AdaptiveCGBezierSmoother: smoother not initialized");
+        throw std::runtime_error("AdaptiveCGBezierSmoother: smoother not initialized");
     }
     if (!bathy_func_) {
-        throw std::runtime_error(
-            "AdaptiveCGBezierSmoother: bathymetry data not set");
+        throw std::runtime_error("AdaptiveCGBezierSmoother: bathymetry data not set");
     }
     smoother_->set_bathymetry_data(bathy_func_);
 }
@@ -138,8 +128,7 @@ void AdaptiveCGBezierSmoother::apply_bathymetry_to_smoother() {
 
 Real AdaptiveCGBezierSmoother::compute_element_l2_error(Index elem) const {
     if (!smoother_ || !smoother_->is_solved()) {
-        throw std::runtime_error(
-            "AdaptiveCGBezierSmoother: must solve before computing errors");
+        throw std::runtime_error("AdaptiveCGBezierSmoother: must solve before computing errors");
     }
 
     const QuadBounds &bounds = quadtree_->element_bounds(elem);
@@ -177,8 +166,7 @@ Real AdaptiveCGBezierSmoother::compute_element_l2_error(Index elem) const {
     return std::sqrt(error_sq * dx * dy);
 }
 
-CGElementErrorEstimate
-AdaptiveCGBezierSmoother::estimate_element_error(Index elem) const {
+CGElementErrorEstimate AdaptiveCGBezierSmoother::estimate_element_error(Index elem) const {
     CGElementErrorEstimate result;
     result.element = elem;
 
@@ -195,8 +183,7 @@ AdaptiveCGBezierSmoother::estimate_element_error(Index elem) const {
     return result;
 }
 
-std::vector<CGElementErrorEstimate>
-AdaptiveCGBezierSmoother::estimate_errors() const {
+std::vector<CGElementErrorEstimate> AdaptiveCGBezierSmoother::estimate_errors() const {
     std::vector<CGElementErrorEstimate> errors;
     errors.reserve(quadtree_->num_elements());
 
@@ -229,8 +216,7 @@ Real AdaptiveCGBezierSmoother::mean_error() const {
 // Mesh refinement
 // =============================================================================
 
-void AdaptiveCGBezierSmoother::refine_elements(
-    const std::vector<Index> &elements_to_refine) {
+void AdaptiveCGBezierSmoother::refine_elements(const std::vector<Index> &elements_to_refine) {
     if (elements_to_refine.empty())
         return;
 
@@ -273,13 +259,11 @@ CGAdaptationResult AdaptiveCGBezierSmoother::adapt_once() {
 
     result.num_elements = quadtree_->num_elements();
     result.max_error = max_err;
-    result.mean_error =
-        errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
+    result.mean_error = errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
 
     // Check stopping criteria
     bool error_converged = (max_err <= config_.error_threshold);
-    bool max_elements_reached =
-        (static_cast<int>(result.num_elements) >= config_.max_elements);
+    bool max_elements_reached = (static_cast<int>(result.num_elements) >= config_.max_elements);
 
     if (error_converged || max_elements_reached) {
         result.converged = true;
@@ -288,21 +272,19 @@ CGAdaptationResult AdaptiveCGBezierSmoother::adapt_once() {
     }
 
     // Sort errors by normalized_error (descending) to find worst elements
-    std::sort(
-        errors.begin(), errors.end(),
-        [](const CGElementErrorEstimate &a, const CGElementErrorEstimate &b) {
-            return a.normalized_error > b.normalized_error;
-        });
+    std::sort(errors.begin(), errors.end(),
+              [](const CGElementErrorEstimate &a, const CGElementErrorEstimate &b) {
+                  return a.normalized_error > b.normalized_error;
+              });
 
     // Select top refine_fraction elements for refinement
-    Index num_to_refine = static_cast<Index>(
-        std::ceil(config_.refine_fraction * static_cast<Real>(errors.size())));
+    Index num_to_refine =
+        static_cast<Index>(std::ceil(config_.refine_fraction * static_cast<Real>(errors.size())));
     num_to_refine = std::max(Index(1), num_to_refine); // At least 1 element
 
     // Collect elements to refine, filtering by refinement level limit
     std::vector<Index> valid_refine;
-    for (Index i = 0;
-         i < num_to_refine && i < static_cast<Index>(errors.size()); ++i) {
+    for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size()); ++i) {
         Index elem = errors[i].element;
         QuadLevel level = quadtree_->element_level(elem);
         if (level.max_level() < config_.max_refinement_level) {
@@ -325,8 +307,7 @@ CGAdaptationResult AdaptiveCGBezierSmoother::adapt_once() {
 
 CGAdaptationResult AdaptiveCGBezierSmoother::solve_adaptive() {
     if (!bathy_func_) {
-        throw std::runtime_error(
-            "AdaptiveCGBezierSmoother: bathymetry data not set");
+        throw std::runtime_error("AdaptiveCGBezierSmoother: bathymetry data not set");
     }
 
     CGAdaptationResult result;
@@ -336,8 +317,7 @@ CGAdaptationResult AdaptiveCGBezierSmoother::solve_adaptive() {
         history_.push_back(result);
 
         if (config_.verbose) {
-            std::cout << "Iteration " << iter << ": " << result.num_elements
-                      << " elements, "
+            std::cout << "Iteration " << iter << ": " << result.num_elements << " elements, "
                       << "max_error=" << result.max_error << " m, "
                       << "mean_error=" << result.mean_error << " m, "
                       << "refined=" << result.elements_refined << "\n";
@@ -345,8 +325,7 @@ CGAdaptationResult AdaptiveCGBezierSmoother::solve_adaptive() {
 
         if (result.converged) {
             if (config_.verbose) {
-                std::cout << "Converged after " << (iter + 1)
-                          << " iterations\n";
+                std::cout << "Converged after " << (iter + 1) << " iterations\n";
             }
             break;
         }
@@ -374,17 +353,14 @@ const CGBezierBathymetrySmoother &AdaptiveCGBezierSmoother::smoother() const {
 
 Real AdaptiveCGBezierSmoother::evaluate(Real x, Real y) const {
     if (!smoother_ || !smoother_->is_solved()) {
-        throw std::runtime_error(
-            "AdaptiveCGBezierSmoother: must solve before evaluating");
+        throw std::runtime_error("AdaptiveCGBezierSmoother: must solve before evaluating");
     }
     return smoother_->evaluate(x, y);
 }
 
-void AdaptiveCGBezierSmoother::write_vtk(
-    const std::string &filename, int resolution) const {
+void AdaptiveCGBezierSmoother::write_vtk(const std::string &filename, int resolution) const {
     if (!smoother_ || !smoother_->is_solved()) {
-        throw std::runtime_error(
-            "AdaptiveCGBezierSmoother: must solve before writing VTK");
+        throw std::runtime_error("AdaptiveCGBezierSmoother: must solve before writing VTK");
     }
     smoother_->write_vtk(filename, resolution);
 }

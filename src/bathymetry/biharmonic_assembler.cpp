@@ -4,19 +4,16 @@
 
 namespace drifter {
 
-BiharmonicAssembler::BiharmonicAssembler(
-    const QuadtreeAdapter &mesh, const LagrangeBasis2D &basis,
-    const CGDofManager &dofs, Real alpha, Real beta, Real penalty)
-    : mesh_(mesh), basis_(basis), dofs_(dofs), alpha_(alpha), beta_(beta),
-      penalty_(penalty) {
+BiharmonicAssembler::BiharmonicAssembler(const QuadtreeAdapter &mesh, const LagrangeBasis2D &basis,
+                                         const CGDofManager &dofs, Real alpha, Real beta,
+                                         Real penalty)
+    : mesh_(mesh), basis_(basis), dofs_(dofs), alpha_(alpha), beta_(beta), penalty_(penalty) {
 
     if (alpha < 0.0 || beta < 0.0) {
-        throw std::invalid_argument(
-            "BiharmonicAssembler: weights must be non-negative");
+        throw std::invalid_argument("BiharmonicAssembler: weights must be non-negative");
     }
     if (penalty < 0.0) {
-        throw std::invalid_argument(
-            "BiharmonicAssembler: penalty must be non-negative");
+        throw std::invalid_argument("BiharmonicAssembler: penalty must be non-negative");
     }
 
     init_quadrature();
@@ -95,8 +92,7 @@ MatX BiharmonicAssembler::element_biharmonic(Index elem) const {
             Real eta = gauss_nodes_(jg);
 
             VecX d2_dxi2, d2_deta2, d2_dxideta;
-            basis_.evaluate_second_derivatives(
-                xi, eta, d2_dxi2, d2_deta2, d2_dxideta);
+            basis_.evaluate_second_derivatives(xi, eta, d2_dxi2, d2_deta2, d2_dxideta);
 
             // Physical Laplacian: ∇² = (1/hx²)∂²/∂ξ² + (1/hy²)∂²/∂η²
             VecX lap_phys = d2_dxi2 / (hx * hx) + d2_deta2 / (hy * hy);
@@ -138,8 +134,7 @@ MatX BiharmonicAssembler::element_stiffness(Index elem) const {
     return element_biharmonic(elem) + element_mass(elem);
 }
 
-VecX BiharmonicAssembler::element_rhs(
-    Index elem, const BathymetrySource &bathy) const {
+VecX BiharmonicAssembler::element_rhs(Index elem, const BathymetrySource &bathy) const {
     // RHS: f_i = β * ∫ u_data * φ_i dA
     const auto &bounds = mesh_.element_bounds(elem);
     Real hx = 0.5 * (bounds.xmax - bounds.xmin);
@@ -179,8 +174,9 @@ Real BiharmonicAssembler::map_to_coarse_edge(Real t, int subedge_idx) const {
     }
 }
 
-std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_conforming(
-    Index elem_left, Index elem_right, int edge_left, int edge_right) const {
+std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_conforming(Index elem_left,
+                                                                   Index elem_right, int edge_left,
+                                                                   int edge_right) const {
 
     // Compute edge penalty matrices for conforming interface
     // Penalty: (γ/h) ∫_edge [[∂u/∂n]]·[[∂v/∂n]] ds
@@ -205,12 +201,12 @@ std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_conforming(
 
     if (edge_left == 0 || edge_left == 1) {
         // Vertical edge - normal is in x direction
-        h_edge = hy_left;           // Edge length
+        h_edge = hy_left; // Edge length
         scale_left = 2.0 / hx_left; // ∂/∂x = (2/hx) ∂/∂ξ
         scale_right = 2.0 / hx_right;
     } else {
         // Horizontal edge - normal is in y direction
-        h_edge = hx_left;           // Edge length
+        h_edge = hx_left; // Edge length
         scale_left = 2.0 / hy_left; // ∂/∂y = (2/hy) ∂/∂η
         scale_right = 2.0 / hy_right;
     }
@@ -224,10 +220,8 @@ std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_conforming(
         Real wq = gauss_weights_(ig) * edge_jac;
 
         // Evaluate normal derivatives at this edge point (in reference coords)
-        VecX dn_left_ref =
-            basis_.evaluate_normal_derivative_at_edge(edge_left, t);
-        VecX dn_right_ref =
-            basis_.evaluate_normal_derivative_at_edge(edge_right, t);
+        VecX dn_left_ref = basis_.evaluate_normal_derivative_at_edge(edge_left, t);
+        VecX dn_right_ref = basis_.evaluate_normal_derivative_at_edge(edge_right, t);
 
         // Convert to physical coordinates
         VecX dn_left = scale_left * dn_left_ref;
@@ -259,9 +253,9 @@ std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_conforming(
     return {K_LL, K_LR};
 }
 
-std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_nonconforming(
-    Index elem_fine, Index elem_coarse, int edge_fine, int edge_coarse,
-    int subedge_idx) const {
+std::pair<MatX, MatX>
+BiharmonicAssembler::edge_penalty_nonconforming(Index elem_fine, Index elem_coarse, int edge_fine,
+                                                int edge_coarse, int subedge_idx) const {
 
     // Compute edge penalty for non-conforming interface
     // The fine element's edge maps to half of the coarse element's edge
@@ -285,12 +279,12 @@ std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_nonconforming(
 
     if (edge_fine == 0 || edge_fine == 1) {
         // Vertical edge - normal is in x direction
-        h_edge = hy_fine;           // Fine edge length
+        h_edge = hy_fine; // Fine edge length
         scale_fine = 2.0 / hx_fine; // ∂/∂x = (2/hx) ∂/∂ξ
         scale_coarse = 2.0 / hx_coarse;
     } else {
         // Horizontal edge - normal is in y direction
-        h_edge = hx_fine;           // Fine edge length
+        h_edge = hx_fine; // Fine edge length
         scale_fine = 2.0 / hy_fine; // ∂/∂y = (2/hy) ∂/∂η
         scale_coarse = 2.0 / hy_coarse;
     }
@@ -307,10 +301,8 @@ std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_nonconforming(
         Real t_coarse = map_to_coarse_edge(t_fine, subedge_idx);
 
         // Evaluate normal derivatives in reference coords
-        VecX dn_fine_ref =
-            basis_.evaluate_normal_derivative_at_edge(edge_fine, t_fine);
-        VecX dn_coarse_ref =
-            basis_.evaluate_normal_derivative_at_edge(edge_coarse, t_coarse);
+        VecX dn_fine_ref = basis_.evaluate_normal_derivative_at_edge(edge_fine, t_fine);
+        VecX dn_coarse_ref = basis_.evaluate_normal_derivative_at_edge(edge_coarse, t_coarse);
 
         // Convert to physical coordinates
         VecX dn_fine = scale_fine * dn_fine_ref;
@@ -326,14 +318,12 @@ std::pair<MatX, MatX> BiharmonicAssembler::edge_penalty_nonconforming(
     return {K_FF, K_FC};
 }
 
-void BiharmonicAssembler::assemble_ipdg_penalty(
-    std::vector<Eigen::Triplet<Real>> &triplets) const {
+void BiharmonicAssembler::assemble_ipdg_penalty(std::vector<Eigen::Triplet<Real>> &triplets) const {
 
     int ndof = basis_.num_dofs();
 
     // Iterate over all interior edges
-    mesh_.for_each_interior_edge([&](Index elem, int edge_id,
-                                     const EdgeNeighborInfo &info) {
+    mesh_.for_each_interior_edge([&](Index elem, int edge_id, const EdgeNeighborInfo &info) {
         const auto &elem_dofs = dofs_.element_dofs(elem);
 
         if (info.is_conforming()) {
@@ -342,8 +332,7 @@ void BiharmonicAssembler::assemble_ipdg_penalty(
             int neighbor_edge = info.neighbor_edges[0];
             const auto &neighbor_dofs = dofs_.element_dofs(neighbor);
 
-            auto [K_LL, K_LR] =
-                edge_penalty_conforming(elem, neighbor, edge_id, neighbor_edge);
+            auto [K_LL, K_LR] = edge_penalty_conforming(elem, neighbor, edge_id, neighbor_edge);
 
             // Add K_LL to element's diagonal block
             for (int i = 0; i < ndof; ++i) {
@@ -370,8 +359,7 @@ void BiharmonicAssembler::assemble_ipdg_penalty(
             // Add symmetric contributions for neighbor
             // K_RR = same as K_LL (by symmetry for conforming)
             // K_RL = K_LR^T
-            auto [K_RR, K_RL] =
-                edge_penalty_conforming(neighbor, elem, neighbor_edge, edge_id);
+            auto [K_RR, K_RL] = edge_penalty_conforming(neighbor, elem, neighbor_edge, edge_id);
 
             for (int i = 0; i < ndof; ++i) {
                 Index gi = neighbor_dofs[i];
@@ -406,8 +394,8 @@ void BiharmonicAssembler::assemble_ipdg_penalty(
             int subedge_idx = info.subedge_index;
             const auto &coarse_dofs = dofs_.element_dofs(coarse_elem);
 
-            auto [K_FF, K_FC] = edge_penalty_nonconforming(
-                elem, coarse_elem, edge_id, coarse_edge, subedge_idx);
+            auto [K_FF, K_FC] =
+                edge_penalty_nonconforming(elem, coarse_elem, edge_id, coarse_edge, subedge_idx);
 
             // Add K_FF to fine element's diagonal block
             for (int i = 0; i < ndof; ++i) {
@@ -455,9 +443,8 @@ SpMat BiharmonicAssembler::assemble_stiffness() const {
     Index n = dofs_.num_global_dofs();
     int ndof = basis_.num_dofs();
     std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(
-        mesh_.num_elements() * ndof * ndof +
-        mesh_.num_elements() * 4 * ndof * ndof); // Extra for IPDG
+    triplets.reserve(mesh_.num_elements() * ndof * ndof +
+                     mesh_.num_elements() * 4 * ndof * ndof); // Extra for IPDG
 
     // Assemble element contributions
     for (Index e = 0; e < mesh_.num_elements(); ++e) {
@@ -500,8 +487,8 @@ VecX BiharmonicAssembler::assemble_rhs(const BathymetrySource &bathy) const {
     return f;
 }
 
-void BiharmonicAssembler::assemble_reduced_system(
-    const BathymetrySource &bathy, SpMat &K_red, VecX &f_red) const {
+void BiharmonicAssembler::assemble_reduced_system(const BathymetrySource &bathy, SpMat &K_red,
+                                                  VecX &f_red) const {
     SpMat K = assemble_stiffness();
     VecX f = assemble_rhs(bathy);
 

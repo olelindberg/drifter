@@ -16,13 +16,16 @@
 /// support C0 continuity.
 
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/linear_bezier_basis_2d.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/geotiff_reader.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace drifter {
@@ -32,152 +35,167 @@ class BathymetrySource;
 
 /// @brief Timing profile for one adaptive iteration (all times in milliseconds)
 struct CGLinearIterationProfile {
-  // Top-level phases
-  double rebuild_ms = 0.0;          ///< Total rebuild_smoother() time
-  double solve_ms = 0.0;            ///< Total smoother_->solve() time
-  double error_estimation_ms = 0.0; ///< Total estimate_errors() time
-  double marking_ms = 0.0;          ///< select_elements_for_refinement() time
-  double refinement_ms = 0.0; ///< refine_elements() time (including re-rebuild)
+    // Top-level phases
+    double rebuild_ms = 0.0; ///< Total rebuild_smoother() time
+    double solve_ms = 0.0; ///< Total smoother_->solve() time
+    double error_estimation_ms = 0.0; ///< Total estimate_errors() time
+    double marking_ms = 0.0; ///< select_elements_for_refinement() time
+    double refinement_ms = 0.0; ///< refine_elements() time (including re-rebuild)
 
-  // Rebuild breakdown
-  double quadtree_build_ms = 0.0;   ///< QuadtreeAdapter construction
-  double smoother_init_ms = 0.0;    ///< CGLinearBezierBathymetrySmoother init
-  double hessian_assembly_ms = 0.0; ///< assemble_dirichlet_hessian()
-  double data_fitting_ms = 0.0;     ///< assemble_data_fitting()
+    // Rebuild breakdown
+    double quadtree_build_ms = 0.0; ///< QuadtreeAdapter construction
+    double smoother_init_ms = 0.0; ///< CGLinearBezierBathymetrySmoother init
+    double hessian_assembly_ms = 0.0; ///< assemble_dirichlet_hessian()
+    double data_fitting_ms = 0.0; ///< assemble_data_fitting()
 
-  // Solve breakdown
-  double matrix_build_ms = 0.0;        ///< Q matrix construction
-  double sparse_lu_compute_ms = 0.0;   ///< SparseLU factorization
-  double sparse_lu_solve_ms = 0.0;     ///< SparseLU back-substitution
-  double constraint_condense_ms = 0.0; ///< Constraint elimination
+    // Solve breakdown
+    double matrix_build_ms = 0.0; ///< Q matrix construction
+    double sparse_lu_compute_ms = 0.0; ///< SparseLU factorization
+    double sparse_lu_solve_ms = 0.0; ///< SparseLU back-substitution
+    double constraint_condense_ms = 0.0; ///< Constraint elimination
 
-  // Context
-  Index num_elements = 0;
-  Index num_dofs = 0;
-  Index num_free_dofs = 0;
-  Index num_constraints = 0;
+    // Context
+    Index num_elements = 0;
+    Index num_dofs = 0;
+    Index num_free_dofs = 0;
+    Index num_constraints = 0;
 
-  double total_ms() const {
-    return rebuild_ms + solve_ms + error_estimation_ms + marking_ms +
-           refinement_ms;
-  }
+    double total_ms() const {
+        return rebuild_ms + solve_ms + error_estimation_ms + marking_ms + refinement_ms;
+    }
 };
 
 /// @brief Strategy for selecting elements to refine
 enum class MarkingStrategy {
-  FixedFraction, ///< Legacy: top refine_fraction elements (may break symmetry)
-  Dorfler,       ///< Bulk criterion: squared errors >= theta * total
-  DorflerSymmetric, ///< Dorfler + include all elements at cutoff error
-  RelativeThreshold ///< All elements with error > alpha * max_error
+    FixedFraction, ///< Legacy: top refine_fraction elements (may break symmetry)
+    Dorfler, ///< Bulk criterion: squared errors >= theta * total
+    DorflerSymmetric, ///< Dorfler + include all elements at cutoff error
+    RelativeThreshold ///< All elements with error > alpha * max_error
 };
 
 /// @brief Error metric type for adaptive refinement decisions
 enum class ErrorMetricType {
-  NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area) [meters]
-  StdError,        ///< Standard deviation of error within element [meters]
-  RelativeError,   ///< RMS error / (|mean_depth| + depth_scale) [dimensionless]
+    NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area) [meters]
+    StdError, ///< Standard deviation of error within element [meters]
+    RelativeError, ///< RMS error / (|mean_depth| + depth_scale) [dimensionless]
 
-  // WENO-style smoothness indicators (from raw GeoTIFF data)
-  GradientIndicator,  ///< h² × mean(|∇z|²) — scaled gradient magnitude
-  CurvatureIndicator, ///< h⁴ × mean(|H|²_F) — scaled Hessian Frobenius norm
-  WenoIndicator       ///< Combined: w_g × gradient + w_c × curvature
+    // WENO-style smoothness indicators (from raw GeoTIFF data)
+    // Multiplied by √A for integral-like behavior with Dorfler marking
+    GradientIndicator, ///< Δx² × mean(|∇z|²) × √A — WENO l=1 term [m³]
+    CurvatureIndicator, ///< Δx⁴ × mean(|H|²_F) × √A — WENO l=2 term [m³]
+    WenoIndicator, ///< Combined: w_g × gradient + w_c × curvature [m³]
+
+    // Coarsening error indicators (solution change due to refinement)
+    CoarseningError, ///< ||z_fine - z_coarse||_L2 × √A — solution change [m²]
+    MeanDifference, ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA — mean abs diff [m]
+    VolumeChange ///< ∫∫|z_fine - z_coarse|dA — total volume change [m³]
 };
 
 /// @brief Reason for adaptive convergence
 enum class ConvergenceReason {
-  NotConverged,       ///< Still iterating
-  ErrorThreshold,     ///< max_error <= error_threshold
-  MaxElements,        ///< num_elements >= max_elements
-  MaxRefinementLevel, ///< All marked elements at max level
-  MaxIterations       ///< Reached max_iterations
+    NotConverged, ///< Still iterating
+    ErrorThreshold, ///< max_error <= error_threshold
+    MaxElements, ///< num_elements >= max_elements
+    MaxRefinementLevel, ///< All marked elements at max level
+    MaxIterations ///< Reached max_iterations
 };
 
 /// @brief Per-element error estimate for CG linear adaptive smoother
 struct CGLinearElementErrorEstimate {
-  Index element;         ///< Element index
-  Real l2_error;         ///< L2 error ||z_data - z_bezier||_L2
-  Real normalized_error; ///< Error normalized by sqrt(element area) (RMS)
-  bool should_refine;    ///< Marked for refinement
+    Index element; ///< Element index
+    Real l2_error; ///< L2 error ||z_data - z_bezier||_L2
+    Real normalized_error; ///< Error normalized by sqrt(element area) (RMS)
+    bool should_refine; ///< Marked for refinement
 
-  // Statistical decomposition of error (RMS² = mean² + std²)
-  Real mean_error; ///< Signed weighted mean error: E[z_data - z_bezier]
-  Real std_error;  ///< Std dev around mean (captures local variability)
+    // Statistical decomposition of error (RMS² = mean² + std²)
+    Real mean_error; ///< Signed weighted mean error: E[z_data - z_bezier]
+    Real std_error; ///< Std dev around mean (captures local variability)
 
-  // Depth-independent metrics
-  Real mean_depth;     ///< Weighted mean depth within element
-  Real relative_error; ///< normalized_error / (|mean_depth| + depth_scale)
+    // Depth-independent metrics
+    Real mean_depth; ///< Weighted mean depth within element
+    Real relative_error; ///< normalized_error / (|mean_depth| + depth_scale)
 
-  // WENO-style smoothness indicators (from raw bathymetry data)
-  Real gradient_indicator;  ///< h² × mean(|∇z|²) [length⁴]
-  Real curvature_indicator; ///< h⁴ × mean(|H|²_F) [length⁴]
-  Real weno_indicator;      ///< Combined: w_g × gradient + w_c × curvature
+    // WENO-style smoothness indicators (from raw bathymetry data)
+    // Multiplied by √A for integral-like behavior with Dorfler marking
+    Real gradient_indicator; ///< Δx² × mean(|∇z|²) × √A [WENO l=1 term, m³]
+    Real curvature_indicator; ///< Δx⁴ × mean(|H|²_F) × √A [WENO l=2 term, m³]
+    Real weno_indicator; ///< Combined: w_g × gradient + w_c × curvature [m³]
+
+    // Coarsening error indicators (solution change due to refinement)
+    Real coarsening_error; ///< ||z_fine - z_coarse||_L2 × √A [m²]
+    Real mean_difference; ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
+    Real volume_change; ///< ∫∫|z_fine - z_coarse|dA [m³]
 };
 
 /// @brief Configuration for adaptive CG linear Bezier smoother
 struct AdaptiveCGLinearBezierConfig {
-  // Stopping criteria
-  Real error_threshold = 0.1;    ///< Stop when max error < threshold (meters)
-  int max_iterations = 10;       ///< Maximum adaptation iterations
-  int max_elements = 10000;      ///< Maximum number of elements
-  int max_refinement_level = 10; ///< Maximum refinement level per axis
+    // Stopping criteria
+    Real error_threshold = 0.1; ///< Stop when max error < threshold (meters)
+    int max_iterations = 10; ///< Maximum adaptation iterations
+    int max_elements = 10000; ///< Maximum number of elements
+    int max_refinement_level = 10; ///< Maximum refinement level per axis
 
-  /// @brief Which error metric to use for refinement decisions
-  ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
+    /// @brief Which error metric to use for refinement decisions
+    ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
 
-  /// @brief Characteristic depth for relative error regularization (meters)
-  /// Prevents blow-up near shoreline where depth approaches zero.
-  /// At depths >> depth_scale, behaves like pure relative error.
-  /// At depths << depth_scale, behaves like absolute error scaled by
-  /// depth_scale.
-  Real depth_scale = 1.0;
+    /// @brief Characteristic depth for relative error regularization (meters)
+    /// Prevents blow-up near shoreline where depth approaches zero.
+    /// At depths >> depth_scale, behaves like pure relative error.
+    /// At depths << depth_scale, behaves like absolute error scaled by
+    /// depth_scale.
+    Real depth_scale = 1.0;
 
-  // Marking strategy selection
-  MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
+    // Marking strategy selection
+    MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
 
-  // Dorfler parameter: fraction of total squared error to capture
-  // theta = 0.5 means refine elements contributing >= 50% of total error
-  Real dorfler_theta = 0.5;
+    // Dorfler parameter: fraction of total squared error to capture
+    // theta = 0.5 means refine elements contributing >= 50% of total error
+    Real dorfler_theta = 0.5;
 
-  // Relative threshold: refine if error > alpha * max_error
-  Real relative_alpha = 0.3;
+    // Relative threshold: refine if error > alpha * max_error
+    Real relative_alpha = 0.3;
 
-  // Tolerance for grouping equal errors (symmetry preservation)
-  Real symmetry_tolerance = 1e-12;
+    // Tolerance for grouping equal errors (symmetry preservation)
+    Real symmetry_tolerance = 1e-12;
 
-  // Legacy: fraction of elements to refine (only for FixedFraction strategy)
-  Real refine_fraction = 0.2;
+    // Legacy: fraction of elements to refine (only for FixedFraction strategy)
+    Real refine_fraction = 0.2;
 
-  // Error estimation
-  int ngauss_error = 4; ///< Gauss points per direction for error integration
+    // Error estimation
+    int ngauss_error = 4; ///< Gauss points per direction for error integration
 
-  // WENO indicator weights
-  /// @brief Weight for gradient term in WENO indicator (default 1.0)
-  Real weno_gradient_weight = 1.0;
+    // WENO indicator weights
+    /// @brief Weight for gradient term in WENO indicator (default 1.0)
+    Real weno_gradient_weight = 1.0;
 
-  /// @brief Weight for curvature term in WENO indicator (default 1.0)
-  Real weno_curvature_weight = 1.0;
+    /// @brief Weight for curvature term in WENO indicator (default 1.0)
+    Real weno_curvature_weight = 1.0;
 
-  // Smoother configuration (passed to CGLinearBezierBathymetrySmoother)
-  CGLinearBezierSmootherConfig smoother_config;
+    // Smoother configuration (passed to CGLinearBezierBathymetrySmoother)
+    CGLinearBezierSmootherConfig smoother_config;
 
-  // Progress reporting
-  bool verbose = false;
+    // Progress reporting
+    bool verbose = false;
 
-  // Diagnostic output: if non-empty, write per-element error CSVs to this
-  // directory
-  std::string error_output_dir = "";
+    // Diagnostic output: if non-empty, write per-element error CSVs to this
+    // directory
+    std::string error_output_dir = "";
+
+    // VTK output: if non-empty, write VTK after each iteration to
+    // {vtk_output_prefix}_iter_{N}.vtu
+    std::string vtk_output_prefix = "";
 };
 
 /// @brief Result of a single adaptation iteration for CG linear smoother
 struct CGLinearAdaptationResult {
-  int iteration;          ///< Iteration number (0-indexed)
-  Index num_elements;     ///< Number of elements after this iteration
-  Real max_error;         ///< Maximum normalized error across all elements
-  Real mean_error;        ///< Mean normalized error across all elements
-  Index elements_refined; ///< Number of elements refined in this iteration
-  bool converged;         ///< True if stopping criteria met
-  ConvergenceReason convergence_reason =
-      ConvergenceReason::NotConverged; ///< Why convergence occurred
+    int iteration; ///< Iteration number (0-indexed)
+    Index num_elements; ///< Number of elements after this iteration
+    Real max_error; ///< Maximum normalized error across all elements
+    Real mean_error; ///< Mean normalized error across all elements
+    Index elements_refined; ///< Number of elements refined in this iteration
+    bool converged; ///< True if stopping criteria met
+    ConvergenceReason convergence_reason =
+        ConvergenceReason::NotConverged; ///< Why convergence occurred
 };
 
 /// @brief Adaptive CG linear Bezier bathymetry smoother with error-driven
@@ -218,231 +236,261 @@ struct CGLinearAdaptationResult {
 /// @endcode
 class AdaptiveCGLinearBezierSmoother {
 public:
-  /// @brief Construct from domain bounds with initial uniform mesh
-  /// @param xmin, xmax X domain bounds
-  /// @param ymin, ymax Y domain bounds
-  /// @param nx, ny Initial mesh size (nx x ny elements)
-  /// @param config Configuration parameters
-  AdaptiveCGLinearBezierSmoother(
-      Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny,
-      const AdaptiveCGLinearBezierConfig &config = {});
+    /// @brief Construct from domain bounds with initial uniform mesh
+    /// @param xmin, xmax X domain bounds
+    /// @param ymin, ymax Y domain bounds
+    /// @param nx, ny Initial mesh size (nx x ny elements)
+    /// @param config Configuration parameters
+    AdaptiveCGLinearBezierSmoother(Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny,
+                                   const AdaptiveCGLinearBezierConfig &config = {});
 
-  /// @brief Construct from existing OctreeAdapter
-  /// @param octree Initial mesh (will be refined in-place)
-  /// @param config Configuration parameters
-  /// @note The octree is modified during adaptive refinement
-  explicit AdaptiveCGLinearBezierSmoother(
-      OctreeAdapter &octree, const AdaptiveCGLinearBezierConfig &config = {});
+    /// @brief Construct from existing OctreeAdapter
+    /// @param octree Initial mesh (will be refined in-place)
+    /// @param config Configuration parameters
+    /// @note The octree is modified during adaptive refinement
+    explicit AdaptiveCGLinearBezierSmoother(OctreeAdapter &octree,
+                                            const AdaptiveCGLinearBezierConfig &config = {});
 
-  // =========================================================================
-  // Data input (persistent across refinement iterations)
-  // =========================================================================
+    // =========================================================================
+    // Data input (persistent across refinement iterations)
+    // =========================================================================
 
-  /// @brief Set bathymetry from BathymetrySource (e.g., GeoTIFF)
-  /// @param source Bathymetry data source
-  void set_bathymetry_data(const BathymetrySource &source);
+    /// @brief Set bathymetry from BathymetrySource (e.g., GeoTIFF)
+    /// @param source Bathymetry data source
+    void set_bathymetry_data(const BathymetrySource &source);
 
-  /// @brief Set bathymetry from function
-  /// @param bathy_func Function (x, y) -> depth
-  void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
+    /// @brief Set bathymetry from function
+    /// @param bathy_func Function (x, y) -> depth
+    void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
 
-  /// @brief Set optional land mask function
-  /// @param is_land_func Returns true if (x,y) is on land
-  /// Elements entirely on land will not be refined
-  void set_land_mask(std::function<bool(Real, Real)> is_land_func);
+    /// @brief Set optional land mask function
+    /// @param is_land_func Returns true if (x,y) is on land
+    /// Elements entirely on land will not be refined
+    void set_land_mask(std::function<bool(Real, Real)> is_land_func);
 
-  /// @brief Set bathymetry gradient function (for WENO indicator)
-  /// @param grad_func Function (x, y, &dh_dx, &dh_dy) -> void
-  void set_gradient_function(
-      std::function<void(Real, Real, Real &, Real &)> grad_func);
+    /// @brief Set bathymetry gradient function (for WENO indicator)
+    /// @param grad_func Function (x, y, &dh_dx, &dh_dy) -> void
+    void set_gradient_function(std::function<void(Real, Real, Real &, Real &)> grad_func);
 
-  /// @brief Set bathymetry curvature function (for WENO indicator)
-  /// @param curv_func Function (x, y, &d2h_dx2, &d2h_dxdy, &d2h_dy2) -> void
-  void set_curvature_function(
-      std::function<void(Real, Real, Real &, Real &, Real &)> curv_func);
+    /// @brief Set bathymetry curvature function (for WENO indicator)
+    /// @param curv_func Function (x, y, &d2h_dx2, &d2h_dxdy, &d2h_dy2) -> void
+    void set_curvature_function(std::function<void(Real, Real, Real &, Real &, Real &)> curv_func);
 
-  /// @brief Set bathymetry from BathymetrySurface (sets depth, gradient, and
-  /// curvature)
-  /// @param surface BathymetrySurface providing depth, gradient, curvature
-  void set_bathymetry_surface(const BathymetrySurface &surface);
+    /// @brief Set bathymetry from BathymetrySurface (sets depth, gradient, and
+    /// curvature)
+    /// @param surface BathymetrySurface providing depth, gradient, curvature
+    void set_bathymetry_surface(const BathymetrySurface &surface);
 
-  // =========================================================================
-  // Adaptive solve
-  // =========================================================================
+    /// @brief Set data cell size for WENO indicator scaling
+    /// @param cell_size Data resolution (e.g., GeoTIFF cell size in meters)
+    /// This overrides the default (initial element size) used for WENO scaling.
+    /// Only needed if not using set_bathymetry_surface().
+    void set_data_cell_size(Real cell_size) { data_cell_size_ = cell_size; }
 
-  /// @brief Run adaptive refinement loop until convergence
-  /// @return Final adaptation result
-  CGLinearAdaptationResult solve_adaptive();
+    // =========================================================================
+    // Adaptive solve
+    // =========================================================================
 
-  /// @brief Perform single adaptation iteration
-  /// @return Result of this iteration
-  CGLinearAdaptationResult adapt_once();
+    /// @brief Run adaptive refinement loop until convergence
+    /// @return Final adaptation result
+    CGLinearAdaptationResult solve_adaptive();
 
-  /// @brief Get adaptation history (all iterations)
-  const std::vector<CGLinearAdaptationResult> &history() const {
-    return history_;
-  }
+    /// @brief Perform single adaptation iteration
+    /// @return Result of this iteration
+    CGLinearAdaptationResult adapt_once();
 
-  /// @brief Get per-iteration profiling data (populated when verbose=true)
-  const std::vector<CGLinearIterationProfile> &profiles() const {
-    return profiles_;
-  }
+    /// @brief Get adaptation history (all iterations)
+    const std::vector<CGLinearAdaptationResult> &history() const { return history_; }
 
-  // =========================================================================
-  // Error estimation
-  // =========================================================================
+    /// @brief Get per-iteration profiling data (populated when verbose=true)
+    const std::vector<CGLinearIterationProfile> &profiles() const { return profiles_; }
 
-  /// @brief Estimate error for all elements
-  /// @return Per-element error estimates
-  /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  std::vector<CGLinearElementErrorEstimate> estimate_errors() const;
+    // =========================================================================
+    // Error estimation
+    // =========================================================================
 
-  /// @brief Estimate error for single element
-  /// @param elem Element index
-  /// @return Error estimate for this element
-  /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  CGLinearElementErrorEstimate estimate_element_error(Index elem) const;
+    /// @brief Estimate error for all elements
+    /// @return Per-element error estimates
+    /// @pre Must have called solve_adaptive() or adapt_once() at least once
+    std::vector<CGLinearElementErrorEstimate> estimate_errors() const;
 
-  /// @brief Get maximum normalized error across all elements
-  /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  Real max_error() const;
+    /// @brief Estimate error for single element
+    /// @param elem Element index
+    /// @return Error estimate for this element
+    /// @pre Must have called solve_adaptive() or adapt_once() at least once
+    CGLinearElementErrorEstimate estimate_element_error(Index elem) const;
 
-  /// @brief Get mean normalized error across all elements
-  /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  Real mean_error() const;
+    /// @brief Get maximum normalized error across all elements
+    /// @pre Must have called solve_adaptive() or adapt_once() at least once
+    Real max_error() const;
 
-  // =========================================================================
-  // Access to current state
-  // =========================================================================
+    /// @brief Get mean normalized error across all elements
+    /// @pre Must have called solve_adaptive() or adapt_once() at least once
+    Real mean_error() const;
 
-  /// @brief Check if solved (at least one iteration complete)
-  bool is_solved() const { return smoother_ && smoother_->is_solved(); }
+    // =========================================================================
+    // Access to current state
+    // =========================================================================
 
-  /// @brief Get current smoother (valid after solve)
-  /// @throws std::runtime_error if not solved
-  const CGLinearBezierBathymetrySmoother &smoother() const;
+    /// @brief Check if solved (at least one iteration complete)
+    bool is_solved() const { return smoother_ && smoother_->is_solved(); }
 
-  /// @brief Get current mesh
-  const QuadtreeAdapter &mesh() const { return *quadtree_; }
+    /// @brief Get current smoother (valid after solve)
+    /// @throws std::runtime_error if not solved
+    const CGLinearBezierBathymetrySmoother &smoother() const;
 
-  /// @brief Get current octree (underlying 3D mesh)
-  const OctreeAdapter &octree() const { return *octree_; }
+    /// @brief Get current mesh
+    const QuadtreeAdapter &mesh() const { return *quadtree_; }
 
-  /// @brief Evaluate smoothed bathymetry at point
-  /// @param x, y Physical coordinates
-  /// @return Smoothed depth at (x, y)
-  /// @throws std::runtime_error if not solved or point outside domain
-  Real evaluate(Real x, Real y) const;
+    /// @brief Get current octree (underlying 3D mesh)
+    const OctreeAdapter &octree() const { return *octree_; }
 
-  /// @brief Write VTK output
-  /// @param filename Output filename (without extension)
-  /// @param resolution Subdivisions per element edge for visualization
-  void write_vtk(const std::string &filename, int resolution = 6) const;
+    /// @brief Evaluate smoothed bathymetry at point
+    /// @param x, y Physical coordinates
+    /// @return Smoothed depth at (x, y)
+    /// @throws std::runtime_error if not solved or point outside domain
+    Real evaluate(Real x, Real y) const;
+
+    /// @brief Write VTK output
+    /// @param filename Output filename (without extension)
+    /// @param resolution Subdivisions per element edge for visualization
+    void write_vtk(const std::string &filename, int resolution = 6) const;
 
 private:
-  // Configuration
-  AdaptiveCGLinearBezierConfig config_;
+    // Configuration
+    AdaptiveCGLinearBezierConfig config_;
 
-  // Mesh (owned or external reference)
-  std::unique_ptr<OctreeAdapter>
-      octree_owned_;      ///< Owned octree (if constructed from bounds)
-  OctreeAdapter *octree_; ///< Pointer to active octree
-  std::unique_ptr<QuadtreeAdapter> quadtree_; ///< 2D mesh extracted from octree
+    // Mesh (owned or external reference)
+    std::unique_ptr<OctreeAdapter> octree_owned_; ///< Owned octree (if constructed from bounds)
+    OctreeAdapter* octree_; ///< Pointer to active octree
+    std::unique_ptr<QuadtreeAdapter> quadtree_; ///< 2D mesh extracted from octree
 
-  // Persistent bathymetry source
-  std::function<Real(Real, Real)> bathy_func_;
+    // Persistent bathymetry source
+    std::function<Real(Real, Real)> bathy_func_;
 
-  // Optional land mask
-  std::function<bool(Real, Real)> land_mask_func_;
+    // Optional land mask
+    std::function<bool(Real, Real)> land_mask_func_;
 
-  // Optional gradient/curvature functions for WENO indicator
-  std::function<void(Real, Real, Real &, Real &)> grad_func_;
-  std::function<void(Real, Real, Real &, Real &, Real &)> curv_func_;
+    // Optional gradient/curvature functions for WENO indicator
+    std::function<void(Real, Real, Real &, Real &)> grad_func_;
+    std::function<void(Real, Real, Real &, Real &, Real &)> curv_func_;
 
-  // Current smoother (recreated after each refinement)
-  std::unique_ptr<CGLinearBezierBathymetrySmoother> smoother_;
+    // Current smoother (recreated after each refinement)
+    std::unique_ptr<CGLinearBezierBathymetrySmoother> smoother_;
 
-  // Adaptation history
-  std::vector<CGLinearAdaptationResult> history_;
+    // Adaptation history
+    std::vector<CGLinearAdaptationResult> history_;
 
-  // Profiling
-  std::vector<CGLinearIterationProfile> profiles_;
-  CGLinearIterationProfile *current_profile_ = nullptr;
+    // Profiling
+    std::vector<CGLinearIterationProfile> profiles_;
+    CGLinearIterationProfile* current_profile_ = nullptr;
 
-  // Gauss quadrature nodes and weights on [0, 1]
-  VecX gauss_nodes_;
-  VecX gauss_weights_;
+    // Gauss quadrature nodes and weights on [0, 1]
+    VecX gauss_nodes_;
+    VecX gauss_weights_;
 
-  // =========================================================================
-  // Internal methods
-  // =========================================================================
+    // GeoTIFF cell size for WENO indicator scaling (Δx in WENO formula)
+    Real data_cell_size_ = 0.0;
 
-  /// @brief Initialize Gauss-Legendre quadrature nodes and weights
-  void init_gauss_quadrature();
+    // Previous solutions keyed by (Morton code, level_x, level_y)
+    // Morton alone doesn't uniquely identify an element - same Morton can exist
+    // at different levels with different positions/sizes.
+    std::map<std::tuple<uint64_t, int, int>, VecX> prev_solutions_;
 
-  /// @brief Create/recreate smoother for current mesh
-  void rebuild_smoother();
+    // Basis for evaluating previous solutions (avoids duplicate formula)
+    LinearBezierBasis2D basis_;
 
-  /// @brief Set bathymetry data on current smoother
-  void apply_bathymetry_to_smoother();
+    // =========================================================================
+    // Internal methods
+    // =========================================================================
 
-  /// @brief Select elements for refinement using configured marking strategy
-  /// @param errors Per-element error estimates
-  /// @return Element indices selected for refinement
-  std::vector<Index> select_elements_for_refinement(
-      const std::vector<CGLinearElementErrorEstimate> &errors) const;
+    /// @brief Initialize Gauss-Legendre quadrature nodes and weights
+    void init_gauss_quadrature();
 
-  /// @brief Refine marked elements and update mesh
-  /// @param elements_to_refine Element indices to refine
-  void refine_elements(const std::vector<Index> &elements_to_refine);
+    /// @brief Create/recreate smoother for current mesh
+    void rebuild_smoother();
 
-  /// @brief Compute error statistics for element via Gauss quadrature
-  /// @param elem Element index
-  /// @param[out] l2_error L2 error ||z_data - z_bezier||_L2 over element
-  /// @param[out] mean_error Weighted mean error (signed)
-  /// @param[out] std_error Standard deviation around mean
-  /// @param[out] mean_depth Weighted mean depth within element
-  void compute_element_error_statistics(Index elem, Real &l2_error,
-                                        Real &mean_error, Real &std_error,
-                                        Real &mean_depth) const;
+    /// @brief Set bathymetry data on current smoother
+    void apply_bathymetry_to_smoother();
 
-  /// @brief Get the error metric value based on config
-  /// @param err Error estimate for an element
-  /// @return The selected metric value
-  Real error_metric(const CGLinearElementErrorEstimate &err) const {
-    switch (config_.error_metric_type) {
-    case ErrorMetricType::RelativeError:
-      return err.relative_error;
-    case ErrorMetricType::StdError:
-      return err.std_error;
-    case ErrorMetricType::GradientIndicator:
-      return err.gradient_indicator;
-    case ErrorMetricType::CurvatureIndicator:
-      return err.curvature_indicator;
-    case ErrorMetricType::WenoIndicator:
-      return err.weno_indicator;
-    default:
-      return err.normalized_error;
+    /// @brief Select elements for refinement using configured marking strategy
+    /// @param errors Per-element error estimates
+    /// @return Element indices selected for refinement
+    std::vector<Index>
+    select_elements_for_refinement(const std::vector<CGLinearElementErrorEstimate> &errors) const;
+
+    /// @brief Refine marked elements and update mesh
+    /// @param elements_to_refine Element indices to refine
+    void refine_elements(const std::vector<Index> &elements_to_refine);
+
+    /// @brief Compute error statistics for element via Gauss quadrature
+    /// @param elem Element index
+    /// @param[out] l2_error L2 error ||z_data - z_bezier||_L2 over element
+    /// @param[out] mean_error Weighted mean error (signed)
+    /// @param[out] std_error Standard deviation around mean
+    /// @param[out] mean_depth Weighted mean depth within element
+    void compute_element_error_statistics(Index elem, Real &l2_error, Real &mean_error,
+                                          Real &std_error, Real &mean_depth) const;
+
+    /// @brief Get the error metric value based on config
+    /// @param err Error estimate for an element
+    /// @return The selected metric value
+    Real error_metric(const CGLinearElementErrorEstimate &err) const {
+        switch (config_.error_metric_type) {
+        case ErrorMetricType::RelativeError:
+            return err.relative_error;
+        case ErrorMetricType::StdError:
+            return err.std_error;
+        case ErrorMetricType::GradientIndicator:
+            return err.gradient_indicator;
+        case ErrorMetricType::CurvatureIndicator:
+            return err.curvature_indicator;
+        case ErrorMetricType::WenoIndicator:
+            return err.weno_indicator;
+        case ErrorMetricType::CoarseningError:
+            return err.coarsening_error;
+        case ErrorMetricType::MeanDifference:
+            return err.mean_difference;
+        case ErrorMetricType::VolumeChange:
+            return err.volume_change;
+        default:
+            return err.normalized_error;
+        }
     }
-  }
 
-  /// @brief Check if element is entirely on land
-  /// @param elem Element index
-  /// @return true if all sample points are on land
-  bool is_element_on_land(Index elem) const;
+    /// @brief Check if element is entirely on land
+    /// @param elem Element index
+    /// @return true if all sample points are on land
+    bool is_element_on_land(Index elem) const;
 
-  /// @brief Print profiling report to stdout
-  void print_profile_report() const;
+    /// @brief Print profiling report to stdout
+    void print_profile_report() const;
 
-  /// @brief Compute gradient indicator for element (WENO scaling: h² × |∇z|²)
-  /// @param elem Element index
-  /// @return Gradient indicator value, or 0 if no gradient function set
-  Real compute_gradient_indicator(Index elem) const;
+    /// @brief Compute gradient indicator: Δx² × mean(|∇z|²) [m²]
+    /// @param elem Element index
+    /// @return WENO l=1 smoothness indicator, or 0 if no gradient function set
+    Real compute_gradient_indicator(Index elem) const;
 
-  /// @brief Compute curvature indicator for element (WENO scaling: h⁴ × |H|²_F)
-  /// @param elem Element index
-  /// @return Curvature indicator value, or 0 if no curvature function set
-  Real compute_curvature_indicator(Index elem) const;
+    /// @brief Compute curvature indicator: Δx⁴ × mean(|H|²_F) [m²]
+    /// @param elem Element index
+    /// @return WENO l=2 smoothness indicator, or 0 if no curvature function set
+    Real compute_curvature_indicator(Index elem) const;
+
+    /// @brief Compute all coarsening error metrics
+    /// @param elem Element index
+    /// @param[out] coarsening_error ||z_fine - z_coarse||_L2 × √A [m²]
+    /// @param[out] mean_difference ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
+    /// @param[out] volume_change ∫∫|z_fine - z_coarse|dA [m³]
+    void compute_coarsening_metrics(Index elem, Real &coarsening_error, Real &mean_difference,
+                                    Real &volume_change) const;
+
+    /// @brief Store current solution coefficients keyed by Morton code
+    void store_current_solution();
+
+    /// @brief Evaluate previous solution at a point using stored coefficients
+    /// @param x, y Physical coordinates
+    /// @return Previous solution depth at (x, y), or 0 if not found
+    Real evaluate_prev_solution(Real x, Real y) const;
 };
 
 } // namespace drifter

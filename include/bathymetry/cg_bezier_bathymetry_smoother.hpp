@@ -87,14 +87,14 @@ public:
     /// @brief Construct smoother for a quadtree mesh
     /// @param mesh 2D quadtree mesh
     /// @param config Configuration parameters
-    explicit CGBezierBathymetrySmoother(
-        const QuadtreeAdapter &mesh, const CGBezierSmootherConfig &config = {});
+    explicit CGBezierBathymetrySmoother(const QuadtreeAdapter &mesh,
+                                        const CGBezierSmootherConfig &config = {});
 
     /// @brief Construct smoother from octree (uses bottom face)
     /// @param octree 3D mesh
     /// @param config Configuration parameters
-    explicit CGBezierBathymetrySmoother(
-        const OctreeAdapter &octree, const CGBezierSmootherConfig &config = {});
+    explicit CGBezierBathymetrySmoother(const OctreeAdapter &octree,
+                                        const CGBezierSmootherConfig &config = {});
 
     // =========================================================================
     // Data input
@@ -216,7 +216,7 @@ public:
 private:
     /// Mesh (owned or referenced)
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter *quadtree_ = nullptr;
+    const QuadtreeAdapter* quadtree_ = nullptr;
 
     /// Configuration
     CGBezierSmootherConfig config_;
@@ -232,9 +232,9 @@ private:
     bool data_set_ = false;
 
     /// Assembled matrices (cached)
-    SpMat H_global_;       ///< Global thin plate Hessian
-    SpMat BtWB_global_;    ///< Global data fitting normal matrix
-    VecX BtWd_global_;     ///< Global data fitting RHS
+    SpMat H_global_; ///< Global thin plate Hessian
+    SpMat BtWB_global_; ///< Global data fitting normal matrix
+    VecX BtWd_global_; ///< Global data fitting RHS
     Real dTWd_global_ = 0; ///< Data self-product for residual computation
 
     /// Initialize components

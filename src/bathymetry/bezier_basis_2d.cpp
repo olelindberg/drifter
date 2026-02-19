@@ -83,8 +83,7 @@ VecX BezierBasis2D::evaluate_bernstein_1d(int n, Real t) const {
     return B;
 }
 
-VecX BezierBasis2D::evaluate_bernstein_derivative_1d(
-    int n, Real t, int k) const {
+VecX BezierBasis2D::evaluate_bernstein_derivative_1d(int n, Real t, int k) const {
     // Use the relation: d/dt B_{i,n}(t) = n * [B_{i-1,n-1}(t) - B_{i,n-1}(t)]
     // Applied recursively for higher derivatives.
     //
@@ -255,8 +254,8 @@ VecX BezierBasis2D::evaluate_d2uv(Real u, Real v) const {
     return d2phi;
 }
 
-void BezierBasis2D::evaluate_second_derivatives(
-    Real u, Real v, VecX &d2u, VecX &d2v, VecX &d2uv) const {
+void BezierBasis2D::evaluate_second_derivatives(Real u, Real v, VecX &d2u, VecX &d2v,
+                                                VecX &d2uv) const {
     VecX Bu = evaluate_bernstein_1d(DEGREE, u);
     VecX Bv = evaluate_bernstein_1d(DEGREE, v);
     VecX dBu = evaluate_bernstein_derivative_1d(DEGREE, u, 1);
@@ -295,21 +294,13 @@ VecX BezierBasis2D::evaluate_derivative(Real u, Real v, int nu, int nv) const {
     return dphi;
 }
 
-VecX BezierBasis2D::evaluate_d3uuu(Real u, Real v) const {
-    return evaluate_derivative(u, v, 3, 0);
-}
+VecX BezierBasis2D::evaluate_d3uuu(Real u, Real v) const { return evaluate_derivative(u, v, 3, 0); }
 
-VecX BezierBasis2D::evaluate_d3uuv(Real u, Real v) const {
-    return evaluate_derivative(u, v, 2, 1);
-}
+VecX BezierBasis2D::evaluate_d3uuv(Real u, Real v) const { return evaluate_derivative(u, v, 2, 1); }
 
-VecX BezierBasis2D::evaluate_d3uvv(Real u, Real v) const {
-    return evaluate_derivative(u, v, 1, 2);
-}
+VecX BezierBasis2D::evaluate_d3uvv(Real u, Real v) const { return evaluate_derivative(u, v, 1, 2); }
 
-VecX BezierBasis2D::evaluate_d3vvv(Real u, Real v) const {
-    return evaluate_derivative(u, v, 0, 3);
-}
+VecX BezierBasis2D::evaluate_d3vvv(Real u, Real v) const { return evaluate_derivative(u, v, 0, 3); }
 
 VecX BezierBasis2D::evaluate_d4uuvv(Real u, Real v) const {
     return evaluate_derivative(u, v, 2, 2);
@@ -392,7 +383,7 @@ int BezierBasis2D::dof_to_corner(int dof) const {
         return 2; // (0, 1)
     if (dof == dof_index(DEGREE, DEGREE))
         return 3; // (1, 1)
-    return -1;    // Not a corner DOF
+    return -1; // Not a corner DOF
 }
 
 Vec2 BezierBasis2D::corner_param(int corner_id) const {
@@ -486,10 +477,9 @@ MatX BezierBasis2D::compute_1d_extraction_matrix(Real t0, Real t1) const {
         //
         // For 2:1 refinement, we only need [0, 0.5] and [0.5, 1], so this
         // branch is not implemented. Throw an error for now.
-        throw std::runtime_error(
-            "BezierBasis2D::compute_1d_extraction_matrix: "
-            "General intervals not yet supported. Only [0, "
-            "0.5] and [0.5, 1] are implemented.");
+        throw std::runtime_error("BezierBasis2D::compute_1d_extraction_matrix: "
+                                 "General intervals not yet supported. Only [0, "
+                                 "0.5] and [0.5, 1] are implemented.");
     }
 
     return S;

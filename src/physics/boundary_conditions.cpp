@@ -17,4 +17,4 @@ namespace drifter {
 //
 // DG implementation uses weak boundary conditions via numerical flux
 
-}  // namespace drifter
+} // namespace drifter

@@ -46,15 +46,11 @@ void gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
         wts[0] = wts[3] = 0.5 * wb;
         wts[1] = wts[2] = 0.5 * wa;
     } else if (n == 5) {
-        pts[0] =
-            0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
-        pts[1] =
-            0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[0] = 0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[1] = 0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
         pts[2] = 0.5;
-        pts[3] =
-            0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
-        pts[4] =
-            0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[3] = 0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[4] = 0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
         wts[0] = wts[4] = 0.5 * (322.0 - 13.0 * std::sqrt(70.0)) / 900.0;
         wts[1] = wts[3] = 0.5 * (322.0 + 13.0 * std::sqrt(70.0)) / 900.0;
         wts[2] = 0.5 * 128.0 / 225.0;
@@ -76,15 +72,13 @@ void gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
 // =============================================================================
 
 CGTriharmonicBezierBathymetrySmoother::CGTriharmonicBezierBathymetrySmoother(
-    const QuadtreeAdapter &mesh,
-    const CGTriharmonicBezierSmootherConfig &config)
+    const QuadtreeAdapter &mesh, const CGTriharmonicBezierSmootherConfig &config)
     : quadtree_(&mesh), config_(config) {
     init_components();
 }
 
 CGTriharmonicBezierBathymetrySmoother::CGTriharmonicBezierBathymetrySmoother(
-    const OctreeAdapter &octree,
-    const CGTriharmonicBezierSmootherConfig &config)
+    const OctreeAdapter &octree, const CGTriharmonicBezierSmootherConfig &config)
     : config_(config) {
     // Create QuadtreeAdapter from octree bottom face
     quadtree_owned_ = std::make_unique<QuadtreeAdapter>(octree);
@@ -94,8 +88,8 @@ CGTriharmonicBezierBathymetrySmoother::CGTriharmonicBezierBathymetrySmoother(
 
 void CGTriharmonicBezierBathymetrySmoother::init_components() {
     basis_ = std::make_unique<BezierBasis2D>();
-    triharmonic_hessian_ = std::make_unique<TriharmonicHessian>(
-        config_.ngauss_energy, config_.gradient_weight);
+    triharmonic_hessian_ =
+        std::make_unique<TriharmonicHessian>(config_.ngauss_energy, config_.gradient_weight);
     dof_manager_ = std::make_unique<CGBezierDofManager>(*quadtree_);
 
     // Build edge derivative constraints if enabled (no vertex constraints)
@@ -111,10 +105,8 @@ void CGTriharmonicBezierBathymetrySmoother::init_components() {
 // Data input
 // =============================================================================
 
-void CGTriharmonicBezierBathymetrySmoother::set_bathymetry_data(
-    const BathymetrySource &source) {
-    set_bathymetry_data(
-        [&source](Real x, Real y) { return source.evaluate(x, y); });
+void CGTriharmonicBezierBathymetrySmoother::set_bathymetry_data(const BathymetrySource &source) {
+    set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
 }
 
 void CGTriharmonicBezierBathymetrySmoother::set_bathymetry_data(
@@ -124,8 +116,7 @@ void CGTriharmonicBezierBathymetrySmoother::set_bathymetry_data(
     data_set_ = true;
 }
 
-void CGTriharmonicBezierBathymetrySmoother::set_scattered_points(
-    const std::vector<Vec3> &points) {
+void CGTriharmonicBezierBathymetrySmoother::set_scattered_points(const std::vector<Vec3> &points) {
     std::vector<BathymetryPoint> bathy_points;
     bathy_points.reserve(points.size());
     for (const auto &p : points) {
@@ -265,14 +256,13 @@ void CGTriharmonicBezierBathymetrySmoother::assemble_data_fitting(
 
 void CGTriharmonicBezierBathymetrySmoother::solve() {
     if (!data_set_) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: bathymetry data not set");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: bathymetry data not set");
     }
 
     // Use constrained solve if we have any constraints (hanging nodes or edge
     // derivatives)
-    Index total_constraints = dof_manager_->num_constraints() +
-                              dof_manager_->num_edge_derivative_constraints();
+    Index total_constraints =
+        dof_manager_->num_constraints() + dof_manager_->num_edge_derivative_constraints();
 
     if (total_constraints == 0) {
         solve_unconstrained();
@@ -318,16 +308,14 @@ void CGTriharmonicBezierBathymetrySmoother::solve_unconstrained() {
 
     solution_ = solver.solve(-c);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: SparseLU solve failed");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: SparseLU solve failed");
     }
 }
 
 void CGTriharmonicBezierBathymetrySmoother::solve_with_constraints() {
     Index num_dofs = dof_manager_->num_global_dofs();
     Index num_hanging_constraints = dof_manager_->num_constraints();
-    Index num_edge_constraints =
-        dof_manager_->num_edge_derivative_constraints();
+    Index num_edge_constraints = dof_manager_->num_edge_derivative_constraints();
     Index num_constraints = num_hanging_constraints + num_edge_constraints;
 
     // Build Q matrix (same as unconstrained)
@@ -474,20 +462,17 @@ void CGTriharmonicBezierBathymetrySmoother::solve_with_constraints() {
 // Evaluation
 // =============================================================================
 
-Index CGTriharmonicBezierBathymetrySmoother::find_element(
-    Real x, Real y) const {
+Index CGTriharmonicBezierBathymetrySmoother::find_element(Real x, Real y) const {
     for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
         const auto &bounds = quadtree_->element_bounds(elem);
-        if (x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin &&
-            y <= bounds.ymax) {
+        if (x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin && y <= bounds.ymax) {
             return elem;
         }
     }
     return -1;
 }
 
-Real CGTriharmonicBezierBathymetrySmoother::evaluate_in_element(
-    Index elem, Real x, Real y) const {
+Real CGTriharmonicBezierBathymetrySmoother::evaluate_in_element(Index elem, Real x, Real y) const {
     const auto &bounds = quadtree_->element_bounds(elem);
 
     // Map to parameter space [0, 1]^2
@@ -503,9 +488,8 @@ Real CGTriharmonicBezierBathymetrySmoother::evaluate_in_element(
 
 Real CGTriharmonicBezierBathymetrySmoother::evaluate(Real x, Real y) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: must call "
-            "solve() before evaluate()");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: must call "
+                                 "solve() before evaluate()");
     }
 
     Index elem = find_element(x, y);
@@ -529,8 +513,8 @@ Real CGTriharmonicBezierBathymetrySmoother::evaluate(Real x, Real y) const {
     return evaluate_in_element(elem, x, y);
 }
 
-Vec2 CGTriharmonicBezierBathymetrySmoother::evaluate_gradient_in_element(
-    Index elem, Real x, Real y) const {
+Vec2 CGTriharmonicBezierBathymetrySmoother::evaluate_gradient_in_element(Index elem, Real x,
+                                                                         Real y) const {
     const auto &bounds = quadtree_->element_bounds(elem);
     Real dx = bounds.xmax - bounds.xmin;
     Real dy = bounds.ymax - bounds.ymin;
@@ -551,12 +535,10 @@ Vec2 CGTriharmonicBezierBathymetrySmoother::evaluate_gradient_in_element(
     return Vec2(dz_du / dx, dz_dv / dy);
 }
 
-Vec2 CGTriharmonicBezierBathymetrySmoother::evaluate_gradient(
-    Real x, Real y) const {
+Vec2 CGTriharmonicBezierBathymetrySmoother::evaluate_gradient(Real x, Real y) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: must call solve() before "
-            "evaluate_gradient()");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: must call solve() before "
+                                 "evaluate_gradient()");
     }
 
     Index elem = find_element(x, y);
@@ -579,8 +561,7 @@ Vec2 CGTriharmonicBezierBathymetrySmoother::evaluate_gradient(
     return evaluate_gradient_in_element(elem, x, y);
 }
 
-VecX CGTriharmonicBezierBathymetrySmoother::element_coefficients(
-    Index elem) const {
+VecX CGTriharmonicBezierBathymetrySmoother::element_coefficients(Index elem) const {
     const auto &global_dofs = dof_manager_->element_dofs(elem);
     VecX coeffs(BezierBasis2D::NDOF);
     for (int i = 0; i < BezierBasis2D::NDOF; ++i) {
@@ -593,12 +574,10 @@ VecX CGTriharmonicBezierBathymetrySmoother::element_coefficients(
 // Transfer and output
 // =============================================================================
 
-void CGTriharmonicBezierBathymetrySmoother::transfer_to_seabed(
-    SeabedSurface &seabed) const {
+void CGTriharmonicBezierBathymetrySmoother::transfer_to_seabed(SeabedSurface &seabed) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: must call solve() before "
-            "transfer_to_seabed()");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: must call solve() before "
+                                 "transfer_to_seabed()");
     }
 
     for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
@@ -607,12 +586,11 @@ void CGTriharmonicBezierBathymetrySmoother::transfer_to_seabed(
     }
 }
 
-void CGTriharmonicBezierBathymetrySmoother::write_vtk(
-    const std::string &filename, int resolution) const {
+void CGTriharmonicBezierBathymetrySmoother::write_vtk(const std::string &filename,
+                                                      int resolution) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: must call "
-            "solve() before write_vtk()");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: must call "
+                                 "solve() before write_vtk()");
     }
 
     io::write_cg_bezier_surface_vtk(
@@ -623,14 +601,12 @@ void CGTriharmonicBezierBathymetrySmoother::write_vtk(
 void CGTriharmonicBezierBathymetrySmoother::write_control_points_vtk(
     const std::string &filename) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGTriharmonicBezierBathymetrySmoother: must call solve() before "
-            "write_control_points_vtk()");
+        throw std::runtime_error("CGTriharmonicBezierBathymetrySmoother: must call solve() before "
+                                 "write_control_points_vtk()");
     }
 
     io::write_bezier_control_points_vtk(
-        filename, *quadtree_,
-        [this](Index e) { return element_coefficients(e); },
+        filename, *quadtree_, [this](Index e) { return element_coefficients(e); },
         [](int dof) {
             int i = dof % 6;
             int j = dof / 6;
@@ -646,8 +622,8 @@ void CGTriharmonicBezierBathymetrySmoother::write_control_points_vtk(
 Real CGTriharmonicBezierBathymetrySmoother::data_residual() const {
     if (!solved_)
         return 0.0;
-    return solution_.dot(BtWB_global_ * solution_) -
-           2.0 * solution_.dot(BtWd_global_) + dTWd_global_;
+    return solution_.dot(BtWB_global_ * solution_) - 2.0 * solution_.dot(BtWd_global_) +
+           dTWd_global_;
 }
 
 Real CGTriharmonicBezierBathymetrySmoother::regularization_energy() const {

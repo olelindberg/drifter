@@ -99,8 +99,8 @@ VecX LagrangeBasis2D::evaluate_second_derivative_1d(Real xi) const {
     return d2phi;
 }
 
-void LagrangeBasis2D::evaluate_second_derivatives(
-    Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2, VecX &d2_dxideta) const {
+void LagrangeBasis2D::evaluate_second_derivatives(Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
+                                                  VecX &d2_dxideta) const {
     VecX phi_xi = basis_1d_.evaluate(xi);
     VecX phi_eta = basis_1d_.evaluate(eta);
     VecX dphi_xi = basis_1d_.evaluate_derivative(xi);
@@ -210,8 +210,7 @@ std::vector<int> LagrangeBasis2D::interior_dofs() const {
     return interior;
 }
 
-VecX LagrangeBasis2D::evaluate_normal_derivative_at_edge(
-    int edge_id, Real t) const {
+VecX LagrangeBasis2D::evaluate_normal_derivative_at_edge(int edge_id, Real t) const {
     // Evaluate gradient at the edge point, then extract normal component
     // Edge parameterization:
     //   edge 0 (xi=-1): point = (-1, t), outward normal = (-1, 0)

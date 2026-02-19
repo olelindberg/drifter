@@ -77,8 +77,7 @@ VecX CubicBezierBasis2D::evaluate_bernstein_1d(int n, Real t) const {
     return B;
 }
 
-VecX CubicBezierBasis2D::evaluate_bernstein_derivative_1d(
-    int n, Real t, int k) const {
+VecX CubicBezierBasis2D::evaluate_bernstein_derivative_1d(int n, Real t, int k) const {
     VecX dB(n + 1);
 
     if (k > n) {
@@ -230,8 +229,8 @@ VecX CubicBezierBasis2D::evaluate_d2uv(Real u, Real v) const {
     return d2phi;
 }
 
-void CubicBezierBasis2D::evaluate_second_derivatives(
-    Real u, Real v, VecX &d2u, VecX &d2v, VecX &d2uv) const {
+void CubicBezierBasis2D::evaluate_second_derivatives(Real u, Real v, VecX &d2u, VecX &d2v,
+                                                     VecX &d2uv) const {
     VecX Bu = evaluate_bernstein_1d(DEGREE, u);
     VecX Bv = evaluate_bernstein_1d(DEGREE, v);
     VecX dBu = evaluate_bernstein_derivative_1d(DEGREE, u, 1);
@@ -257,8 +256,7 @@ void CubicBezierBasis2D::evaluate_second_derivatives(
 // Mixed partial derivative
 // =============================================================================
 
-VecX CubicBezierBasis2D::evaluate_derivative(
-    Real u, Real v, int nu, int nv) const {
+VecX CubicBezierBasis2D::evaluate_derivative(Real u, Real v, int nu, int nv) const {
     VecX dnBu = evaluate_bernstein_derivative_1d(DEGREE, u, nu);
     VecX dnBv = evaluate_bernstein_derivative_1d(DEGREE, v, nv);
 
@@ -275,8 +273,7 @@ VecX CubicBezierBasis2D::evaluate_derivative(
 // Scalar interpolation using de Casteljau algorithm
 // =============================================================================
 
-Real CubicBezierBasis2D::evaluate_scalar(
-    const VecX &coeffs, Real u, Real v) const {
+Real CubicBezierBasis2D::evaluate_scalar(const VecX &coeffs, Real u, Real v) const {
     const int n = DEGREE;
 
     // Temporary storage for de Casteljau in u direction
@@ -344,7 +341,7 @@ int CubicBezierBasis2D::dof_to_corner(int dof) const {
         return 2; // (0, 1)
     if (dof == dof_index(DEGREE, DEGREE))
         return 3; // (1, 1)
-    return -1;    // Not a corner DOF
+    return -1; // Not a corner DOF
 }
 
 Vec2 CubicBezierBasis2D::corner_param(int corner_id) const {
@@ -421,11 +418,10 @@ MatX CubicBezierBasis2D::compute_1d_extraction_matrix(Real t0, Real t1) const {
             }
         }
     } else {
-        throw std::runtime_error(
-            "CubicBezierBasis2D::compute_1d_extraction_matrix: "
-            "General intervals not yet supported. Only [0, 0.5] and [0.5, 1] "
-            "are "
-            "implemented.");
+        throw std::runtime_error("CubicBezierBasis2D::compute_1d_extraction_matrix: "
+                                 "General intervals not yet supported. Only [0, 0.5] and [0.5, 1] "
+                                 "are "
+                                 "implemented.");
     }
 
     return S;

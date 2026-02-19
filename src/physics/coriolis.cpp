@@ -17,4 +17,4 @@ namespace drifter {
 // Coriolis acceleration:
 //   a_coriolis = (-fv, fu, 0)  [in Cartesian]
 
-}  // namespace drifter
+} // namespace drifter

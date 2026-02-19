@@ -1,6 +1,6 @@
 #include "bathymetry/cg_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp" // For BathymetrySource, BathymetryPoint
-#include "dg/basis_hexahedron.hpp"            // For compute_gauss_lobatto_nodes
+#include "dg/basis_hexahedron.hpp" // For compute_gauss_lobatto_nodes
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
@@ -47,15 +47,11 @@ void gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
         wts[0] = wts[3] = 0.5 * wb;
         wts[1] = wts[2] = 0.5 * wa;
     } else if (n == 5) {
-        pts[0] =
-            0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
-        pts[1] =
-            0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[0] = 0.5 * (1.0 - std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[1] = 0.5 * (1.0 - std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
         pts[2] = 0.5;
-        pts[3] =
-            0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
-        pts[4] =
-            0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[3] = 0.5 * (1.0 + std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
+        pts[4] = 0.5 * (1.0 + std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0);
         wts[0] = wts[4] = 0.5 * (322.0 - 13.0 * std::sqrt(70.0)) / 900.0;
         wts[1] = wts[3] = 0.5 * (322.0 + 13.0 * std::sqrt(70.0)) / 900.0;
         wts[2] = 0.5 * 128.0 / 225.0;
@@ -76,14 +72,14 @@ void gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
 // Construction
 // =============================================================================
 
-CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
-    const QuadtreeAdapter &mesh, const CGBezierSmootherConfig &config)
+CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(const QuadtreeAdapter &mesh,
+                                                       const CGBezierSmootherConfig &config)
     : quadtree_(&mesh), config_(config) {
     init_components();
 }
 
-CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
-    const OctreeAdapter &octree, const CGBezierSmootherConfig &config)
+CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(const OctreeAdapter &octree,
+                                                       const CGBezierSmootherConfig &config)
     : config_(config) {
     // Create QuadtreeAdapter from octree bottom face
     quadtree_owned_ = std::make_unique<QuadtreeAdapter>(octree);
@@ -93,8 +89,8 @@ CGBezierBathymetrySmoother::CGBezierBathymetrySmoother(
 
 void CGBezierBathymetrySmoother::init_components() {
     basis_ = std::make_unique<BezierBasis2D>();
-    thin_plate_hessian_ = std::make_unique<ThinPlateHessian>(
-        config_.ngauss_energy, config_.gradient_weight);
+    thin_plate_hessian_ =
+        std::make_unique<ThinPlateHessian>(config_.ngauss_energy, config_.gradient_weight);
     dof_manager_ = std::make_unique<CGBezierDofManager>(*quadtree_);
 
     // Build edge derivative constraints if enabled
@@ -110,21 +106,17 @@ void CGBezierBathymetrySmoother::init_components() {
 // Data input
 // =============================================================================
 
-void CGBezierBathymetrySmoother::set_bathymetry_data(
-    const BathymetrySource &source) {
-    set_bathymetry_data(
-        [&source](Real x, Real y) { return source.evaluate(x, y); });
+void CGBezierBathymetrySmoother::set_bathymetry_data(const BathymetrySource &source) {
+    set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
 }
 
-void CGBezierBathymetrySmoother::set_bathymetry_data(
-    std::function<Real(Real, Real)> bathy_func) {
+void CGBezierBathymetrySmoother::set_bathymetry_data(std::function<Real(Real, Real)> bathy_func) {
     assemble_thin_plate_hessian();
     assemble_data_fitting(bathy_func);
     data_set_ = true;
 }
 
-void CGBezierBathymetrySmoother::set_scattered_points(
-    const std::vector<Vec3> &points) {
+void CGBezierBathymetrySmoother::set_scattered_points(const std::vector<Vec3> &points) {
     std::vector<BathymetryPoint> bathy_points;
     bathy_points.reserve(points.size());
     for (const auto &p : points) {
@@ -133,8 +125,7 @@ void CGBezierBathymetrySmoother::set_scattered_points(
     set_scattered_points(bathy_points);
 }
 
-void CGBezierBathymetrySmoother::set_scattered_points(
-    const std::vector<BathymetryPoint> &points) {
+void CGBezierBathymetrySmoother::set_scattered_points(const std::vector<BathymetryPoint> &points) {
     // Build a function that returns nearest point value (simple approach)
     // For production, should use proper scattered data interpolation
 
@@ -198,8 +189,7 @@ void CGBezierBathymetrySmoother::assemble_thin_plate_hessian() {
     H_global_.setFromTriplets(triplets.begin(), triplets.end());
 }
 
-void CGBezierBathymetrySmoother::assemble_data_fitting(
-    std::function<Real(Real, Real)> bathy_func) {
+void CGBezierBathymetrySmoother::assemble_data_fitting(std::function<Real(Real, Real)> bathy_func) {
 
     Index num_dofs = dof_manager_->num_global_dofs();
     Index num_elements = quadtree_->num_elements();
@@ -267,14 +257,13 @@ void CGBezierBathymetrySmoother::assemble_data_fitting(
 
 void CGBezierBathymetrySmoother::solve() {
     if (!data_set_) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: bathymetry data not set");
+        throw std::runtime_error("CGBezierBathymetrySmoother: bathymetry data not set");
     }
 
     // Use constrained solve if we have any constraints (hanging nodes or edge
     // derivatives)
-    Index total_constraints = dof_manager_->num_constraints() +
-                              dof_manager_->num_edge_derivative_constraints();
+    Index total_constraints =
+        dof_manager_->num_constraints() + dof_manager_->num_edge_derivative_constraints();
 
     if (total_constraints == 0) {
         solve_unconstrained();
@@ -320,22 +309,19 @@ void CGBezierBathymetrySmoother::solve_unconstrained() {
     Eigen::SparseLU<SpMat> solver;
     solver.compute(Q);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: SparseLU decomposition failed");
+        throw std::runtime_error("CGBezierBathymetrySmoother: SparseLU decomposition failed");
     }
 
     solution_ = solver.solve(-c);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: SparseLU solve failed");
+        throw std::runtime_error("CGBezierBathymetrySmoother: SparseLU solve failed");
     }
 }
 
 void CGBezierBathymetrySmoother::solve_with_constraints() {
     Index num_dofs = dof_manager_->num_global_dofs();
     Index num_hanging_constraints = dof_manager_->num_constraints();
-    Index num_edge_constraints =
-        dof_manager_->num_edge_derivative_constraints();
+    Index num_edge_constraints = dof_manager_->num_edge_derivative_constraints();
     Index num_constraints = num_hanging_constraints + num_edge_constraints;
 
     // Build Q matrix (same as unconstrained)
@@ -446,14 +432,12 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
     Eigen::SparseLU<SpMat> solver;
     solver.compute(KKT);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: KKT SparseLU decomposition failed");
+        throw std::runtime_error("CGBezierBathymetrySmoother: KKT SparseLU decomposition failed");
     }
 
     VecX sol = solver.solve(rhs);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: KKT SparseLU solve failed");
+        throw std::runtime_error("CGBezierBathymetrySmoother: KKT SparseLU solve failed");
     }
 
     // Extract primal solution
@@ -493,16 +477,14 @@ void CGBezierBathymetrySmoother::solve_with_constraints() {
 Index CGBezierBathymetrySmoother::find_element(Real x, Real y) const {
     for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
         const auto &bounds = quadtree_->element_bounds(elem);
-        if (x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin &&
-            y <= bounds.ymax) {
+        if (x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin && y <= bounds.ymax) {
             return elem;
         }
     }
     return -1; // Point outside domain
 }
 
-Real CGBezierBathymetrySmoother::evaluate_in_element(
-    Index elem, Real x, Real y) const {
+Real CGBezierBathymetrySmoother::evaluate_in_element(Index elem, Real x, Real y) const {
     const auto &bounds = quadtree_->element_bounds(elem);
 
     // Map to parameter space [0, 1]^2
@@ -522,8 +504,7 @@ Real CGBezierBathymetrySmoother::evaluate_in_element(
 
 Real CGBezierBathymetrySmoother::evaluate(Real x, Real y) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: must call solve() before evaluate()");
+        throw std::runtime_error("CGBezierBathymetrySmoother: must call solve() before evaluate()");
     }
 
     Index elem = find_element(x, y);
@@ -548,8 +529,7 @@ Real CGBezierBathymetrySmoother::evaluate(Real x, Real y) const {
     return evaluate_in_element(elem, x, y);
 }
 
-Vec2 CGBezierBathymetrySmoother::evaluate_gradient_in_element(
-    Index elem, Real x, Real y) const {
+Vec2 CGBezierBathymetrySmoother::evaluate_gradient_in_element(Index elem, Real x, Real y) const {
     const auto &bounds = quadtree_->element_bounds(elem);
     Real dx = bounds.xmax - bounds.xmin;
     Real dy = bounds.ymax - bounds.ymin;
@@ -576,9 +556,8 @@ Vec2 CGBezierBathymetrySmoother::evaluate_gradient_in_element(
 
 Vec2 CGBezierBathymetrySmoother::evaluate_gradient(Real x, Real y) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: must call solve() before "
-            "evaluate_gradient()");
+        throw std::runtime_error("CGBezierBathymetrySmoother: must call solve() before "
+                                 "evaluate_gradient()");
     }
 
     Index elem = find_element(x, y);
@@ -615,12 +594,10 @@ VecX CGBezierBathymetrySmoother::element_coefficients(Index elem) const {
 // Transfer and output
 // =============================================================================
 
-void CGBezierBathymetrySmoother::transfer_to_seabed(
-    SeabedSurface &seabed) const {
+void CGBezierBathymetrySmoother::transfer_to_seabed(SeabedSurface &seabed) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: must call solve() before "
-            "transfer_to_seabed()");
+        throw std::runtime_error("CGBezierBathymetrySmoother: must call solve() before "
+                                 "transfer_to_seabed()");
     }
 
     // Transfer Bezier coefficients to seabed surface
@@ -630,8 +607,7 @@ void CGBezierBathymetrySmoother::transfer_to_seabed(
     }
 }
 
-void CGBezierBathymetrySmoother::write_vtk(
-    const std::string &filename, int resolution) const {
+void CGBezierBathymetrySmoother::write_vtk(const std::string &filename, int resolution) const {
     if (!solved_) {
         throw std::runtime_error(
             "CGBezierBathymetrySmoother: must call solve() before write_vtk()");
@@ -644,17 +620,14 @@ void CGBezierBathymetrySmoother::write_vtk(
         resolution > 0 ? resolution : 11, "elevation");
 }
 
-void CGBezierBathymetrySmoother::write_control_points_vtk(
-    const std::string &filename) const {
+void CGBezierBathymetrySmoother::write_control_points_vtk(const std::string &filename) const {
     if (!solved_) {
-        throw std::runtime_error(
-            "CGBezierBathymetrySmoother: must call solve() before "
-            "write_control_points_vtk()");
+        throw std::runtime_error("CGBezierBathymetrySmoother: must call solve() before "
+                                 "write_control_points_vtk()");
     }
 
     io::write_bezier_control_points_vtk(
-        filename, *quadtree_,
-        [this](Index e) { return element_coefficients(e); },
+        filename, *quadtree_, [this](Index e) { return element_coefficients(e); },
         [](int dof) {
             int i = dof % 6;
             int j = dof / 6;
@@ -671,8 +644,8 @@ Real CGBezierBathymetrySmoother::data_residual() const {
     if (!solved_)
         return 0.0;
     // ||B*x - d||^2_W = x^T * B^T W B * x - 2 * x^T * B^T W d + d^T W d
-    return solution_.dot(BtWB_global_ * solution_) -
-           2.0 * solution_.dot(BtWd_global_) + dTWd_global_;
+    return solution_.dot(BtWB_global_ * solution_) - 2.0 * solution_.dot(BtWd_global_) +
+           dTWd_global_;
 }
 
 Real CGBezierBathymetrySmoother::regularization_energy() const {

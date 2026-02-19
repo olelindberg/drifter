@@ -23,4 +23,4 @@ namespace drifter {
 //
 // For ocean models, HLLC or LLF typically used
 
-}  // namespace drifter
+} // namespace drifter

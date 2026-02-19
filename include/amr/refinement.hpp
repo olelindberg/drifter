@@ -54,8 +54,7 @@ enum class RefinementFlag : std::uint8_t {
 /// @brief Error indicator result for an element
 struct ErrorIndicator {
     Real value = 0.0; ///< Error indicator value
-    RefineMask suggested_mask =
-        RefineMask::NONE; ///< Suggested refinement directions
+    RefineMask suggested_mask = RefineMask::NONE; ///< Suggested refinement directions
     bool refine = false;  ///< Should refine
     bool coarsen = false; ///< Can coarsen
 };
@@ -66,8 +65,7 @@ struct RefinementParams {
     Real coarsen_threshold = 0.01; ///< Coarsen if error < threshold
     int max_level = 8;             ///< Maximum refinement level per axis
     int min_level = 0;             ///< Minimum refinement level per axis
-    bool allow_directional =
-        true; ///< Allow directional (anisotropic) refinement
+    bool allow_directional = true; ///< Allow directional (anisotropic) refinement
     Real smoothness_factor = 0.5; ///< Factor for gradient smoothness in error
     bool enforce_balance = true;  ///< Enforce 2:1 balance constraint
 };
@@ -90,13 +88,11 @@ public:
     virtual ~ErrorEstimator() = default;
 
     /// @brief Estimate error for all elements (octree version)
-    virtual void estimate(
-        const std::vector<VecX> &solution, const OctreeAdapter &mesh,
-        std::vector<ErrorIndicator> &indicators) const = 0;
+    virtual void estimate(const std::vector<VecX> &solution, const OctreeAdapter &mesh,
+                          std::vector<ErrorIndicator> &indicators) const = 0;
 
     /// @brief Estimate error for a single element (octree version)
-    virtual ErrorIndicator
-    estimate_element(const VecX &solution, const OctreeNode &node) const = 0;
+    virtual ErrorIndicator estimate_element(const VecX &solution, const OctreeNode &node) const = 0;
 
     /// @brief Legacy interface: estimate for Element
     virtual Real estimate(const Element &elem) const { return 0.0; }
@@ -115,16 +111,13 @@ public:
     /// @brief Construct gradient estimator
     /// @param basis Hexahedron basis for gradient computation
     /// @param params Refinement parameters
-    GradientErrorEstimator(
-        const HexahedronBasis &basis,
-        const RefinementParams &params = RefinementParams());
+    GradientErrorEstimator(const HexahedronBasis &basis,
+                           const RefinementParams &params = RefinementParams());
 
-    void estimate(
-        const std::vector<VecX> &solution, const OctreeAdapter &mesh,
-        std::vector<ErrorIndicator> &indicators) const override;
+    void estimate(const std::vector<VecX> &solution, const OctreeAdapter &mesh,
+                  std::vector<ErrorIndicator> &indicators) const override;
 
-    ErrorIndicator estimate_element(
-        const VecX &solution, const OctreeNode &node) const override;
+    ErrorIndicator estimate_element(const VecX &solution, const OctreeNode &node) const override;
 
 private:
     const HexahedronBasis &basis_;
@@ -137,20 +130,16 @@ private:
 /// @brief Jump-based error estimator (face residual)
 class JumpErrorEstimator : public ErrorEstimator {
 public:
-    JumpErrorEstimator(
-        const HexahedronBasis &basis,
-        const RefinementParams &params = RefinementParams());
+    JumpErrorEstimator(const HexahedronBasis &basis,
+                       const RefinementParams &params = RefinementParams());
 
-    void estimate(
-        const std::vector<VecX> &solution, const OctreeAdapter &mesh,
-        std::vector<ErrorIndicator> &indicators) const override;
+    void estimate(const std::vector<VecX> &solution, const OctreeAdapter &mesh,
+                  std::vector<ErrorIndicator> &indicators) const override;
 
-    ErrorIndicator estimate_element(
-        const VecX &solution, const OctreeNode &node) const override;
+    ErrorIndicator estimate_element(const VecX &solution, const OctreeNode &node) const override;
 
     /// @brief Set neighbor solution for jump computation
-    void
-    set_neighbor_data(const std::vector<std::vector<VecX>> &face_neighbors);
+    void set_neighbor_data(const std::vector<std::vector<VecX>> &face_neighbors);
 
 private:
     const HexahedronBasis &basis_;
@@ -162,25 +151,19 @@ private:
 class FeatureBasedEstimator : public ErrorEstimator {
 public:
     /// @brief Add bathymetry gradient criterion
-    void add_bathymetry_criterion(
-        std::function<Real(Real, Real)> bathymetry, Real threshold);
+    void add_bathymetry_criterion(std::function<Real(Real, Real)> bathymetry, Real threshold);
 
     /// @brief Add coastline proximity criterion
-    void add_coastline_criterion(
-        std::function<bool(Real, Real)> is_land, Real max_distance);
+    void add_coastline_criterion(std::function<bool(Real, Real)> is_land, Real max_distance);
 
-    void estimate(
-        const std::vector<VecX> &solution, const OctreeAdapter &mesh,
-        std::vector<ErrorIndicator> &indicators) const override;
+    void estimate(const std::vector<VecX> &solution, const OctreeAdapter &mesh,
+                  std::vector<ErrorIndicator> &indicators) const override;
 
-    ErrorIndicator estimate_element(
-        const VecX &solution, const OctreeNode &node) const override;
+    ErrorIndicator estimate_element(const VecX &solution, const OctreeNode &node) const override;
 
 private:
-    std::vector<std::pair<std::function<Real(Real, Real)>, Real>>
-        bathymetry_criteria_;
-    std::vector<std::pair<std::function<bool(Real, Real)>, Real>>
-        coastline_criteria_;
+    std::vector<std::pair<std::function<Real(Real, Real)>, Real>> bathymetry_criteria_;
+    std::vector<std::pair<std::function<bool(Real, Real)>, Real>> coastline_criteria_;
 };
 
 /// @brief Solution projection during refinement/coarsening
@@ -191,14 +174,12 @@ public:
     SolutionProjection(const HexahedronBasis &basis);
 
     /// @brief Project solution to children during refinement
-    void project_to_children(
-        const VecX &U_parent, RefineMask mask,
-        std::vector<VecX> &U_children) const;
+    void project_to_children(const VecX &U_parent, RefineMask mask,
+                             std::vector<VecX> &U_children) const;
 
     /// @brief Project solution from children during coarsening
-    void project_from_children(
-        const std::vector<VecX> &U_children, RefineMask mask,
-        VecX &U_parent) const;
+    void project_from_children(const std::vector<VecX> &U_children, RefineMask mask,
+                               VecX &U_parent) const;
 
     /// @brief L2 projection operator from parent to child
     MatX child_projection_matrix(int child_index, RefineMask mask) const;
@@ -221,8 +202,7 @@ private:
 class AdaptiveMeshRefinement {
 public:
     /// @brief Construct AMR controller
-    AdaptiveMeshRefinement(
-        int order, const RefinementParams &params = RefinementParams());
+    AdaptiveMeshRefinement(int order, const RefinementParams &params = RefinementParams());
 
     /// @brief Set error estimator
     void set_error_estimator(std::unique_ptr<ErrorEstimator> estimator);
@@ -234,46 +214,38 @@ public:
     /// @param aoi AOI manager
     /// @param region_name Region requiring finer resolution
     /// @param min_level Minimum refinement level in this region
-    void set_aoi_refinement(
-        const AreaOfInterest &aoi, const std::string &region_name,
-        int min_level);
+    void set_aoi_refinement(const AreaOfInterest &aoi, const std::string &region_name,
+                            int min_level);
 
     /// @brief Clear AOI refinement constraint
     void clear_aoi_refinement();
 
     /// @brief Perform one adaptation cycle
-    int adapt(
-        OctreeAdapter &mesh, std::vector<VecX> &solution,
-        std::vector<std::vector<FaceConnection>> &face_connections);
+    int adapt(OctreeAdapter &mesh, std::vector<VecX> &solution,
+              std::vector<std::vector<FaceConnection>> &face_connections);
 
     /// @brief Mark elements for refinement/coarsening
-    void mark_elements(
-        const OctreeAdapter &mesh, const std::vector<VecX> &solution,
-        std::vector<RefinementAction> &actions, std::vector<RefineMask> &masks);
+    void mark_elements(const OctreeAdapter &mesh, const std::vector<VecX> &solution,
+                       std::vector<RefinementAction> &actions, std::vector<RefineMask> &masks);
 
     /// @brief Apply refinement to mesh
-    void refine_mesh(
-        OctreeAdapter &mesh, const std::vector<Index> &elements_to_refine,
-        const std::vector<RefineMask> &masks);
+    void refine_mesh(OctreeAdapter &mesh, const std::vector<Index> &elements_to_refine,
+                     const std::vector<RefineMask> &masks);
 
     /// @brief Apply coarsening to mesh
-    void coarsen_mesh(
-        OctreeAdapter &mesh, const std::vector<Index> &elements_to_coarsen);
+    void coarsen_mesh(OctreeAdapter &mesh, const std::vector<Index> &elements_to_coarsen);
 
     /// @brief Transfer solution after mesh changes
-    void transfer_solution(
-        const std::vector<VecX> &old_solution,
-        const std::vector<std::pair<Index, std::vector<Index>>> &refinement_map,
-        std::vector<VecX> &new_solution);
+    void transfer_solution(const std::vector<VecX> &old_solution,
+                           const std::vector<std::pair<Index, std::vector<Index>>> &refinement_map,
+                           std::vector<VecX> &new_solution);
 
     /// @brief Rebuild face connections after adaptation
-    void rebuild_face_connections(
-        const OctreeAdapter &mesh,
-        std::vector<std::vector<FaceConnection>> &face_connections);
+    void rebuild_face_connections(const OctreeAdapter &mesh,
+                                  std::vector<std::vector<FaceConnection>> &face_connections);
 
     /// @brief Update mortar interfaces
-    void update_mortar_interfaces(
-        const std::vector<std::vector<FaceConnection>> &face_connections);
+    void update_mortar_interfaces(const std::vector<std::vector<FaceConnection>> &face_connections);
 
     /// @brief Get mortar interface manager
     MortarInterfaceManager &mortar_manager() { return *mortar_manager_; }
@@ -288,7 +260,7 @@ private:
     std::unique_ptr<MortarInterfaceManager> mortar_manager_;
 
     // AOI refinement constraints
-    const AreaOfInterest *aoi_ = nullptr;
+    const AreaOfInterest* aoi_ = nullptr;
     std::string aoi_region_;
     int aoi_min_level_ = 0;
 
@@ -297,16 +269,14 @@ private:
     void enforce_balance(OctreeAdapter &mesh);
 
     /// @brief Apply AOI constraints to marking
-    void apply_aoi_constraints(
-        const OctreeAdapter &mesh, std::vector<RefinementAction> &actions,
-        std::vector<RefineMask> &masks) const;
+    void apply_aoi_constraints(const OctreeAdapter &mesh, std::vector<RefinementAction> &actions,
+                               std::vector<RefineMask> &masks) const;
 };
 
 /// @brief Legacy AMR controller (for compatibility)
 class AMRController {
 public:
-    AMRController(
-        std::shared_ptr<Mesh> mesh, std::unique_ptr<ErrorEstimator> estimator);
+    AMRController(std::shared_ptr<Mesh> mesh, std::unique_ptr<ErrorEstimator> estimator);
 
     void set_criteria(const RefinementCriteria &criteria);
     void mark_elements();
@@ -328,22 +298,21 @@ private:
 
     void refine_element(Index elem_id);
     void coarsen_element(Index elem_id);
-    void interpolate_to_children(
-        const Element &parent, std::vector<Element> &children);
-    void project_from_children(
-        const std::vector<Element> &children, Element &parent);
+    void interpolate_to_children(const Element &parent, std::vector<Element> &children);
+    void project_from_children(const std::vector<Element> &children, Element &parent);
 };
 
 /// @brief Load balancing for parallel AMR
 class LoadBalancer {
 public:
-    enum class Strategy { SpaceFillingCurve, GraphPartition, DiffusiveBalance };
+    enum class Strategy { SpaceFillingCurve,
+                          GraphPartition,
+                          DiffusiveBalance };
 
     void set_strategy(Strategy strategy);
 
     std::vector<int> compute_partition(const Mesh &mesh, int num_procs);
-    std::vector<int>
-    compute_partition(const OctreeAdapter &mesh, int num_procs);
+    std::vector<int> compute_partition(const OctreeAdapter &mesh, int num_procs);
 
     void migrate(Mesh &mesh, const std::vector<int> &new_partition);
 
@@ -357,20 +326,17 @@ private:
 /// @brief AMR flux computation with mortar elements
 class AMRFluxComputation {
 public:
-    AMRFluxComputation(
-        const HexahedronBasis &basis, MortarInterfaceManager &mortar_manager);
+    AMRFluxComputation(const HexahedronBasis &basis, MortarInterfaceManager &mortar_manager);
 
-    void compute_nonconforming_flux(
-        const FaceConnection &conn, const VecX &U_coarse,
-        const std::vector<VecX> &U_fine,
-        const NumericalFluxFunc &numerical_flux, VecX &rhs_coarse,
-        std::vector<VecX> &rhs_fine) const;
+    void compute_nonconforming_flux(const FaceConnection &conn, const VecX &U_coarse,
+                                    const std::vector<VecX> &U_fine,
+                                    const NumericalFluxFunc &numerical_flux, VecX &rhs_coarse,
+                                    std::vector<VecX> &rhs_fine) const;
 
-    void compute_conforming_flux(
-        int face_id_left, int face_id_right, const VecX &U_left,
-        const VecX &U_right, const Vec3 &normal,
-        const NumericalFluxFunc &numerical_flux, VecX &rhs_left,
-        VecX &rhs_right) const;
+    void compute_conforming_flux(int face_id_left, int face_id_right, const VecX &U_left,
+                                 const VecX &U_right, const Vec3 &normal,
+                                 const NumericalFluxFunc &numerical_flux, VecX &rhs_left,
+                                 VecX &rhs_right) const;
 
 private:
     const HexahedronBasis &basis_;

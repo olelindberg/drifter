@@ -20,10 +20,10 @@
 //   SpMat K = assembler.assemble_stiffness();
 //   VecX f = assembler.assemble_rhs(bathymetry_data);
 
-#include "core/types.hpp"
-#include "bathymetry/quadtree_adapter.hpp"
-#include "bathymetry/lagrange_basis_2d.hpp"
 #include "bathymetry/cg_dof_manager.hpp"
+#include "bathymetry/lagrange_basis_2d.hpp"
+#include "bathymetry/quadtree_adapter.hpp"
+#include "core/types.hpp"
 #include <functional>
 #include <memory>
 
@@ -43,12 +43,9 @@ public:
 /// @brief Simple function-based bathymetry data
 class FunctionBathymetry : public BathymetrySource {
 public:
-    explicit FunctionBathymetry(std::function<Real(Real, Real)> func)
-        : func_(std::move(func)) {}
+    explicit FunctionBathymetry(std::function<Real(Real, Real)> func) : func_(std::move(func)) {}
 
-    Real evaluate(Real x, Real y) const override {
-        return func_(x, y);
-    }
+    Real evaluate(Real x, Real y) const override { return func_(x, y); }
 
 private:
     std::function<Real(Real, Real)> func_;
@@ -67,12 +64,8 @@ public:
     /// @param alpha Smoothing weight (curvature penalty)
     /// @param beta Data fitting weight
     /// @param penalty IPDG penalty parameter for C¹ continuity (default 500)
-    BiharmonicAssembler(const QuadtreeAdapter& mesh,
-                        const LagrangeBasis2D& basis,
-                        const CGDofManager& dofs,
-                        Real alpha,
-                        Real beta,
-                        Real penalty = 500.0);
+    BiharmonicAssembler(const QuadtreeAdapter &mesh, const LagrangeBasis2D &basis,
+                        const CGDofManager &dofs, Real alpha, Real beta, Real penalty = 500.0);
 
     // =========================================================================
     // Global assembly
@@ -91,15 +84,14 @@ public:
     ///
     /// @param bathy Bathymetry data source
     /// @return RHS vector (num_global_dofs)
-    VecX assemble_rhs(const BathymetrySource& bathy) const;
+    VecX assemble_rhs(const BathymetrySource &bathy) const;
 
     /// @brief Assemble reduced system (after constraint elimination)
     ///
     /// @param bathy Bathymetry data source
     /// @param[out] K_red Reduced stiffness matrix (num_free_dofs x num_free_dofs)
     /// @param[out] f_red Reduced RHS vector (num_free_dofs)
-    void assemble_reduced_system(const BathymetrySource& bathy,
-                                 SpMat& K_red, VecX& f_red) const;
+    void assemble_reduced_system(const BathymetrySource &bathy, SpMat &K_red, VecX &f_red) const;
 
     // =========================================================================
     // Element-level operations
@@ -136,7 +128,7 @@ public:
     /// @param elem Element index
     /// @param bathy Bathymetry data source
     /// @return Local RHS vector (ndof)
-    VecX element_rhs(Index elem, const BathymetrySource& bathy) const;
+    VecX element_rhs(Index elem, const BathymetrySource &bathy) const;
 
     // =========================================================================
     // IPDG penalty assembly
@@ -148,7 +140,7 @@ public:
     /// Handles both conforming and non-conforming (hanging node) interfaces.
     ///
     /// @param triplets Output triplet list to add to
-    void assemble_ipdg_penalty(std::vector<Eigen::Triplet<Real>>& triplets) const;
+    void assemble_ipdg_penalty(std::vector<Eigen::Triplet<Real>> &triplets) const;
 
     /// @brief Compute edge penalty matrix for a conforming edge
     ///
@@ -158,10 +150,10 @@ public:
     /// @param elem_right Right element index
     /// @param edge_left Edge ID on left element (0-3)
     /// @param edge_right Edge ID on right element (0-3)
-    /// @return Pair of matrices (K_LL, K_LR) for left-left and left-right coupling
-    std::pair<MatX, MatX> edge_penalty_conforming(
-        Index elem_left, Index elem_right,
-        int edge_left, int edge_right) const;
+    /// @return Pair of matrices (K_LL, K_LR) for left-left and left-right
+    /// coupling
+    std::pair<MatX, MatX> edge_penalty_conforming(Index elem_left, Index elem_right, int edge_left,
+                                                  int edge_right) const;
 
     /// @brief Compute edge penalty for non-conforming edge (fine side)
     ///
@@ -170,11 +162,11 @@ public:
     /// @param edge_fine Edge ID on fine element
     /// @param edge_coarse Edge ID on coarse element
     /// @param subedge_idx Which sub-edge of coarse edge (0 or 1)
-    /// @return Pair of matrices (K_FF, K_FC) for fine-fine and fine-coarse coupling
-    std::pair<MatX, MatX> edge_penalty_nonconforming(
-        Index elem_fine, Index elem_coarse,
-        int edge_fine, int edge_coarse,
-        int subedge_idx) const;
+    /// @return Pair of matrices (K_FF, K_FC) for fine-fine and fine-coarse
+    /// coupling
+    std::pair<MatX, MatX> edge_penalty_nonconforming(Index elem_fine, Index elem_coarse,
+                                                     int edge_fine, int edge_coarse,
+                                                     int subedge_idx) const;
 
     // =========================================================================
     // Jacobian and geometry
@@ -198,21 +190,21 @@ public:
     int num_element_dofs() const { return basis_.num_dofs(); }
 
 private:
-    const QuadtreeAdapter& mesh_;
-    const LagrangeBasis2D& basis_;
-    const CGDofManager& dofs_;
-    Real alpha_;    // Smoothing weight
-    Real beta_;     // Data fitting weight
-    Real penalty_;  // IPDG penalty parameter
+    const QuadtreeAdapter &mesh_;
+    const LagrangeBasis2D &basis_;
+    const CGDofManager &dofs_;
+    Real alpha_; // Smoothing weight
+    Real beta_; // Data fitting weight
+    Real penalty_; // IPDG penalty parameter
 
     // Cached quadrature data
-    VecX gauss_nodes_;    // 1D Gauss nodes
-    VecX gauss_weights_;  // 1D Gauss weights
-    int num_gauss_1d_;    // Number of 1D Gauss points
+    VecX gauss_nodes_; // 1D Gauss nodes
+    VecX gauss_weights_; // 1D Gauss weights
+    int num_gauss_1d_; // Number of 1D Gauss points
 
     // Precomputed basis values at Gauss points
-    MatX phi_at_gauss_;      // Basis functions (n_gauss x ndof)
-    MatX lap_at_gauss_;      // Laplacians (n_gauss x ndof)
+    MatX phi_at_gauss_; // Basis functions (n_gauss x ndof)
+    MatX lap_at_gauss_; // Laplacians (n_gauss x ndof)
 
     /// Initialize quadrature data
     void init_quadrature();
@@ -227,4 +219,4 @@ private:
     Real map_to_coarse_edge(Real t, int subedge_idx) const;
 };
 
-}  // namespace drifter
+} // namespace drifter

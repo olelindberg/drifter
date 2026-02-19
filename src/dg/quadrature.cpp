@@ -7,4 +7,4 @@ namespace drifter {
 
 // Quadrature implementation will go here
 
-}  // namespace drifter
+} // namespace drifter

@@ -9,16 +9,14 @@
 namespace drifter {
 namespace io {
 
-void write_bezier_surface_vtk(
-    const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<VecX(Index)> &get_coefficients,
-    const std::function<Real(const VecX &, Real, Real)> &evaluate,
-    int resolution, const std::string &scalar_name) {
+void write_bezier_surface_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
+                              const std::function<VecX(Index)> &get_coefficients,
+                              const std::function<Real(const VecX &, Real, Real)> &evaluate,
+                              int resolution, const std::string &scalar_name) {
 
     std::ofstream file(filename + ".vtu");
     if (!file) {
-        throw std::runtime_error(
-            "write_bezier_surface_vtk: cannot open " + filename + ".vtu");
+        throw std::runtime_error("write_bezier_surface_vtk: cannot open " + filename + ".vtu");
     }
 
     // Use LGL nodes for high-order accurate interpolation
@@ -40,8 +38,8 @@ void write_bezier_surface_vtk(
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
             "byte_order=\"LittleEndian\">\n";
     file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\""
-         << total_cells << "\">\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells
+         << "\">\n";
 
     // Points - evaluate at LGL nodes
     file << "<Points>\n";
@@ -60,8 +58,7 @@ void write_bezier_surface_vtk(
                 Real u = param_nodes(i);
                 Real x = bounds.xmin + u * dx;
                 Real z = evaluate(coeffs, u, v);
-                file << std::setprecision(12) << x << " " << y << " " << z
-                     << "\n";
+                file << std::setprecision(12) << x << " " << y << " " << z << "\n";
             }
         }
     }
@@ -101,8 +98,7 @@ void write_bezier_surface_vtk(
 
     // Point data: elevation
     file << "<PointData Scalars=\"" << scalar_name << "\">\n";
-    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name
-         << "\" format=\"ascii\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name << "\" format=\"ascii\">\n";
     for (Index elem = 0; elem < num_elements; ++elem) {
         VecX coeffs = get_coefficients(elem);
 
@@ -137,16 +133,15 @@ void write_bezier_surface_vtk(
     file.close();
 }
 
-void write_bezier_control_points_vtk(
-    const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<VecX(Index)> &get_coefficients,
-    const std::function<Vec2(int)> &control_point_position, int n1d) {
+void write_bezier_control_points_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
+                                     const std::function<VecX(Index)> &get_coefficients,
+                                     const std::function<Vec2(int)> &control_point_position,
+                                     int n1d) {
 
     // Use filename as-is (caller provides full path with extension)
     std::ofstream file(filename);
     if (!file) {
-        throw std::runtime_error(
-            "write_bezier_control_points_vtk: cannot open " + filename);
+        throw std::runtime_error("write_bezier_control_points_vtk: cannot open " + filename);
     }
 
     int ndof = n1d * n1d;
@@ -162,8 +157,8 @@ void write_bezier_control_points_vtk(
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
             "byte_order=\"LittleEndian\">\n";
     file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\""
-         << total_cells << "\">\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells
+         << "\">\n";
 
     // Points: control point positions with z from solution
     file << "<Points>\n";
@@ -258,10 +253,10 @@ void write_bezier_control_points_vtk(
     file << "</VTKFile>\n";
 }
 
-void write_lagrange_surface_vtk(
-    const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<Real(Index, Real, Real)> &evaluate_in_element,
-    const std::function<Real(Real, Real)> &evaluate_raw, int resolution) {
+void write_lagrange_surface_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
+                                const std::function<Real(Index, Real, Real)> &evaluate_in_element,
+                                const std::function<Real(Real, Real)> &evaluate_raw,
+                                int resolution) {
 
     Index num_elements = mesh.num_elements();
     Index points_per_elem = (resolution + 1) * (resolution + 1);
@@ -295,9 +290,8 @@ void write_lagrange_surface_vtk(
                 // Evaluate CG solution
                 Real depth = evaluate_in_element(e, x, y);
 
-                points.emplace_back(
-                    x, y,
-                    -depth); // z = -depth for visualization
+                points.emplace_back(x, y,
+                                    -depth); // z = -depth for visualization
                 depths.push_back(depth);
 
                 if (evaluate_raw) {
@@ -310,16 +304,15 @@ void write_lagrange_surface_vtk(
     // Write VTU file
     std::ofstream file(filename + ".vtu");
     if (!file) {
-        throw std::runtime_error(
-            "write_lagrange_surface_vtk: cannot open " + filename + ".vtu");
+        throw std::runtime_error("write_lagrange_surface_vtk: cannot open " + filename + ".vtu");
     }
 
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
             "byte_order=\"LittleEndian\">\n";
     file << "  <UnstructuredGrid>\n";
-    file << "    <Piece NumberOfPoints=\"" << total_points
-         << "\" NumberOfCells=\"" << total_quads << "\">\n";
+    file << "    <Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_quads
+         << "\">\n";
 
     // Points
     file << "      <Points>\n";
@@ -346,8 +339,7 @@ void write_lagrange_surface_vtk(
                 Index p1 = base + (i + 1) + j * n1d;
                 Index p2 = base + (i + 1) + (j + 1) * n1d;
                 Index p3 = base + i + (j + 1) * n1d;
-                file << "          " << p0 << " " << p1 << " " << p2 << " "
-                     << p3 << "\n";
+                file << "          " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
             }
         }
     }
@@ -418,12 +410,11 @@ void write_lagrange_surface_vtk(
     file.close();
 }
 
-void write_seabed_surface_vtk(
-    const std::string &filename, const OctreeAdapter &mesh,
-    const std::vector<VecX> &depth_coeffs,
-    const std::vector<Index> &bottom_elements,
-    const std::function<Real(const VecX &, Real, Real)> &evaluate_2d,
-    int resolution) {
+void write_seabed_surface_vtk(const std::string &filename, const OctreeAdapter &mesh,
+                              const std::vector<VecX> &depth_coeffs,
+                              const std::vector<Index> &bottom_elements,
+                              const std::function<Real(const VecX &, Real, Real)> &evaluate_2d,
+                              int resolution) {
 
     const auto &elements = mesh.elements();
 
@@ -473,24 +464,22 @@ void write_seabed_surface_vtk(
     // Write VTU file
     std::ofstream vtk_file(filename + ".vtu");
     if (!vtk_file) {
-        throw std::runtime_error(
-            "write_seabed_surface_vtk: cannot open " + filename + ".vtu");
+        throw std::runtime_error("write_seabed_surface_vtk: cannot open " + filename + ".vtu");
     }
 
     vtk_file << "<?xml version=\"1.0\"?>\n";
     vtk_file << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" "
                 "byte_order=\"LittleEndian\">\n";
     vtk_file << "  <UnstructuredGrid>\n";
-    vtk_file << "    <Piece NumberOfPoints=\"" << all_points.size()
-             << "\" NumberOfCells=\"" << all_quads.size() << "\">\n";
+    vtk_file << "    <Piece NumberOfPoints=\"" << all_points.size() << "\" NumberOfCells=\""
+             << all_quads.size() << "\">\n";
 
     // Points
     vtk_file << "      <Points>\n";
     vtk_file << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" "
                 "format=\"ascii\">\n";
     for (const auto &p : all_points) {
-        vtk_file << "          " << p.x() << " " << p.y() << " " << p.z()
-                 << "\n";
+        vtk_file << "          " << p.x() << " " << p.y() << " " << p.z() << "\n";
     }
     vtk_file << "        </DataArray>\n";
     vtk_file << "      </Points>\n";
@@ -500,8 +489,7 @@ void write_seabed_surface_vtk(
     vtk_file << "        <DataArray type=\"Int64\" Name=\"connectivity\" "
                 "format=\"ascii\">\n";
     for (const auto &q : all_quads) {
-        vtk_file << "          " << q[0] << " " << q[1] << " " << q[2] << " "
-                 << q[3] << "\n";
+        vtk_file << "          " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "\n";
     }
     vtk_file << "        </DataArray>\n";
     vtk_file << "        <DataArray type=\"Int64\" Name=\"offsets\" "
@@ -537,13 +525,11 @@ void write_cg_bezier_surface_vtk(
     const std::string &filename, const QuadtreeAdapter &mesh,
     const std::function<Real(Real, Real)> &evaluate_at, int resolution,
     const std::string &scalar_name,
-    const std::vector<std::pair<std::string, std::vector<Real>>>
-        &element_cell_data) {
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data) {
 
     std::ofstream file(filename + ".vtu");
     if (!file) {
-        throw std::runtime_error(
-            "write_cg_bezier_surface_vtk: cannot open " + filename + ".vtu");
+        throw std::runtime_error("write_cg_bezier_surface_vtk: cannot open " + filename + ".vtu");
     }
 
     int n_pts = resolution > 0 ? resolution : 11;
@@ -572,8 +558,7 @@ void write_cg_bezier_surface_vtk(
         ymax_global = std::max(ymax_global, bounds.ymax);
     }
 
-    Real domain_size =
-        std::max(xmax_global - xmin_global, ymax_global - ymin_global);
+    Real domain_size = std::max(xmax_global - xmin_global, ymax_global - ymin_global);
     Real min_element_size = domain_size;
     for (Index elem = 0; elem < num_elements; ++elem) {
         const auto &bounds = mesh.element_bounds(elem);
@@ -588,9 +573,8 @@ void write_cg_bezier_surface_vtk(
 
     // Hash function for position-based deduplication
     auto quantize = [inv_tol](Real x, Real y) -> std::pair<int64_t, int64_t> {
-        return {
-            static_cast<int64_t>(std::round(x * inv_tol)),
-            static_cast<int64_t>(std::round(y * inv_tol))};
+        return {static_cast<int64_t>(std::round(x * inv_tol)),
+                static_cast<int64_t>(std::round(y * inv_tol))};
     };
 
     // First pass: collect unique vertices and build connectivity
@@ -661,8 +645,8 @@ void write_cg_bezier_surface_vtk(
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
             "byte_order=\"LittleEndian\">\n";
     file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\""
-         << total_cells << "\">\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells
+         << "\">\n";
 
     // Points
     file << "<Points>\n";
@@ -699,8 +683,7 @@ void write_cg_bezier_surface_vtk(
 
     // Point data: elevation
     file << "<PointData Scalars=\"" << scalar_name << "\">\n";
-    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name
-         << "\" format=\"ascii\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name << "\" format=\"ascii\">\n";
     for (Real z : elevations) {
         file << z << "\n";
     }
@@ -715,8 +698,7 @@ void write_cg_bezier_surface_vtk(
     }
     file << "</DataArray>\n";
     for (const auto &[name, values] : element_cell_data) {
-        file << "<DataArray type=\"Float64\" Name=\"" << name
-             << "\" format=\"ascii\">\n";
+        file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
         for (Index elem_id : quad_element_ids) {
             file << std::setprecision(12) << values[elem_id] << "\n";
         }
@@ -734,16 +716,13 @@ void write_cg_bezier_surface_vtk(
 
 void write_cg_bezier_surface_vtk(
     const std::string &filename, const QuadtreeAdapter &mesh,
-    const std::function<Real(Real, Real)> &evaluate_at, Real xmin_domain,
-    Real ymin_domain, Real inv_quantization_tol, int resolution,
-    const std::string &scalar_name,
-    const std::vector<std::pair<std::string, std::vector<Real>>>
-        &element_cell_data) {
+    const std::function<Real(Real, Real)> &evaluate_at, Real xmin_domain, Real ymin_domain,
+    Real inv_quantization_tol, int resolution, const std::string &scalar_name,
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data) {
 
     std::ofstream file(filename + ".vtu");
     if (!file) {
-        throw std::runtime_error(
-            "write_cg_bezier_surface_vtk: cannot open " + filename + ".vtu");
+        throw std::runtime_error("write_cg_bezier_surface_vtk: cannot open " + filename + ".vtu");
     }
 
     int n_pts = resolution > 0 ? resolution : 11;
@@ -758,13 +737,12 @@ void write_cg_bezier_surface_vtk(
 
     // Use provided quantization parameters (from DOF manager)
     // This ensures consistent vertex deduplication with DOF sharing
-    auto quantize = [xmin_domain, ymin_domain, inv_quantization_tol](
-                        Real x, Real y) -> std::pair<int64_t, int64_t> {
+    auto quantize = [xmin_domain, ymin_domain,
+                     inv_quantization_tol](Real x, Real y) -> std::pair<int64_t, int64_t> {
         Real x_rel = x - xmin_domain;
         Real y_rel = y - ymin_domain;
-        return {
-            static_cast<int64_t>(std::round(x_rel * inv_quantization_tol)),
-            static_cast<int64_t>(std::round(y_rel * inv_quantization_tol))};
+        return {static_cast<int64_t>(std::round(x_rel * inv_quantization_tol)),
+                static_cast<int64_t>(std::round(y_rel * inv_quantization_tol))};
     };
 
     // First pass: collect unique vertices and build connectivity
@@ -835,8 +813,8 @@ void write_cg_bezier_surface_vtk(
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
             "byte_order=\"LittleEndian\">\n";
     file << "<UnstructuredGrid>\n";
-    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\""
-         << total_cells << "\">\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << total_cells
+         << "\">\n";
 
     // Points
     file << "<Points>\n";
@@ -873,8 +851,7 @@ void write_cg_bezier_surface_vtk(
 
     // Point data: elevation
     file << "<PointData Scalars=\"" << scalar_name << "\">\n";
-    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name
-         << "\" format=\"ascii\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name << "\" format=\"ascii\">\n";
     for (Real z : elevations) {
         file << z << "\n";
     }
@@ -889,8 +866,7 @@ void write_cg_bezier_surface_vtk(
     }
     file << "</DataArray>\n";
     for (const auto &[name, values] : element_cell_data) {
-        file << "<DataArray type=\"Float64\" Name=\"" << name
-             << "\" format=\"ascii\">\n";
+        file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
         for (Index elem_id : quad_element_ids) {
             file << std::setprecision(12) << values[elem_id] << "\n";
         }
@@ -906,21 +882,18 @@ void write_cg_bezier_surface_vtk(
     file.close();
 }
 
-void write_polygon_vtk(
-    const std::string &filename,
-    const std::vector<std::pair<Real, Real>> &polygon_points, Real z_value,
-    const std::string &polygon_name) {
+void write_polygon_vtk(const std::string &filename,
+                       const std::vector<std::pair<Real, Real>> &polygon_points, Real z_value,
+                       const std::string &polygon_name) {
 
     std::ofstream file(filename + ".vtp");
     if (!file) {
-        throw std::runtime_error(
-            "write_polygon_vtk: cannot open " + filename + ".vtp");
+        throw std::runtime_error("write_polygon_vtk: cannot open " + filename + ".vtp");
     }
 
     size_t n_points = polygon_points.size();
     if (n_points < 3) {
-        throw std::runtime_error(
-            "write_polygon_vtk: polygon must have at least 3 points");
+        throw std::runtime_error("write_polygon_vtk: polygon must have at least 3 points");
     }
 
     // VTP XML header (PolyData format)
@@ -928,8 +901,7 @@ void write_polygon_vtk(
     file << "<VTKFile type=\"PolyData\" version=\"1.0\" "
             "byte_order=\"LittleEndian\">\n";
     file << "  <PolyData>\n";
-    file << "    <Piece NumberOfPoints=\"" << n_points
-         << "\" NumberOfPolys=\"1\">\n";
+    file << "    <Piece NumberOfPoints=\"" << n_points << "\" NumberOfPolys=\"1\">\n";
 
     // Points
     file << "      <Points>\n";
@@ -937,8 +909,7 @@ void write_polygon_vtk(
             "format=\"ascii\">\n";
     file << std::setprecision(12);
     for (const auto &pt : polygon_points) {
-        file << "          " << pt.first << " " << pt.second << " " << z_value
-             << "\n";
+        file << "          " << pt.first << " " << pt.second << " " << z_value << "\n";
     }
     file << "        </DataArray>\n";
     file << "      </Points>\n";

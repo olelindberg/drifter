@@ -13,4 +13,4 @@ namespace drifter {
 // - Vorticity/enstrophy indicator (for ocean dynamics)
 // - Free surface gradient indicator
 
-}  // namespace drifter
+} // namespace drifter

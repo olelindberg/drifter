@@ -23,24 +23,21 @@ void TriharmonicHessian::compute_gauss_quadrature() {
     VecX weights_ref(ngauss_); // Weights on [-1, 1]
 
     if (ngauss_ == 3) {
-        gauss_nodes_ << 0.5 - std::sqrt(3.0 / 5.0) / 2.0, 0.5,
-            0.5 + std::sqrt(3.0 / 5.0) / 2.0;
+        gauss_nodes_ << 0.5 - std::sqrt(3.0 / 5.0) / 2.0, 0.5, 0.5 + std::sqrt(3.0 / 5.0) / 2.0;
         weights_ref << 5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0;
     } else if (ngauss_ == 4) {
         Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
         Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
         Real wa = (18.0 + std::sqrt(30.0)) / 36.0;
         Real wb = (18.0 - std::sqrt(30.0)) / 36.0;
-        gauss_nodes_ << (1.0 - b) / 2.0, (1.0 - a) / 2.0, (1.0 + a) / 2.0,
-            (1.0 + b) / 2.0;
+        gauss_nodes_ << (1.0 - b) / 2.0, (1.0 - a) / 2.0, (1.0 + a) / 2.0, (1.0 + b) / 2.0;
         weights_ref << wb, wa, wa, wb;
     } else if (ngauss_ == 5) {
         Real a = std::sqrt(5.0 - 2.0 * std::sqrt(10.0 / 7.0)) / 3.0;
         Real b = std::sqrt(5.0 + 2.0 * std::sqrt(10.0 / 7.0)) / 3.0;
         Real wa = (322.0 + 13.0 * std::sqrt(70.0)) / 900.0;
         Real wb = (322.0 - 13.0 * std::sqrt(70.0)) / 900.0;
-        gauss_nodes_ << (1.0 - b) / 2.0, (1.0 - a) / 2.0, 0.5, (1.0 + a) / 2.0,
-            (1.0 + b) / 2.0;
+        gauss_nodes_ << (1.0 - b) / 2.0, (1.0 - a) / 2.0, 0.5, (1.0 + a) / 2.0, (1.0 + b) / 2.0;
         weights_ref << wb, wa, 128.0 / 225.0, wa, wb;
     } else if (ngauss_ == 6) {
         // 6-point Gauss-Legendre on [-1, 1]
@@ -51,12 +48,11 @@ void TriharmonicHessian::compute_gauss_quadrature() {
         Real w2 = 0.4679139345726910;
         Real w3 = 0.1713244923791704;
 
-        gauss_nodes_ << (1.0 - x3) / 2.0, (1.0 - x1) / 2.0, (1.0 - x2) / 2.0,
-            (1.0 + x2) / 2.0, (1.0 + x1) / 2.0, (1.0 + x3) / 2.0;
+        gauss_nodes_ << (1.0 - x3) / 2.0, (1.0 - x1) / 2.0, (1.0 - x2) / 2.0, (1.0 + x2) / 2.0,
+            (1.0 + x1) / 2.0, (1.0 + x3) / 2.0;
         weights_ref << w3, w1, w2, w2, w1, w3;
     } else {
-        throw std::invalid_argument(
-            "TriharmonicHessian: only ngauss 3-6 supported");
+        throw std::invalid_argument("TriharmonicHessian: only ngauss 3-6 supported");
     }
 
     // Convert weights from [-1,1] to [0,1]: multiply by 0.5 (Jacobian of
@@ -166,16 +162,14 @@ void TriharmonicHessian::build_hessian() {
 
 Real TriharmonicHessian::energy(const VecX &coeffs) const {
     if (coeffs.size() != BezierBasis2D::NDOF) {
-        throw std::invalid_argument(
-            "TriharmonicHessian::energy: coeffs must have 36 elements");
+        throw std::invalid_argument("TriharmonicHessian::energy: coeffs must have 36 elements");
     }
     return coeffs.transpose() * H_ * coeffs;
 }
 
 VecX TriharmonicHessian::gradient(const VecX &coeffs) const {
     if (coeffs.size() != BezierBasis2D::NDOF) {
-        throw std::invalid_argument(
-            "TriharmonicHessian::gradient: coeffs must have 36 elements");
+        throw std::invalid_argument("TriharmonicHessian::gradient: coeffs must have 36 elements");
     }
     return 2.0 * H_ * coeffs;
 }

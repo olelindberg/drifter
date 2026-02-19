@@ -12,24 +12,22 @@ namespace drifter {
 /// @details Allows independent refinement in X, Y, and Z directions
 enum class RefineMask : uint8_t {
     NONE = 0,
-    X = 1 << 0,     // Refine in X direction
-    Y = 1 << 1,     // Refine in Y direction
-    Z = 1 << 2,     // Refine in Z direction
-    XY = X | Y,     // Refine in X and Y
-    XZ = X | Z,     // Refine in X and Z
-    YZ = Y | Z,     // Refine in Y and Z
+    X = 1 << 0, // Refine in X direction
+    Y = 1 << 1, // Refine in Y direction
+    Z = 1 << 2, // Refine in Z direction
+    XY = X | Y, // Refine in X and Y
+    XZ = X | Z, // Refine in X and Z
+    YZ = Y | Z, // Refine in Y and Z
     XYZ = X | Y | Z // Refine in all directions (isotropic)
 };
 
 // Bitwise operators for RefineMask
 inline RefineMask operator|(RefineMask a, RefineMask b) {
-    return static_cast<RefineMask>(
-        static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+    return static_cast<RefineMask>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
 
 inline RefineMask operator&(RefineMask a, RefineMask b) {
-    return static_cast<RefineMask>(
-        static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
+    return static_cast<RefineMask>(static_cast<uint8_t>(a) & static_cast<uint8_t>(b));
 }
 
 inline RefineMask &operator|=(RefineMask &a, RefineMask b) {
@@ -97,8 +95,7 @@ struct DirectionalLevel {
     int level_z = 0;
 
     DirectionalLevel() = default;
-    DirectionalLevel(int lx, int ly, int lz)
-        : level_x(lx), level_y(ly), level_z(lz) {}
+    DirectionalLevel(int lx, int ly, int lz) : level_x(lx), level_y(ly), level_z(lz) {}
 
     /// Maximum level across all axes
     int max_level() const { return std::max({level_x, level_y, level_z}); }
@@ -108,8 +105,7 @@ struct DirectionalLevel {
 
     /// Check if 2:1 balanced with another level (per-axis)
     bool is_balanced_with(const DirectionalLevel &other) const {
-        return std::abs(level_x - other.level_x) <= 1 &&
-               std::abs(level_y - other.level_y) <= 1 &&
+        return std::abs(level_x - other.level_x) <= 1 && std::abs(level_y - other.level_y) <= 1 &&
                std::abs(level_z - other.level_z) <= 1;
     }
 
@@ -126,13 +122,10 @@ struct DirectionalLevel {
     }
 
     bool operator==(const DirectionalLevel &other) const {
-        return level_x == other.level_x && level_y == other.level_y &&
-               level_z == other.level_z;
+        return level_x == other.level_x && level_y == other.level_y && level_z == other.level_z;
     }
 
-    bool operator!=(const DirectionalLevel &other) const {
-        return !(*this == other);
-    }
+    bool operator!=(const DirectionalLevel &other) const { return !(*this == other); }
 };
 
 } // namespace drifter

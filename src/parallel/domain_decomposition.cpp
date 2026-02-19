@@ -1,8 +1,8 @@
 #include "parallel/domain_decomposition.hpp"
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <stdexcept>
-#include <cmath>
 
 namespace drifter {
 
@@ -11,23 +11,15 @@ namespace drifter {
 // =============================================================================
 
 #ifdef DRIFTER_USE_MPI
-DomainDecomposition::DomainDecomposition(MPI_Comm comm)
-    : comm_(comm)
-{
+DomainDecomposition::DomainDecomposition(MPI_Comm comm) : comm_(comm) {
     MPI_Comm_rank(comm_, &rank_);
     MPI_Comm_size(comm_, &size_);
 }
 #else
-DomainDecomposition::DomainDecomposition()
-    : rank_(0)
-    , size_(1)
-{
-}
+DomainDecomposition::DomainDecomposition() : rank_(0), size_(1) {}
 #endif
 
-void DomainDecomposition::set_global_mesh(const OctreeAdapter& mesh) {
-    mesh_ = &mesh;
-}
+void DomainDecomposition::set_global_mesh(const OctreeAdapter &mesh) { mesh_ = &mesh; }
 
 Index DomainDecomposition::partition(PartitionStrategy strategy) {
     if (!mesh_) {
@@ -35,37 +27,37 @@ Index DomainDecomposition::partition(PartitionStrategy strategy) {
     }
 
     switch (strategy) {
-        case PartitionStrategy::Morton:
-            return partition_morton();
-        case PartitionStrategy::Metis:
-            return partition_metis();
-        case PartitionStrategy::Uniform:
-            // Simple uniform distribution
-            {
-                Index num_elements = mesh_->num_elements();
-                partition_.resize(num_elements);
-                Index per_rank = num_elements / size_;
-                Index remainder = num_elements % size_;
+    case PartitionStrategy::Morton:
+        return partition_morton();
+    case PartitionStrategy::Metis:
+        return partition_metis();
+    case PartitionStrategy::Uniform:
+        // Simple uniform distribution
+        {
+            Index num_elements = mesh_->num_elements();
+            partition_.resize(num_elements);
+            Index per_rank = num_elements / size_;
+            Index remainder = num_elements % size_;
 
-                Index idx = 0;
-                for (int r = 0; r < size_; ++r) {
-                    Index count = per_rank + (r < remainder ? 1 : 0);
-                    for (Index i = 0; i < count; ++i) {
-                        partition_[idx++] = r;
-                    }
+            Index idx = 0;
+            for (int r = 0; r < size_; ++r) {
+                Index count = per_rank + (r < remainder ? 1 : 0);
+                for (Index i = 0; i < count; ++i) {
+                    partition_[idx++] = r;
                 }
-
-                // Build local element list
-                local_elements_.clear();
-                for (Index i = 0; i < num_elements; ++i) {
-                    if (partition_[i] == rank_) {
-                        local_elements_.push_back(i);
-                    }
-                }
-                return local_elements_.size();
             }
-        default:
-            return partition_morton();
+
+            // Build local element list
+            local_elements_.clear();
+            for (Index i = 0; i < num_elements; ++i) {
+                if (partition_[i] == rank_) {
+                    local_elements_.push_back(i);
+                }
+            }
+            return local_elements_.size();
+        }
+    default:
+        return partition_morton();
     }
 }
 
@@ -94,7 +86,7 @@ Index DomainDecomposition::partition_morton() {
 }
 
 void DomainDecomposition::compute_morton_partition() {
-    const auto& elements = mesh_->elements();
+    const auto &elements = mesh_->elements();
     Index num_elements = static_cast<Index>(elements.size());
     partition_.resize(num_elements);
 
@@ -108,7 +100,7 @@ void DomainDecomposition::compute_morton_partition() {
 
     // Sort by Morton code
     std::sort(morton_indexed.begin(), morton_indexed.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+              [](const auto &a, const auto &b) { return a.first < b.first; });
 
     // Distribute contiguous chunks to ranks
     Index per_rank = num_elements / size_;
@@ -143,15 +135,16 @@ void DomainDecomposition::compute_metis_partition() {
     compute_morton_partition();
 }
 
-void DomainDecomposition::build_communication_maps(const GhostConfig& config) {
+void DomainDecomposition::build_communication_maps(const GhostConfig &config) {
     identify_ghost_elements(config);
     build_neighbor_lists();
 }
 
-void DomainDecomposition::identify_ghost_elements(const GhostConfig& /*config*/) {
+void DomainDecomposition::identify_ghost_elements(const GhostConfig & /*config*/) {
     ghost_elements_.clear();
 
-    if (!mesh_) return;
+    if (!mesh_)
+        return;
 
     std::set<Index> ghost_set;
 
@@ -161,7 +154,7 @@ void DomainDecomposition::identify_ghost_elements(const GhostConfig& /*config*/)
         auto face_neighbors = mesh_->get_face_neighbors(local_elem);
 
         for (int face = 0; face < 6; ++face) {
-            const auto& neighbor_info = face_neighbors[face];
+            const auto &neighbor_info = face_neighbors[face];
             for (Index neighbor_global : neighbor_info.neighbor_elements) {
                 if (neighbor_global < static_cast<Index>(partition_.size()) &&
                     partition_[neighbor_global] != rank_) {
@@ -186,7 +179,8 @@ void DomainDecomposition::identify_ghost_elements(const GhostConfig& /*config*/)
 void DomainDecomposition::build_neighbor_lists() {
     neighbors_.clear();
 
-    if (!mesh_) return;
+    if (!mesh_)
+        return;
 
     // Group ghost elements by owner rank
     std::map<int, std::vector<Index>> ghosts_by_rank;
@@ -201,7 +195,7 @@ void DomainDecomposition::build_neighbor_lists() {
         auto face_neighbors = mesh_->get_face_neighbors(local_elem);
 
         for (int face = 0; face < 6; ++face) {
-            const auto& neighbor_info = face_neighbors[face];
+            const auto &neighbor_info = face_neighbors[face];
             for (Index neighbor_global : neighbor_info.neighbor_elements) {
                 if (neighbor_global < static_cast<Index>(partition_.size())) {
                     int neighbor_rank = partition_[neighbor_global];
@@ -214,7 +208,7 @@ void DomainDecomposition::build_neighbor_lists() {
     }
 
     // Build neighbor communication structures
-    for (const auto& [neighbor_rank, recv_globals] : ghosts_by_rank) {
+    for (const auto &[neighbor_rank, recv_globals] : ghosts_by_rank) {
         NeighborComm nc;
         nc.rank = neighbor_rank;
 
@@ -233,11 +227,11 @@ void DomainDecomposition::build_neighbor_lists() {
 
 #ifdef DRIFTER_USE_MPI
     // Exchange send/receive counts to ensure consistency
-    for (auto& nc : neighbors_) {
-        (void)nc;  // Suppress unused warning
-        // The other rank's recv_elements should match our send_elements
-        // and vice versa. This is handled by the symmetric identification
-        // above, but could be verified with MPI communication.
+    for (auto &nc : neighbors_) {
+        (void)nc; // Suppress unused warning
+                  // The other rank's recv_elements should match our send_elements
+                  // and vice versa. This is handled by the symmetric identification
+                  // above, but could be verified with MPI communication.
     }
 #endif
 }
@@ -280,7 +274,7 @@ bool DomainDecomposition::is_local(Index global_elem_id) const {
     return partition_[global_elem_id] == rank_;
 }
 
-void DomainDecomposition::rebalance(const OctreeAdapter& new_mesh) {
+void DomainDecomposition::rebalance(const OctreeAdapter &new_mesh) {
     mesh_ = &new_mesh;
     partition(PartitionStrategy::Morton);
     build_communication_maps();
@@ -291,21 +285,15 @@ void DomainDecomposition::rebalance(const OctreeAdapter& new_mesh) {
 // =============================================================================
 
 #ifdef DRIFTER_USE_MPI
-LoadBalancer::LoadBalancer(MPI_Comm comm)
-    : comm_(comm)
-{
+LoadBalancer::LoadBalancer(MPI_Comm comm) : comm_(comm) {
     MPI_Comm_rank(comm_, &rank_);
     MPI_Comm_size(comm_, &size_);
 }
 #else
-LoadBalancer::LoadBalancer()
-    : rank_(0)
-    , size_(1)
-{
-}
+LoadBalancer::LoadBalancer() : rank_(0), size_(1) {}
 #endif
 
-Real LoadBalancer::compute_imbalance(const DomainDecomposition& decomp) const {
+Real LoadBalancer::compute_imbalance(const DomainDecomposition &decomp) const {
     Index local_count = decomp.num_local_elements();
 
 #ifdef DRIFTER_USE_MPI
@@ -314,26 +302,25 @@ Real LoadBalancer::compute_imbalance(const DomainDecomposition& decomp) const {
     MPI_Allreduce(&local_count, &total_count, 1, MPI_LONG_LONG, MPI_SUM, comm_);
 
     Real avg = static_cast<Real>(total_count) / size_;
-    if (avg < 1e-10) return 1.0;
+    if (avg < 1e-10)
+        return 1.0;
 
     return static_cast<Real>(max_count) / avg;
 #else
-    (void)local_count;  // Suppress unused warning
-    return 1.0;  // Perfect balance with single process
+    (void)local_count; // Suppress unused warning
+    return 1.0; // Perfect balance with single process
 #endif
 }
 
-bool LoadBalancer::needs_rebalance(const DomainDecomposition& decomp,
-                                    Real threshold) const {
+bool LoadBalancer::needs_rebalance(const DomainDecomposition &decomp, Real threshold) const {
     return compute_imbalance(decomp) > threshold;
 }
 
-std::vector<int> LoadBalancer::compute_balanced_partition(
-    const OctreeAdapter& mesh,
-    const DomainDecomposition& /*current_decomp*/)
-{
+std::vector<int>
+LoadBalancer::compute_balanced_partition(const OctreeAdapter &mesh,
+                                         const DomainDecomposition & /*current_decomp*/) {
     // Use Morton partitioning for balanced result
-    const auto& elements = mesh.elements();
+    const auto &elements = mesh.elements();
     Index num_elements = static_cast<Index>(elements.size());
     std::vector<int> new_partition(num_elements);
 
@@ -346,7 +333,7 @@ std::vector<int> LoadBalancer::compute_balanced_partition(
     }
 
     std::sort(morton_indexed.begin(), morton_indexed.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+              [](const auto &a, const auto &b) { return a.first < b.first; });
 
     Index per_rank = num_elements / size_;
     Index remainder = num_elements % size_;
@@ -364,10 +351,8 @@ std::vector<int> LoadBalancer::compute_balanced_partition(
     return new_partition;
 }
 
-LoadBalancer::MigrationPlan LoadBalancer::compute_migration(
-    const std::vector<int>& old_partition,
-    const std::vector<int>& new_partition)
-{
+LoadBalancer::MigrationPlan LoadBalancer::compute_migration(const std::vector<int> &old_partition,
+                                                            const std::vector<int> &new_partition) {
     MigrationPlan plan;
 
     if (old_partition.size() != new_partition.size()) {
@@ -398,30 +383,22 @@ LoadBalancer::MigrationPlan LoadBalancer::compute_migration(
 // =============================================================================
 
 #ifdef DRIFTER_USE_MPI
-DiffusiveBalancer::DiffusiveBalancer(MPI_Comm comm)
-    : comm_(comm)
-{
+DiffusiveBalancer::DiffusiveBalancer(MPI_Comm comm) : comm_(comm) {
     MPI_Comm_rank(comm_, &rank_);
     MPI_Comm_size(comm_, &size_);
 }
 #else
-DiffusiveBalancer::DiffusiveBalancer()
-    : rank_(0)
-    , size_(1)
-{
-}
+DiffusiveBalancer::DiffusiveBalancer() : rank_(0), size_(1) {}
 #endif
 
-Index DiffusiveBalancer::balance_step(DomainDecomposition& decomp,
-                                       OctreeAdapter& /*mesh*/) {
+Index DiffusiveBalancer::balance_step(DomainDecomposition &decomp, OctreeAdapter & /*mesh*/) {
     Index migrated = 0;
 
 #ifdef DRIFTER_USE_MPI
     // Gather element counts from all ranks
     Index local_count = decomp.num_local_elements();
     std::vector<Index> all_counts(size_);
-    MPI_Allgather(&local_count, 1, MPI_LONG_LONG,
-                  all_counts.data(), 1, MPI_LONG_LONG, comm_);
+    MPI_Allgather(&local_count, 1, MPI_LONG_LONG, all_counts.data(), 1, MPI_LONG_LONG, comm_);
 
     // Compute average
     Index total = std::accumulate(all_counts.begin(), all_counts.end(), Index(0));
@@ -430,12 +407,11 @@ Index DiffusiveBalancer::balance_step(DomainDecomposition& decomp,
     // If we have more than average, offer elements to neighbors with less
     if (local_count > avg + 1) {
         // Find neighbors that need elements
-        for (const auto& neighbor : decomp.neighbors()) {
+        for (const auto &neighbor : decomp.neighbors()) {
             int nr = neighbor.rank;
             if (all_counts[nr] < avg - 1) {
                 // This neighbor needs elements
-                Index to_send = std::min(local_count - avg,
-                                          avg - all_counts[nr]) / 2;
+                Index to_send = std::min(local_count - avg, avg - all_counts[nr]) / 2;
                 if (to_send > 0) {
                     // Select boundary elements to migrate
                     auto elements = select_boundary_elements(decomp, nr, to_send);
@@ -450,16 +426,14 @@ Index DiffusiveBalancer::balance_step(DomainDecomposition& decomp,
         }
     }
 #else
-    (void)decomp;  // Suppress unused warning
+    (void)decomp; // Suppress unused warning
 #endif
 
     return migrated;
 }
 
-void DiffusiveBalancer::balance(DomainDecomposition& decomp,
-                                 OctreeAdapter& mesh,
-                                 Real tolerance,
-                                 int max_iterations) {
+void DiffusiveBalancer::balance(DomainDecomposition &decomp, OctreeAdapter &mesh, Real tolerance,
+                                int max_iterations) {
     LoadBalancer lb;
 #ifdef DRIFTER_USE_MPI
     lb = LoadBalancer(comm_);
@@ -473,7 +447,7 @@ void DiffusiveBalancer::balance(DomainDecomposition& decomp,
 
         Index migrated = balance_step(decomp, mesh);
         if (migrated == 0) {
-            break;  // No progress possible
+            break; // No progress possible
         }
 
         // Rebuild communication maps after migration
@@ -481,15 +455,12 @@ void DiffusiveBalancer::balance(DomainDecomposition& decomp,
     }
 }
 
-std::vector<Index> DiffusiveBalancer::select_boundary_elements(
-    const DomainDecomposition& decomp,
-    int neighbor_rank,
-    Index count)
-{
+std::vector<Index> DiffusiveBalancer::select_boundary_elements(const DomainDecomposition &decomp,
+                                                               int neighbor_rank, Index count) {
     std::vector<Index> selected;
 
     // Find elements that border the target neighbor
-    for (const auto& nc : decomp.neighbors()) {
+    for (const auto &nc : decomp.neighbors()) {
         if (nc.rank == neighbor_rank) {
             // These elements are adjacent to the neighbor
             for (Index local : nc.send_elements) {
@@ -505,4 +476,4 @@ std::vector<Index> DiffusiveBalancer::select_boundary_elements(
     return selected;
 }
 
-}  // namespace drifter
+} // namespace drifter

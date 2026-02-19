@@ -11,7 +11,7 @@ namespace drifter {
 
 class ForwardEuler : public TimeStepper {
 public:
-    void step(Real t, Real dt, VecX& U, const RHSFunction& rhs) override {
+    void step(Real t, Real dt, VecX &U, const RHSFunction &rhs) override {
         k_.resize(U.size());
         rhs(t, U, k_);
         U += dt * k_;
@@ -30,7 +30,7 @@ private:
 
 class RK2Midpoint : public TimeStepper {
 public:
-    void step(Real t, Real dt, VecX& U, const RHSFunction& rhs) override {
+    void step(Real t, Real dt, VecX &U, const RHSFunction &rhs) override {
         k1_.resize(U.size());
         k2_.resize(U.size());
         U_tmp_.resize(U.size());
@@ -61,7 +61,7 @@ private:
 // u(2) = 3/4 * u(n) + 1/4 * (u(1) + dt * L(u(1)))
 // u(n+1) = 1/3 * u(n) + 2/3 * (u(2) + dt * L(u(2)))
 
-void SSPRK3::step(Real t, Real dt, VecX& U, const RHSFunction& rhs) {
+void SSPRK3::step(Real t, Real dt, VecX &U, const RHSFunction &rhs) {
     U1_.resize(U.size());
     U2_.resize(U.size());
     k_.resize(U.size());
@@ -85,7 +85,7 @@ void SSPRK3::step(Real t, Real dt, VecX& U, const RHSFunction& rhs) {
 
 class RK4Classic : public TimeStepper {
 public:
-    void step(Real t, Real dt, VecX& U, const RHSFunction& rhs) override {
+    void step(Real t, Real dt, VecX &U, const RHSFunction &rhs) override {
         k1_.resize(U.size());
         k2_.resize(U.size());
         k3_.resize(U.size());
@@ -123,7 +123,7 @@ private:
 // =============================================================================
 // 5-stage, 4th order, optimized for DG
 
-void LSRK45::step(Real t, Real dt, VecX& U, const RHSFunction& rhs) {
+void LSRK45::step(Real t, Real dt, VecX &U, const RHSFunction &rhs) {
     int n = static_cast<int>(U.size());
     resid_.resize(n);
     tmp_.resize(n);
@@ -148,7 +148,7 @@ void LSRK45::step(Real t, Real dt, VecX& U, const RHSFunction& rhs) {
 
 class RK45DormandPrince : public TimeStepper {
 public:
-    void step(Real t, Real dt, VecX& U, const RHSFunction& rhs) override {
+    void step(Real t, Real dt, VecX &U, const RHSFunction &rhs) override {
         // Standard Dormand-Prince coefficients
         k1_.resize(U.size());
         k2_.resize(U.size());
@@ -175,19 +175,17 @@ public:
 
         // k5 = f(t + 8*dt/9, ...)
         U_tmp_ = U + dt * (19372.0 / 6561.0 * k1_ - 25360.0 / 2187.0 * k2_ +
-                          64448.0 / 6561.0 * k3_ - 212.0 / 729.0 * k4_);
+                           64448.0 / 6561.0 * k3_ - 212.0 / 729.0 * k4_);
         rhs(t + 8.0 * dt / 9.0, U_tmp_, k5_);
 
         // k6 = f(t + dt, ...)
-        U_tmp_ = U + dt * (9017.0 / 3168.0 * k1_ - 355.0 / 33.0 * k2_ +
-                          46732.0 / 5247.0 * k3_ + 49.0 / 176.0 * k4_ -
-                          5103.0 / 18656.0 * k5_);
+        U_tmp_ = U + dt * (9017.0 / 3168.0 * k1_ - 355.0 / 33.0 * k2_ + 46732.0 / 5247.0 * k3_ +
+                           49.0 / 176.0 * k4_ - 5103.0 / 18656.0 * k5_);
         rhs(t + dt, U_tmp_, k6_);
 
         // 5th order solution (used for advancing)
-        U += dt * (35.0 / 384.0 * k1_ + 500.0 / 1113.0 * k3_ +
-                   125.0 / 192.0 * k4_ - 2187.0 / 6784.0 * k5_ +
-                   11.0 / 84.0 * k6_);
+        U += dt * (35.0 / 384.0 * k1_ + 500.0 / 1113.0 * k3_ + 125.0 / 192.0 * k4_ -
+                   2187.0 / 6784.0 * k5_ + 11.0 / 84.0 * k6_);
 
         // 4th order solution would be:
         // U4 = U + dt * (5179/57600*k1 + 7571/16695*k3 + 393/640*k4 -
@@ -221,7 +219,7 @@ public:
         }
     }
 
-    void step(Real t, Real dt, VecX& U, const RHSFunction& rhs) override {
+    void step(Real t, Real dt, VecX &U, const RHSFunction &rhs) override {
         inner_->step(t, dt, U, rhs);
     }
 
@@ -241,25 +239,17 @@ std::unique_ptr<TimeStepper> TimeStepper::forward_euler() {
     return std::make_unique<ForwardEuler>();
 }
 
-std::unique_ptr<TimeStepper> TimeStepper::rk2_midpoint() {
-    return std::make_unique<RK2Midpoint>();
-}
+std::unique_ptr<TimeStepper> TimeStepper::rk2_midpoint() { return std::make_unique<RK2Midpoint>(); }
 
-std::unique_ptr<TimeStepper> TimeStepper::rk3_ssp() {
-    return std::make_unique<SSPRK3>();
-}
+std::unique_ptr<TimeStepper> TimeStepper::rk3_ssp() { return std::make_unique<SSPRK3>(); }
 
-std::unique_ptr<TimeStepper> TimeStepper::rk4_classic() {
-    return std::make_unique<RK4Classic>();
-}
+std::unique_ptr<TimeStepper> TimeStepper::rk4_classic() { return std::make_unique<RK4Classic>(); }
 
 std::unique_ptr<TimeStepper> TimeStepper::rk45_dormand_prince() {
     return std::make_unique<RK45DormandPrince>();
 }
 
-std::unique_ptr<TimeStepper> TimeStepper::rkdg(int order) {
-    return std::make_unique<RKDG>(order);
-}
+std::unique_ptr<TimeStepper> TimeStepper::rkdg(int order) { return std::make_unique<RKDG>(order); }
 
 // =============================================================================
 // AdaptiveTimeController implementation
@@ -270,7 +260,7 @@ AdaptiveTimeController::AdaptiveTimeController(Real cfl_target, Real dt_min, Rea
 
 Real AdaptiveTimeController::compute_dt(Real max_wave_speed, Real min_element_size) const {
     if (max_wave_speed < 1e-14) {
-        return dt_max_;  // Stationary - use maximum timestep
+        return dt_max_; // Stationary - use maximum timestep
     }
 
     Real dt = cfl_ * min_element_size / max_wave_speed;
@@ -279,7 +269,7 @@ Real AdaptiveTimeController::compute_dt(Real max_wave_speed, Real min_element_si
 
 Real AdaptiveTimeController::adjust_dt(Real dt, Real error, Real tolerance) const {
     if (error < 1e-14) {
-        return std::min(dt * 2.0, dt_max_);  // Error very small, increase dt
+        return std::min(dt * 2.0, dt_max_); // Error very small, increase dt
     }
 
     // Standard error-based adjustment: dt_new = dt * (tol / err)^(1/p)
@@ -294,11 +284,11 @@ Real AdaptiveTimeController::adjust_dt(Real dt, Real error, Real tolerance) cons
 // IMEX Time Stepper implementation
 // =============================================================================
 
-void IMEXTimeStepper::step(Real t, Real dt, VecX& U,
-                            const RHSFunction& explicit_rhs,
-                            const ImplicitSolver& implicit_solve) {
+void IMEXTimeStepper::step(Real t, Real dt, VecX &U, const RHSFunction &explicit_rhs,
+                           const ImplicitSolver &implicit_solve) {
     // Simple IMEX-RK2 (Ascher-Ruuth-Spiteri ARS(2,2,2))
-    // Combines explicit treatment of advection with implicit treatment of stiff terms
+    // Combines explicit treatment of advection with implicit treatment of stiff
+    // terms
 
     k1_.resize(U.size());
     k2_.resize(U.size());
@@ -309,7 +299,7 @@ void IMEXTimeStepper::step(Real t, Real dt, VecX& U,
     explicit_rhs(t, U, k1_);
 
     // Implicit: solve (I - gamma*dt*L_implicit) * U1 = U + gamma*dt*k1
-    Real gamma = 1.0 - 1.0 / std::sqrt(2.0);  // SDIRK parameter
+    Real gamma = 1.0 - 1.0 / std::sqrt(2.0); // SDIRK parameter
 
     tmp_ = U + gamma * dt * k1_;
     implicit_solve(t + gamma * dt, gamma * dt, tmp_);
@@ -324,4 +314,4 @@ void IMEXTimeStepper::step(Real t, Real dt, VecX& U,
     implicit_solve(t + dt, gamma * dt, U);
 }
 
-}  // namespace drifter
+} // namespace drifter

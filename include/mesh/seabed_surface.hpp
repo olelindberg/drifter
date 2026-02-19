@@ -33,9 +33,8 @@ public:
     /// @param order Polynomial order for Bernstein representation
     /// @param method Interpolation method (Bernstein recommended for
     /// boundedness)
-    SeabedSurface(
-        const OctreeAdapter &mesh, int order,
-        SeabedInterpolation method = SeabedInterpolation::Bernstein);
+    SeabedSurface(const OctreeAdapter &mesh, int order,
+                  SeabedInterpolation method = SeabedInterpolation::Bernstein);
 
     /// @brief Initialize from raw bathymetry data
     /// Samples bathymetry at LGL nodes on each bottom element's bottom face,
@@ -50,8 +49,7 @@ public:
     /// @param bathy Bathymetry data (e.g., from GeoTIFF)
     /// @param smoothing_factor Filter radius = factor * min(element_size), e.g.
     /// 0.5
-    void set_from_bathymetry_smoothed(
-        const BathymetryData &bathy, Real smoothing_factor);
+    void set_from_bathymetry_smoothed(const BathymetryData &bathy, Real smoothing_factor);
 
     /// @brief Set coefficients directly for a specific element
     /// @param seabed_elem_idx Index in bottom_elements_ (not mesh element
@@ -95,16 +93,13 @@ public:
     /// Interpolates parent's coefficients to children.
     /// @param parent_mesh_idx Mesh index of parent element
     /// @param child_mesh_indices Mesh indices of new child elements
-    void on_refine(
-        Index parent_mesh_idx, const std::vector<Index> &child_mesh_indices);
+    void on_refine(Index parent_mesh_idx, const std::vector<Index> &child_mesh_indices);
 
     /// @brief Called when bottom-layer elements are coarsened
     /// Projects children's coefficients to new parent.
     /// @param child_mesh_indices Mesh indices of child elements being removed
     /// @param new_parent_mesh_idx Mesh index of new parent element
-    void on_coarsen(
-        const std::vector<Index> &child_mesh_indices,
-        Index new_parent_mesh_idx);
+    void on_coarsen(const std::vector<Index> &child_mesh_indices, Index new_parent_mesh_idx);
 
     /// @brief Rebuild seabed surface from current mesh state
     /// Use after major mesh changes or when callbacks weren't used.
@@ -128,9 +123,7 @@ public:
     size_t num_elements() const { return bottom_elements_.size(); }
 
     /// @brief Get mesh element index for a seabed element
-    Index mesh_element_index(size_t seabed_idx) const {
-        return bottom_elements_[seabed_idx];
-    }
+    Index mesh_element_index(size_t seabed_idx) const { return bottom_elements_[seabed_idx]; }
 
     /// @brief Get seabed element index for a mesh element (-1 if not bottom
     /// layer)
@@ -140,21 +133,17 @@ public:
     bool is_bottom_element(Index mesh_idx) const;
 
     /// @brief Get depth coefficients for a seabed element
-    const VecX &coefficients(size_t seabed_idx) const {
-        return depth_coeffs_[seabed_idx];
-    }
+    const VecX &coefficients(size_t seabed_idx) const { return depth_coeffs_[seabed_idx]; }
 
     /// @brief Get all depth coefficients (for VTK output, etc.)
     const std::vector<VecX> &all_coefficients() const { return depth_coeffs_; }
 
     /// @brief Get coordinates for a seabed element (3*(order+1)^2 interleaved
     /// x,y,z)
-    const VecX &coordinates(size_t seabed_idx) const {
-        return coordinates_[seabed_idx];
-    }
+    const VecX &coordinates(size_t seabed_idx) const { return coordinates_[seabed_idx]; }
 
 private:
-    const OctreeAdapter *mesh_;
+    const OctreeAdapter* mesh_;
     int order_;
     SeabedInterpolation method_;
 
@@ -185,12 +174,10 @@ private:
     Index find_seabed_element(Real x, Real y) const;
 
     // Transform world coords to reference coords for an element
-    void world_to_reference(
-        size_t seabed_idx, Real x, Real y, Real &xi, Real &eta) const;
+    void world_to_reference(size_t seabed_idx, Real x, Real y, Real &xi, Real &eta) const;
 
     // Sample bathymetry with box filter averaging (no pixel cap)
-    Real sample_smoothed(
-        const BathymetryData &bathy, Real x, Real y, Real filter_radius) const;
+    Real sample_smoothed(const BathymetryData &bathy, Real x, Real y, Real filter_radius) const;
 };
 
 } // namespace drifter

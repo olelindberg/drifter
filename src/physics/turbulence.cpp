@@ -20,4 +20,4 @@ namespace drifter {
 // where K_m = eddy viscosity for momentum
 //       K_h = eddy diffusivity for tracers
 
-}  // namespace drifter
+} // namespace drifter

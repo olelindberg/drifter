@@ -18,4 +18,4 @@ namespace drifter {
 // - compute_physical_flux(U) -> (F, G, W)
 // - compute_max_wavespeed(U) -> |u| + c (for CFL)
 
-}  // namespace drifter
+} // namespace drifter

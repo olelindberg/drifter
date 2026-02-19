@@ -29,8 +29,7 @@ struct ElementBounds {
 
     /// Element center
     Vec3 center() const {
-        return Vec3(
-            0.5 * (xmin + xmax), 0.5 * (ymin + ymax), 0.5 * (zmin + zmax));
+        return Vec3(0.5 * (xmin + xmax), 0.5 * (ymin + ymax), 0.5 * (zmin + zmax));
     }
 
     /// Element size in each direction
@@ -38,8 +37,8 @@ struct ElementBounds {
 
     /// Check if point is inside bounds
     bool contains(const Vec3 &p) const {
-        return p(0) >= xmin && p(0) <= xmax && p(1) >= ymin && p(1) <= ymax &&
-               p(2) >= zmin && p(2) <= zmax;
+        return p(0) >= xmin && p(0) <= xmax && p(1) >= ymin && p(1) <= ymax && p(2) >= zmin &&
+               p(2) <= zmax;
     }
 };
 
@@ -63,7 +62,7 @@ struct OctreeNode {
     std::vector<std::unique_ptr<OctreeNode>> children;
 
     /// Parent pointer (nullptr for root)
-    OctreeNode *parent = nullptr;
+    OctreeNode* parent = nullptr;
 
     /// Local index within octree (leaf numbering)
     Index leaf_index = -1;
@@ -107,8 +106,7 @@ public:
     /// @param xmin, xmax X bounds
     /// @param ymin, ymax Y bounds
     /// @param zmin, zmax Z bounds (sigma coordinate: -1 to 0 typically)
-    OctreeAdapter(
-        Real xmin, Real xmax, Real ymin, Real ymax, Real zmin, Real zmax);
+    OctreeAdapter(Real xmin, Real xmax, Real ymin, Real ymax, Real zmin, Real zmax);
 
     /// @brief Build initial uniform grid
     /// @param nx, ny, nz Number of elements in each direction
@@ -117,9 +115,8 @@ public:
     /// @brief Build from refinement function
     /// @param refine_func Function returning true if element should be refined
     /// @param max_level Maximum refinement level per axis
-    void build_adaptive(
-        const std::function<bool(const ElementBounds &)> &refine_func,
-        int max_level_x, int max_level_y, int max_level_z);
+    void build_adaptive(const std::function<bool(const ElementBounds &)> &refine_func,
+                        int max_level_x, int max_level_y, int max_level_z);
 
     /// @brief Balance the octree for 2:1 constraint
     /// @details Ensures adjacent elements differ by at most 1 level per axis
@@ -128,9 +125,7 @@ public:
     /// @brief Refine specific elements
     /// @param elements Elements to refine
     /// @param masks Refinement mask for each element
-    void refine(
-        const std::vector<Index> &elements,
-        const std::vector<RefineMask> &masks);
+    void refine(const std::vector<Index> &elements, const std::vector<RefineMask> &masks);
 
     /// @brief Coarsen specific elements (group siblings back to parent)
     /// @param parent_elements Parent elements whose children should merge
@@ -159,7 +154,7 @@ public:
     Vec3 element_size(Index elem) const;
 
     /// Get all leaf elements
-    const std::vector<OctreeNode *> &elements() const { return leaves_; }
+    const std::vector<OctreeNode*> &elements() const { return leaves_; }
 
     // =========================================================================
     // Connectivity
@@ -195,30 +190,30 @@ public:
     /// @brief Partition elements by Morton code for MPI
     /// @param num_partitions Number of partitions
     /// @return Vector of (start, end) indices for each partition
-    std::vector<std::pair<Index, Index>>
-    morton_partition(int num_partitions) const;
+    std::vector<std::pair<Index, Index>> morton_partition(int num_partitions) const;
 
     // =========================================================================
     // Iteration
     // =========================================================================
 
     /// Iterate over all leaf elements
-    template <typename Func> void for_each_element(Func &&f) const {
+    template <typename Func>
+    void for_each_element(Func &&f) const {
         for (Index i = 0; i < num_elements(); ++i) {
             f(i, *leaves_[i]);
         }
     }
 
     /// Iterate over interior faces (between elements)
-    template <typename Func> void for_each_interior_face(Func &&f) const {
+    template <typename Func>
+    void for_each_interior_face(Func &&f) const {
         for (Index e = 0; e < num_elements(); ++e) {
             for (int face = 0; face < 6; ++face) {
                 NeighborInfo info = get_neighbor(e, face);
                 if (!info.is_boundary()) {
                     // Only process each face once (lower Morton code owns it)
                     if (!info.neighbor_elements.empty() &&
-                        leaves_[e]->morton <
-                            leaves_[info.neighbor_elements[0]]->morton) {
+                        leaves_[e]->morton < leaves_[info.neighbor_elements[0]]->morton) {
                         f(e, face, info);
                     }
                 }
@@ -227,7 +222,8 @@ public:
     }
 
     /// Iterate over boundary faces
-    template <typename Func> void for_each_boundary_face(Func &&f) const {
+    template <typename Func>
+    void for_each_boundary_face(Func &&f) const {
         for (Index e = 0; e < num_elements(); ++e) {
             for (int face = 0; face < 6; ++face) {
                 NeighborInfo info = get_neighbor(e, face);
@@ -246,33 +242,31 @@ private:
     std::unique_ptr<OctreeNode> root_;
 
     /// Leaf nodes (elements) for fast access
-    std::vector<OctreeNode *> leaves_;
+    std::vector<OctreeNode*> leaves_;
 
     /// Lookup table for neighbor finding (Morton code -> node)
-    std::map<uint64_t, OctreeNode *> morton_lookup_;
+    std::map<uint64_t, OctreeNode*> morton_lookup_;
 
     /// Rebuild leaf list and lookup table
     void rebuild_leaf_list();
 
     /// Find node by Morton code and level
-    OctreeNode *find_node(uint64_t morton, const DirectionalLevel &level) const;
+    OctreeNode* find_node(uint64_t morton, const DirectionalLevel &level) const;
 
     /// Create children for a node based on refinement mask
-    void create_children(OctreeNode *node);
+    void create_children(OctreeNode* node);
 
     /// Collect all leaves recursively
-    void collect_leaves(OctreeNode *node, std::vector<OctreeNode *> &leaves);
+    void collect_leaves(OctreeNode* node, std::vector<OctreeNode*> &leaves);
 
     /// Build neighbor lookup recursively
-    void build_lookup(OctreeNode *node);
+    void build_lookup(OctreeNode* node);
 
     /// Find neighbor at same or coarser level
-    OctreeNode *
-    find_neighbor_same_or_coarser(OctreeNode *node, int face_id) const;
+    OctreeNode* find_neighbor_same_or_coarser(OctreeNode* node, int face_id) const;
 
     /// Find all fine neighbors at a face
-    std::vector<OctreeNode *>
-    find_fine_neighbors(OctreeNode *node, int face_id) const;
+    std::vector<OctreeNode*> find_fine_neighbors(OctreeNode* node, int face_id) const;
 };
 
 /// @brief Refinement criteria for adaptive mesh
@@ -282,12 +276,10 @@ namespace refinement_criteria {
 struct GradientCriterion {
     Real threshold;
 
-    bool should_refine(
-        const VecX &solution, const ElementBounds &bounds,
-        const DirectionalLevel &level) const;
+    bool should_refine(const VecX &solution, const ElementBounds &bounds,
+                       const DirectionalLevel &level) const;
 
-    RefineMask
-    refinement_mask(const VecX &solution, const ElementBounds &bounds) const;
+    RefineMask refinement_mask(const VecX &solution, const ElementBounds &bounds) const;
 };
 
 /// Refine based on bathymetry gradient (for sigma-coordinate)
@@ -295,8 +287,7 @@ struct BathymetryCriterion {
     std::function<Real(Real, Real)> bathymetry; // h(x, y)
     Real threshold;
 
-    bool should_refine(
-        const ElementBounds &bounds, const DirectionalLevel &level) const;
+    bool should_refine(const ElementBounds &bounds, const DirectionalLevel &level) const;
 };
 
 /// Refine near coastline
@@ -304,18 +295,14 @@ struct CoastlineCriterion {
     std::function<bool(Real, Real)> is_land; // Returns true if land
     int max_level;
 
-    bool should_refine(
-        const ElementBounds &bounds, const DirectionalLevel &level) const;
+    bool should_refine(const ElementBounds &bounds, const DirectionalLevel &level) const;
 };
 
 /// Combined criterion
 struct CombinedCriterion {
-    std::vector<
-        std::function<bool(const ElementBounds &, const DirectionalLevel &)>>
-        criteria;
+    std::vector<std::function<bool(const ElementBounds &, const DirectionalLevel &)>> criteria;
 
-    bool should_refine(
-        const ElementBounds &bounds, const DirectionalLevel &level) const;
+    bool should_refine(const ElementBounds &bounds, const DirectionalLevel &level) const;
 };
 
 } // namespace refinement_criteria

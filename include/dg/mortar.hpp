@@ -24,8 +24,7 @@ namespace drifter {
 /// @brief Numerical flux function signature
 /// @details F*(U_L, U_R, n) where U_L, U_R are left/right states, n is outward
 /// normal
-using NumericalFluxFunc =
-    std::function<VecX(const VecX &U_L, const VecX &U_R, const Vec3 &n)>;
+using NumericalFluxFunc = std::function<VecX(const VecX &U_L, const VecX &U_R, const Vec3 &n)>;
 
 /// @brief Mortar space definition for a single face
 /// @details The mortar space is defined on the coarse face geometry with
@@ -37,9 +36,8 @@ public:
     /// @param basis_coarse Basis for coarse element
     /// @param basis_fine Basis for fine elements
     /// @param face_id Face ID on coarse element
-    MortarSpace(
-        const FaceConnection &conn, const HexahedronBasis &basis_coarse,
-        const HexahedronBasis &basis_fine, int face_id);
+    MortarSpace(const FaceConnection &conn, const HexahedronBasis &basis_coarse,
+                const HexahedronBasis &basis_fine, int face_id);
 
     /// Mortar polynomial order
     int order() const { return mortar_order_; }
@@ -102,10 +100,9 @@ public:
     /// @param[out] rhs_coarse_face Flux contribution to coarse element face
     /// DOFs
     /// @param[out] rhs_fine_faces Flux contributions to fine element face DOFs
-    void compute_mortar_flux(
-        const NumericalFluxFunc &flux_func, const VecX &U_coarse_face,
-        const std::vector<VecX> &U_fine_faces, const Vec3 &normal,
-        VecX &rhs_coarse_face, std::vector<VecX> &rhs_fine_faces) const;
+    void compute_mortar_flux(const NumericalFluxFunc &flux_func, const VecX &U_coarse_face,
+                             const std::vector<VecX> &U_fine_faces, const Vec3 &normal,
+                             VecX &rhs_coarse_face, std::vector<VecX> &rhs_fine_faces) const;
 
 private:
     FaceConnectionType conn_type_;
@@ -122,7 +119,7 @@ private:
     MatX mass_inv_;
 
     // Projection operators
-    MatX P_coarse_;            // Coarse face -> mortar
+    MatX P_coarse_; // Coarse face -> mortar
     std::vector<MatX> P_fine_; // Fine faces -> mortar (one per fine element)
 
     // Lift operators (adjoint of projection * inverse mass)
@@ -131,11 +128,10 @@ private:
 
     // Sub-mortar regions for each fine element (in coarse face reference
     // coords)
-    std::vector<std::pair<Vec2, Vec2>>
-        subface_bounds_; // (min, max) in [-1,1]^2
+    std::vector<std::pair<Vec2, Vec2>> subface_bounds_; // (min, max) in [-1,1]^2
 
-    void build_projection_operators(
-        const HexahedronBasis &basis_coarse, const HexahedronBasis &basis_fine);
+    void build_projection_operators(const HexahedronBasis &basis_coarse,
+                                    const HexahedronBasis &basis_fine);
     void compute_subface_bounds();
 };
 
@@ -159,7 +155,7 @@ public:
     /// @param coarse_elem Coarse element index
     /// @param face_id Face ID on coarse element
     /// @return Pointer to mortar space, or nullptr if not found
-    const MortarSpace *get_mortar(Index coarse_elem, int face_id) const;
+    const MortarSpace* get_mortar(Index coarse_elem, int face_id) const;
 
     /// @brief Check if a face requires mortar treatment
     bool has_mortar(Index coarse_elem, int face_id) const;
@@ -168,7 +164,8 @@ public:
     size_t num_interfaces() const { return mortars_.size(); }
 
     /// Iterate over all mortar interfaces
-    template <typename Func> void for_each_interface(Func &&f) const {
+    template <typename Func>
+    void for_each_interface(Func &&f) const {
         for (const auto &[key, mortar] : mortars_) {
             f(key.first, key.second, *mortar);
         }
@@ -193,8 +190,7 @@ public:
     /// @param basis Basis for both elements
     /// @param face_id_left Face ID on left element
     /// @param face_id_right Face ID on right element
-    ConformingInterface(
-        const HexahedronBasis &basis, int face_id_left, int face_id_right);
+    ConformingInterface(const HexahedronBasis &basis, int face_id_left, int face_id_right);
 
     /// @brief Compute direct averaging flux
     /// @param flux_func Numerical flux function
@@ -203,10 +199,9 @@ public:
     /// @param normal Outward normal from left to right
     /// @param[out] rhs_left_face Flux contribution to left element
     /// @param[out] rhs_right_face Flux contribution to right element
-    void compute_flux(
-        const NumericalFluxFunc &flux_func, const VecX &U_left_face,
-        const VecX &U_right_face, const Vec3 &normal, VecX &rhs_left_face,
-        VecX &rhs_right_face) const;
+    void compute_flux(const NumericalFluxFunc &flux_func, const VecX &U_left_face,
+                      const VecX &U_right_face, const Vec3 &normal, VecX &rhs_left_face,
+                      VecX &rhs_right_face) const;
 
     /// Face quadrature weights
     const VecX &quad_weights() const { return quad_weights_; }
@@ -217,9 +212,9 @@ public:
 private:
     int num_quad_;
     VecX quad_weights_;
-    MatX interp_left_;  // Volume -> face quadrature for left element
+    MatX interp_left_; // Volume -> face quadrature for left element
     MatX interp_right_; // Volume -> face quadrature for right element
-    MatX lift_left_;    // Face quadrature -> volume for left element
+    MatX lift_left_; // Face quadrature -> volume for left element
     MatX lift_right_;
     bool needs_orientation_flip_;
 };
@@ -236,18 +231,15 @@ namespace flux {
 /// @param n Outward normal
 /// @param max_speed Maximum wave speed estimate
 /// @param physical_flux Function to compute physical flux F(U) in direction n
-VecX lax_friedrichs(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n, Real max_speed,
-    const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux);
+VecX lax_friedrichs(const VecX &U_L, const VecX &U_R, const Vec3 &n, Real max_speed,
+                    const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux);
 
 /// @brief Central flux (unstable for hyperbolic, used for diffusion)
-VecX central(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n,
-    const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux);
+VecX central(const VecX &U_L, const VecX &U_R, const Vec3 &n,
+             const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux);
 
 /// @brief Upwind flux (for scalar advection)
-VecX upwind(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n, const Vec3 &velocity);
+VecX upwind(const VecX &U_L, const VecX &U_R, const Vec3 &n, const Vec3 &velocity);
 
 } // namespace flux
 
@@ -258,9 +250,8 @@ VecX upwind(
 /// @brief Verify flux conservation across a mortar interface
 /// @details Checks that ∫_Γ F*·n (coarse) + Σ_i ∫_Γ_i F*·n (fine_i) ≈ 0
 /// @return Relative conservation error
-Real verify_mortar_conservation(
-    const MortarSpace &mortar, const VecX &rhs_coarse,
-    const std::vector<VecX> &rhs_fine, const VecX &quad_weights_coarse,
-    const std::vector<VecX> &quad_weights_fine);
+Real verify_mortar_conservation(const MortarSpace &mortar, const VecX &rhs_coarse,
+                                const std::vector<VecX> &rhs_fine, const VecX &quad_weights_coarse,
+                                const std::vector<VecX> &quad_weights_fine);
 
 } // namespace drifter

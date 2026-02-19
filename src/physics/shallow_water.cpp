@@ -15,4 +15,4 @@ namespace drifter {
 //
 // where H = η + h is total water depth
 
-}  // namespace drifter
+} // namespace drifter

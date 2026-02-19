@@ -30,23 +30,22 @@ class BathymetrySource;
 
 /// @brief Per-element error estimate for CG cubic adaptive smoother
 struct CGCubicElementErrorEstimate {
-    Index element;         ///< Element index
-    Real l2_error;         ///< L2 error ||z_data - z_bezier||_L2
+    Index element; ///< Element index
+    Real l2_error; ///< L2 error ||z_data - z_bezier||_L2
     Real normalized_error; ///< Error normalized by sqrt(element area)
-    bool should_refine;    ///< Marked for refinement
+    bool should_refine; ///< Marked for refinement
 };
 
 /// @brief Configuration for adaptive CG cubic Bezier smoother
 struct AdaptiveCGCubicBezierConfig {
     // Stopping criteria
-    Real error_threshold = 0.1;    ///< Stop when max error < threshold (meters)
-    int max_iterations = 10;       ///< Maximum adaptation iterations
-    int max_elements = 10000;      ///< Maximum number of elements
+    Real error_threshold = 0.1; ///< Stop when max error < threshold (meters)
+    int max_iterations = 10; ///< Maximum adaptation iterations
+    int max_elements = 10000; ///< Maximum number of elements
     int max_refinement_level = 10; ///< Maximum refinement level per axis
 
     // Refinement strategy
-    Real refine_fraction =
-        0.2; ///< Fraction of elements to refine per iteration (0.2 = top 20%)
+    Real refine_fraction = 0.2; ///< Fraction of elements to refine per iteration (0.2 = top 20%)
 
     // Error estimation
     int ngauss_error = 4; ///< Gauss points per direction for error integration
@@ -60,12 +59,12 @@ struct AdaptiveCGCubicBezierConfig {
 
 /// @brief Result of a single adaptation iteration for CG cubic smoother
 struct CGCubicAdaptationResult {
-    int iteration;          ///< Iteration number (0-indexed)
-    Index num_elements;     ///< Number of elements after this iteration
-    Real max_error;         ///< Maximum normalized error across all elements
-    Real mean_error;        ///< Mean normalized error across all elements
+    int iteration; ///< Iteration number (0-indexed)
+    Index num_elements; ///< Number of elements after this iteration
+    Real max_error; ///< Maximum normalized error across all elements
+    Real mean_error; ///< Mean normalized error across all elements
     Index elements_refined; ///< Number of elements refined in this iteration
-    bool converged;         ///< True if stopping criteria met
+    bool converged; ///< True if stopping criteria met
 };
 
 /// @brief Adaptive CG cubic Bezier bathymetry smoother with error-driven
@@ -111,16 +110,15 @@ public:
     /// @param ymin, ymax Y domain bounds
     /// @param nx, ny Initial mesh size (nx x ny elements)
     /// @param config Configuration parameters
-    AdaptiveCGCubicBezierSmoother(
-        Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny,
-        const AdaptiveCGCubicBezierConfig &config = {});
+    AdaptiveCGCubicBezierSmoother(Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny,
+                                  const AdaptiveCGCubicBezierConfig &config = {});
 
     /// @brief Construct from existing OctreeAdapter
     /// @param octree Initial mesh (will be refined in-place)
     /// @param config Configuration parameters
     /// @note The octree is modified during adaptive refinement
-    explicit AdaptiveCGCubicBezierSmoother(
-        OctreeAdapter &octree, const AdaptiveCGCubicBezierConfig &config = {});
+    explicit AdaptiveCGCubicBezierSmoother(OctreeAdapter &octree,
+                                           const AdaptiveCGCubicBezierConfig &config = {});
 
     // =========================================================================
     // Data input (persistent across refinement iterations)
@@ -147,9 +145,7 @@ public:
     CGCubicAdaptationResult adapt_once();
 
     /// @brief Get adaptation history (all iterations)
-    const std::vector<CGCubicAdaptationResult> &history() const {
-        return history_;
-    }
+    const std::vector<CGCubicAdaptationResult> &history() const { return history_; }
 
     // =========================================================================
     // Error estimation
@@ -207,11 +203,9 @@ private:
     AdaptiveCGCubicBezierConfig config_;
 
     // Mesh (owned or external reference)
-    std::unique_ptr<OctreeAdapter>
-        octree_owned_;      ///< Owned octree (if constructed from bounds)
-    OctreeAdapter *octree_; ///< Pointer to active octree
-    std::unique_ptr<QuadtreeAdapter>
-        quadtree_; ///< 2D mesh extracted from octree
+    std::unique_ptr<OctreeAdapter> octree_owned_; ///< Owned octree (if constructed from bounds)
+    OctreeAdapter* octree_; ///< Pointer to active octree
+    std::unique_ptr<QuadtreeAdapter> quadtree_; ///< 2D mesh extracted from octree
 
     // Persistent bathymetry source
     std::function<Real(Real, Real)> bathy_func_;

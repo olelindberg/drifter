@@ -173,8 +173,8 @@ MatX QuinticBasis2D::evaluate_gradient(Real xi, Real eta) const {
     return grad;
 }
 
-void QuinticBasis2D::evaluate_second_derivatives(
-    Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2, VecX &d2_dxideta) const {
+void QuinticBasis2D::evaluate_second_derivatives(Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
+                                                 VecX &d2_dxideta) const {
     VecX phi_xi = evaluate_1d(xi);
     VecX phi_eta = evaluate_1d(eta);
     VecX dphi_xi = evaluate_derivative_1d(xi);

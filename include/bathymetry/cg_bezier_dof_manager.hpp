@@ -100,9 +100,7 @@ public:
     const std::vector<Index> &element_dofs(Index elem) const;
 
     /// Get local-to-global DOF mapping for all elements
-    const std::vector<std::vector<Index>> &all_element_dofs() const {
-        return elem_to_global_;
-    }
+    const std::vector<std::vector<Index>> &all_element_dofs() const { return elem_to_global_; }
 
     /// Check if a DOF is on the domain boundary
     bool is_boundary_dof(Index dof) const;
@@ -115,18 +113,13 @@ public:
     // =========================================================================
 
     /// Get all hanging node constraints
-    const std::vector<HangingNodeConstraint> &constraints() const {
-        return constraints_;
-    }
+    const std::vector<HangingNodeConstraint> &constraints() const { return constraints_; }
 
     /// Number of hanging node constraints
-    Index num_constraints() const {
-        return static_cast<Index>(constraints_.size());
-    }
+    Index num_constraints() const { return static_cast<Index>(constraints_.size()); }
 
     /// Get edge derivative constraints for C² continuity along edges
-    const std::vector<EdgeDerivativeConstraint> &
-    edge_derivative_constraints() const {
+    const std::vector<EdgeDerivativeConstraint> &edge_derivative_constraints() const {
         return edge_derivative_constraints_;
     }
 

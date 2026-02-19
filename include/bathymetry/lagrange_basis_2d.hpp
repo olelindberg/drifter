@@ -97,9 +97,8 @@ public:
     /// @param d2_dxi2 Output: d^2 phi / dxi^2 (ndof values)
     /// @param d2_deta2 Output: d^2 phi / deta^2 (ndof values)
     /// @param d2_dxideta Output: d^2 phi / dxi deta (ndof values)
-    void evaluate_second_derivatives(
-        Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
-        VecX &d2_dxideta) const;
+    void evaluate_second_derivatives(Real xi, Real eta, VecX &d2_dxi2, VecX &d2_deta2,
+                                     VecX &d2_dxideta) const;
 
     /// Evaluate Hessian matrices of all basis functions at (xi, eta)
     /// @return Vector of ndof 2x2 matrices: H[dof](i,j) = d^2 phi_dof / dx_i
@@ -167,11 +166,11 @@ public:
     VecX evaluate_normal_derivative_at_edge(int edge_id, Real t) const;
 
 private:
-    int order_;                ///< Polynomial order
-    int n1d_;                  ///< Nodes per direction (order + 1)
-    int ndof_;                 ///< Total DOFs per element (n1d^2)
+    int order_; ///< Polynomial order
+    int n1d_; ///< Nodes per direction (order + 1)
+    int ndof_; ///< Total DOFs per element (n1d^2)
     LagrangeBasis1D basis_1d_; ///< 1D LGL basis
-    MatX D2_;                  ///< 1D second derivative matrix
+    MatX D2_; ///< 1D second derivative matrix
 
     /// Evaluate 1D second derivative at arbitrary point
     VecX evaluate_second_derivative_1d(Real xi) const;

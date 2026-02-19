@@ -24,4 +24,4 @@ namespace drifter {
 // - HDF5
 // - Binary (fastest but not portable)
 
-}  // namespace drifter
+} // namespace drifter

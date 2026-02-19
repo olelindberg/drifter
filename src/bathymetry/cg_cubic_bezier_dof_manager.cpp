@@ -7,8 +7,7 @@ namespace drifter {
 
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
-    : mesh_(mesh) {
+CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh) : mesh_(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {
@@ -33,21 +32,17 @@ CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
 
 Index CGCubicBezierDofManager::global_dof(Index elem, int local_dof) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range(
-            "CGCubicBezierDofManager: element index out of range");
+        throw std::out_of_range("CGCubicBezierDofManager: element index out of range");
     }
     if (local_dof < 0 || local_dof >= CubicBezierBasis2D::NDOF) {
-        throw std::out_of_range(
-            "CGCubicBezierDofManager: local DOF index out of range");
+        throw std::out_of_range("CGCubicBezierDofManager: local DOF index out of range");
     }
     return elem_to_global_[elem][local_dof];
 }
 
-const std::vector<Index> &
-CGCubicBezierDofManager::element_dofs(Index elem) const {
+const std::vector<Index> &CGCubicBezierDofManager::element_dofs(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range(
-            "CGCubicBezierDofManager: element index out of range");
+        throw std::out_of_range("CGCubicBezierDofManager: element index out of range");
     }
     return elem_to_global_[elem];
 }
@@ -102,15 +97,12 @@ SpMat CGCubicBezierDofManager::build_constraint_matrix() const {
 // Position handling
 // =============================================================================
 
-std::pair<int64_t, int64_t>
-CGCubicBezierDofManager::quantize_position(const Vec2 &pos) const {
-    return std::make_pair(
-        static_cast<int64_t>(std::round(pos(0) * POSITION_SCALE)),
-        static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE)));
+std::pair<int64_t, int64_t> CGCubicBezierDofManager::quantize_position(const Vec2 &pos) const {
+    return std::make_pair(static_cast<int64_t>(std::round(pos(0) * POSITION_SCALE)),
+                          static_cast<int64_t>(std::round(pos(1) * POSITION_SCALE)));
 }
 
-Vec2 CGCubicBezierDofManager::get_dof_position(
-    Index elem, int local_dof) const {
+Vec2 CGCubicBezierDofManager::get_dof_position(Index elem, int local_dof) const {
     const auto &bounds = mesh_.element_bounds(elem);
     Vec2 param = basis_.control_point_position(local_dof);
     Real x = bounds.xmin + param(0) * (bounds.xmax - bounds.xmin);
@@ -134,8 +126,7 @@ Index CGCubicBezierDofManager::find_dof_at_position(const Vec2 &pos) const {
 bool CGCubicBezierDofManager::is_corner_dof(int local_dof) const {
     // Corners at (i,j) = (0,0), (3,0), (0,3), (3,3)
     // DOF indices: 0, 12, 3, 15
-    return local_dof == 0 || local_dof == 3 || local_dof == 12 ||
-           local_dof == 15;
+    return local_dof == 0 || local_dof == 3 || local_dof == 12 || local_dof == 15;
 }
 
 bool CGCubicBezierDofManager::is_edge_dof(int local_dof) const {
@@ -214,8 +205,7 @@ void CGCubicBezierDofManager::assign_edge_dofs() {
 
 void CGCubicBezierDofManager::assign_interior_dofs() {
     for (Index e = 0; e < mesh_.num_elements(); ++e) {
-        for (int local_dof = 0; local_dof < CubicBezierBasis2D::NDOF;
-             ++local_dof) {
+        for (int local_dof = 0; local_dof < CubicBezierBasis2D::NDOF; ++local_dof) {
             if (elem_to_global_[e][local_dof] < 0) {
                 elem_to_global_[e][local_dof] = num_global_dofs_++;
             }
@@ -245,8 +235,7 @@ void CGCubicBezierDofManager::assign_edge_dofs_nonconforming() {
             // Mark coarse interior DOFs (m=1,2) as not to be shared
             for (int m = 1; m <= 2; ++m) {
                 int coarse_local = coarse_dofs[m];
-                Index coarse_global =
-                    elem_to_global_[coarse_elem][coarse_local];
+                Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
                 coarse_interior_dofs.insert(coarse_global);
             }
         }
@@ -277,8 +266,7 @@ void CGCubicBezierDofManager::assign_edge_dofs_nonconforming() {
 
                 if (k == shared_k) {
                     int coarse_local = coarse_dofs[shared_m];
-                    elem_to_global_[elem][fine_local] =
-                        elem_to_global_[coarse_elem][coarse_local];
+                    elem_to_global_[elem][fine_local] = elem_to_global_[coarse_elem][coarse_local];
                 } else if (k == tjunction_k) {
                     // T-junction: keep position-based sharing
                 } else {
@@ -367,13 +355,11 @@ void CGCubicBezierDofManager::build_hanging_node_constraints() {
 
                 for (size_t m = 0; m < coarse_dofs.size(); ++m) {
                     int coarse_local = coarse_dofs[m];
-                    Index coarse_global =
-                        elem_to_global_[coarse_elem][coarse_local];
+                    Index coarse_global = elem_to_global_[coarse_elem][coarse_local];
 
                     if (std::abs(weights(static_cast<int>(m))) > 1e-14) {
                         constraint.master_dofs.push_back(coarse_global);
-                        constraint.weights.push_back(
-                            weights(static_cast<int>(m)));
+                        constraint.weights.push_back(weights(static_cast<int>(m)));
                     }
                 }
 
@@ -425,8 +411,7 @@ void CGCubicBezierDofManager::build_edge_derivative_constraints(int ngauss) {
     edge_derivative_constraints_.clear();
 
     // Build edge midpoint map
-    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<Index, int>>>
-        edge_map;
+    std::map<std::pair<int64_t, int64_t>, std::vector<std::pair<Index, int>>> edge_map;
 
     for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
         for (int edge = 0; edge < 4; ++edge) {
@@ -524,10 +509,8 @@ void CGCubicBezierDofManager::build_edge_derivative_constraints(int ngauss) {
             int nu = deriv_order.first;
             int nv = deriv_order.second;
 
-            c.coeffs1 =
-                basis_.evaluate_derivative(param1(0), param1(1), nu, nv);
-            c.coeffs2 =
-                basis_.evaluate_derivative(param2(0), param2(1), nu, nv);
+            c.coeffs1 = basis_.evaluate_derivative(param1(0), param1(1), nu, nv);
+            c.coeffs2 = basis_.evaluate_derivative(param2(0), param2(1), nu, nv);
 
             c.scale1 = std::pow(dx1, nu) * std::pow(dy1, nv);
             c.scale2 = std::pow(dx2, nu) * std::pow(dy2, nv);

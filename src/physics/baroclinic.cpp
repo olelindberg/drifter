@@ -14,4 +14,4 @@ namespace drifter {
 // - Internal wave dynamics
 // - Density Jacobian method for steep slopes
 
-}  // namespace drifter
+} // namespace drifter

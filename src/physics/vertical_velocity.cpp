@@ -4,20 +4,17 @@
 
 namespace drifter {
 
-VerticalVelocityDiagnosis::VerticalVelocityDiagnosis(const HexahedronBasis& basis,
-                                                       const GaussQuadrature3D& quad)
-    : basis_(basis)
-    , quad_(quad)
-    , n_vert_(basis.order() + 1)
-    , n_horiz_((basis.order() + 1) * (basis.order() + 1))
-{
+VerticalVelocityDiagnosis::VerticalVelocityDiagnosis(const HexahedronBasis &basis,
+                                                     const GaussQuadrature3D &quad)
+    : basis_(basis), quad_(quad), n_vert_(basis.order() + 1),
+      n_horiz_((basis.order() + 1) * (basis.order() + 1)) {
     build_vertical_integration();
 }
 
 void VerticalVelocityDiagnosis::build_vertical_integration() {
     // Get 1D LGL nodes and weights for vertical direction
-    const VecX& zeta_nodes = basis_.lgl_basis_1d().nodes;
-    const VecX& zeta_weights = basis_.lgl_basis_1d().weights;
+    const VecX &zeta_nodes = basis_.lgl_basis_1d().nodes;
+    const VecX &zeta_weights = basis_.lgl_basis_1d().weights;
 
     // Map from reference [-1, 1] to sigma [-1, 0]
     // sigma = 0.5 * (zeta - 1), so dsigma = 0.5 * dzeta
@@ -28,8 +25,9 @@ void VerticalVelocityDiagnosis::build_vertical_integration() {
         vertical_integration_weights_(k) = 0.5 * zeta_weights(k);
     }
 
-    // Build integration matrix I(k, j) = integral from sigma(-1) to sigma(k) of L_j(sigma) dsigma
-    // where L_j is the j-th Lagrange basis function at LGL nodes
+    // Build integration matrix I(k, j) = integral from sigma(-1) to sigma(k) of
+    // L_j(sigma) dsigma where L_j is the j-th Lagrange basis function at LGL
+    // nodes
     vertical_integration_matrix_.resize(n_vert_, n_vert_);
     vertical_integration_matrix_.setZero();
 
@@ -39,8 +37,8 @@ void VerticalVelocityDiagnosis::build_vertical_integration() {
         // Contribution from each source level j
         for (int j = 0; j <= k; ++j) {
             // Approximate integral using quadrature
-            // For simplicity, use the fact that integral of L_j from bottom to sigma_k
-            // can be computed analytically or via accumulating weights
+            // For simplicity, use the fact that integral of L_j from bottom to
+            // sigma_k can be computed analytically or via accumulating weights
 
             // Simple approach: cumulative sum of weighted basis evaluations
             // I(k, j) = sum_{l=0}^{k} w_l * L_j(sigma_l)
@@ -54,8 +52,8 @@ void VerticalVelocityDiagnosis::build_vertical_integration() {
     }
 }
 
-void VerticalVelocityDiagnosis::diagnose_omega(const VecX& div_Hu, const VecX& H,
-                                                VecX& omega) const {
+void VerticalVelocityDiagnosis::diagnose_omega(const VecX &div_Hu, const VecX &H,
+                                               VecX &omega) const {
     const int n_total = n_horiz_ * n_vert_;
     if (div_Hu.size() != n_total) {
         throw std::invalid_argument("div_Hu size mismatch");
@@ -69,7 +67,8 @@ void VerticalVelocityDiagnosis::diagnose_omega(const VecX& div_Hu, const VecX& H
         omega(node_index_3d(i, 0)) = 0.0;
 
         // Integrate upward
-        // omega(k) = omega(k-1) - (1/H) * integral_{sigma(k-1)}^{sigma(k)} div_Hu dsigma
+        // omega(k) = omega(k-1) - (1/H) * integral_{sigma(k-1)}^{sigma(k)} div_Hu
+        // dsigma
         Real integral = 0.0;
         for (int k = 1; k < n_vert_; ++k) {
             // Accumulate integral using quadrature weight
@@ -81,7 +80,8 @@ void VerticalVelocityDiagnosis::diagnose_omega(const VecX& div_Hu, const VecX& H
             const Real H_avg = 0.5 * (H(idx_prev) + H(idx_curr));
 
             // Trapezoidal rule for this layer
-            const Real dsigma = (basis_.lgl_basis_1d().nodes(k) - basis_.lgl_basis_1d().nodes(k-1)) * 0.5;
+            const Real dsigma =
+                (basis_.lgl_basis_1d().nodes(k) - basis_.lgl_basis_1d().nodes(k - 1)) * 0.5;
             const Real div_avg = 0.5 * (div_Hu(idx_prev) + div_Hu(idx_curr));
 
             integral += div_avg * dsigma;
@@ -96,10 +96,10 @@ void VerticalVelocityDiagnosis::diagnose_omega(const VecX& div_Hu, const VecX& H
     }
 }
 
-void VerticalVelocityDiagnosis::diagnose_omega_from_velocity(
-    const VecX& Hu, const VecX& Hv, const VecX& H,
-    const VecX& dHu_dx, const VecX& dHv_dy, VecX& omega) const
-{
+void VerticalVelocityDiagnosis::diagnose_omega_from_velocity(const VecX &Hu, const VecX &Hv,
+                                                             const VecX &H, const VecX &dHu_dx,
+                                                             const VecX &dHv_dy,
+                                                             VecX &omega) const {
     // Compute horizontal divergence
     VecX div_Hu = dHu_dx + dHv_dy;
 
@@ -107,10 +107,10 @@ void VerticalVelocityDiagnosis::diagnose_omega_from_velocity(
     diagnose_omega(div_Hu, H, omega);
 }
 
-void VerticalVelocityDiagnosis::omega_to_physical_w(
-    const VecX& omega, const VecX& u, const VecX& v, const VecX& H,
-    const VecX& dz_dx, const VecX& dz_dy, const VecX& dz_dt, VecX& w) const
-{
+void VerticalVelocityDiagnosis::omega_to_physical_w(const VecX &omega, const VecX &u, const VecX &v,
+                                                    const VecX &H, const VecX &dz_dx,
+                                                    const VecX &dz_dy, const VecX &dz_dt,
+                                                    VecX &w) const {
     const int n = static_cast<int>(omega.size());
     w.resize(n);
 
@@ -120,12 +120,10 @@ void VerticalVelocityDiagnosis::omega_to_physical_w(
     }
 }
 
-void VerticalVelocityDiagnosis::omega_to_w_simple(
-    const VecX& omega, const VecX& u, const VecX& v,
-    const VecX& eta, const VecX& h, const VecX& sigma,
-    const VecX& deta_dx, const VecX& deta_dy, const VecX& deta_dt,
-    VecX& w) const
-{
+void VerticalVelocityDiagnosis::omega_to_w_simple(const VecX &omega, const VecX &u, const VecX &v,
+                                                  const VecX &eta, const VecX &h, const VecX &sigma,
+                                                  const VecX &deta_dx, const VecX &deta_dy,
+                                                  const VecX &deta_dt, VecX &w) const {
     const int n = static_cast<int>(omega.size());
     w.resize(n);
 
@@ -144,26 +142,25 @@ void VerticalVelocityDiagnosis::omega_to_w_simple(
     }
 }
 
-Real VerticalVelocityDiagnosis::surface_omega(Real deta_dt, Real u_surf, Real v_surf,
-                                               Real deta_dx, Real deta_dy, Real H) {
-    if (H < 1e-10) return 0.0;
+Real VerticalVelocityDiagnosis::surface_omega(Real deta_dt, Real u_surf, Real v_surf, Real deta_dx,
+                                              Real deta_dy, Real H) {
+    if (H < 1e-10)
+        return 0.0;
     // D(eta)/Dt = deta/dt + u*deta/dx + v*deta/dy
     // omega(0) = D(eta)/Dt / H
     return (deta_dt + u_surf * deta_dx + v_surf * deta_dy) / H;
 }
 
-Real VerticalVelocityDiagnosis::bottom_omega(Real u_bot, Real v_bot,
-                                              Real dh_dx, Real dh_dy) {
+Real VerticalVelocityDiagnosis::bottom_omega(Real u_bot, Real v_bot, Real dh_dx, Real dh_dy) {
     // For sigma-following coordinates with sigma(-1) at bottom,
     // the bottom is always at sigma = -1, so omega(-1) = 0 by definition.
     // The physical no-flow BC is automatically satisfied.
     return 0.0;
 }
 
-Real VerticalVelocityDiagnosis::continuity_residual(
-    const VecX& div_Hu, const VecX& H, const VecX& omega,
-    const VecX& dHomega_dsigma) const
-{
+Real VerticalVelocityDiagnosis::continuity_residual(const VecX &div_Hu, const VecX &H,
+                                                    const VecX &omega,
+                                                    const VecX &dHomega_dsigma) const {
     // Residual = div_h(Hu, Hv) + d(H*omega)/dsigma
     const int n = static_cast<int>(div_Hu.size());
     Real residual_sq = 0.0;
@@ -180,10 +177,7 @@ Real VerticalVelocityDiagnosis::continuity_residual(
 // ColumnVerticalVelocity implementation
 // ============================================================================
 
-ColumnVerticalVelocity::ColumnVerticalVelocity(int order)
-    : order_(order)
-    , n_levels_(order + 1)
-{
+ColumnVerticalVelocity::ColumnVerticalVelocity(int order) : order_(order), n_levels_(order + 1) {
     // Generate LGL nodes for reference interval [-1, 1]
     // Then map to sigma [-1, 0]
     sigma_nodes_.resize(n_levels_);
@@ -212,13 +206,13 @@ ColumnVerticalVelocity::ColumnVerticalVelocity(int order)
 
         if (n_levels_ == 3) {
             zeta_nodes << -1.0, 0.0, 1.0;
-            zeta_weights << 1.0/3.0, 4.0/3.0, 1.0/3.0;
+            zeta_weights << 1.0 / 3.0, 4.0 / 3.0, 1.0 / 3.0;
         } else if (n_levels_ == 4) {
-            zeta_nodes << -1.0, -std::sqrt(1.0/5.0), std::sqrt(1.0/5.0), 1.0;
-            zeta_weights << 1.0/6.0, 5.0/6.0, 5.0/6.0, 1.0/6.0;
+            zeta_nodes << -1.0, -std::sqrt(1.0 / 5.0), std::sqrt(1.0 / 5.0), 1.0;
+            zeta_weights << 1.0 / 6.0, 5.0 / 6.0, 5.0 / 6.0, 1.0 / 6.0;
         } else if (n_levels_ == 5) {
-            zeta_nodes << -1.0, -std::sqrt(3.0/7.0), 0.0, std::sqrt(3.0/7.0), 1.0;
-            zeta_weights << 1.0/10.0, 49.0/90.0, 32.0/45.0, 49.0/90.0, 1.0/10.0;
+            zeta_nodes << -1.0, -std::sqrt(3.0 / 7.0), 0.0, std::sqrt(3.0 / 7.0), 1.0;
+            zeta_weights << 1.0 / 10.0, 49.0 / 90.0, 32.0 / 45.0, 49.0 / 90.0, 1.0 / 10.0;
         } else {
             // For higher orders, compute numerically or use a table
             // Here we just use uniform spacing as a fallback
@@ -233,7 +227,7 @@ ColumnVerticalVelocity::ColumnVerticalVelocity(int order)
         // Map to sigma space [-1, 0]
         for (int k = 0; k < n_levels_; ++k) {
             sigma_nodes_(k) = 0.5 * (zeta_nodes(k) - 1.0);
-            weights_(k) = 0.5 * zeta_weights(k);  // dsigma = 0.5 * dzeta
+            weights_(k) = 0.5 * zeta_weights(k); // dsigma = 0.5 * dzeta
         }
     }
 
@@ -249,8 +243,8 @@ ColumnVerticalVelocity::ColumnVerticalVelocity(int order)
     }
 }
 
-void ColumnVerticalVelocity::diagnose_column(const VecX& div_Hu_col, const VecX& H_col,
-                                              Real omega_bottom, VecX& omega_col) const {
+void ColumnVerticalVelocity::diagnose_column(const VecX &div_Hu_col, const VecX &H_col,
+                                             Real omega_bottom, VecX &omega_col) const {
     if (div_Hu_col.size() != n_levels_) {
         throw std::invalid_argument("Column size mismatch");
     }
@@ -279,4 +273,4 @@ void ColumnVerticalVelocity::diagnose_column(const VecX& div_Hu_col, const VecX&
     }
 }
 
-}  // namespace drifter
+} // namespace drifter

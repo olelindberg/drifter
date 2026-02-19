@@ -1,7 +1,7 @@
 #include "physics/primitive_equations.hpp"
-#include <omp.h>
 #include <cmath>
 #include <iostream>
+#include <omp.h>
 
 namespace drifter {
 
@@ -9,7 +9,7 @@ namespace drifter {
 // PrimitiveState implementation
 // =============================================================================
 
-void PrimitiveState::update_derived(const VecX& h) {
+void PrimitiveState::update_derived(const VecX &h) {
     int n = static_cast<int>(Hu.size());
 
     H.resize(n);
@@ -29,18 +29,25 @@ void PrimitiveState::update_derived(const VecX& h) {
 }
 
 void PrimitiveState::resize(int n) {
-    Hu.resize(n); Hu.setZero();
-    Hv.resize(n); Hv.setZero();
-    eta.resize(n); eta.setZero();
-    HT.resize(n); HT.setZero();
-    HS.resize(n); HS.setZero();
+    Hu.resize(n);
+    Hu.setZero();
+    Hv.resize(n);
+    Hv.setZero();
+    eta.resize(n);
+    eta.setZero();
+    HT.resize(n);
+    HT.setZero();
+    HS.resize(n);
+    HS.setZero();
     H.resize(n);
     u.resize(n);
     v.resize(n);
     T.resize(n);
     S.resize(n);
-    omega.resize(n); omega.setZero();
-    rho.resize(n); rho.setZero();
+    omega.resize(n);
+    omega.setZero();
+    rho.resize(n);
+    rho.setZero();
 }
 
 // =============================================================================
@@ -67,18 +74,12 @@ void PrimitiveTendencies::set_zero() {
 // PrimitiveEquationsElement implementation
 // =============================================================================
 
-PrimitiveEquationsElement::PrimitiveEquationsElement(
-    const HexahedronBasis& basis,
-    const GaussQuadrature3D& quad,
-    const OceanConstants& constants)
-    : basis_(basis)
-    , quad_(quad)
-    , constants_(constants)
-    , elem_op_(basis, quad)
-    , sigma_op_(basis, quad)
-    , n_horiz_((basis.order() + 1) * (basis.order() + 1))
-    , n_vert_(basis.order() + 1)
-{
+PrimitiveEquationsElement::PrimitiveEquationsElement(const HexahedronBasis &basis,
+                                                     const GaussQuadrature3D &quad,
+                                                     const OceanConstants &constants)
+    : basis_(basis), quad_(quad), constants_(constants), elem_op_(basis, quad),
+      sigma_op_(basis, quad), n_horiz_((basis.order() + 1) * (basis.order() + 1)),
+      n_vert_(basis.order() + 1) {
     build_2d_operators();
 }
 
@@ -90,7 +91,7 @@ void PrimitiveEquationsElement::build_2d_operators() {
     int n1d = order + 1;
 
     // Get 1D differentiation matrix
-    const MatX& D_1d = basis_.D_xi_lgl().topLeftCorner(n1d, n1d);
+    const MatX &D_1d = basis_.D_xi_lgl().topLeftCorner(n1d, n1d);
 
     // 2D operators via tensor product
     D_x_2d_.resize(n_horiz_, n_horiz_);
@@ -104,8 +105,8 @@ void PrimitiveEquationsElement::build_2d_operators() {
         for (int i = 0; i < n1d; ++i) {
             int row = i + j * n1d;
             for (int ii = 0; ii < n1d; ++ii) {
-                int col_x = ii + j * n1d;  // x-derivative: vary i
-                int col_y = i + ii * n1d;  // y-derivative: vary j
+                int col_x = ii + j * n1d; // x-derivative: vary i
+                int col_y = i + ii * n1d; // y-derivative: vary j
                 D_x_2d_(row, col_x) = D_1d(i, ii);
                 D_y_2d_(row, col_y) = D_1d(j, ii);
             }
@@ -113,27 +114,27 @@ void PrimitiveEquationsElement::build_2d_operators() {
     }
 
     // Set up vertical integration weights (LGL weights scaled for sigma [-1, 0])
-    const VecX& lgl_weights = basis_.lgl_basis_1d().weights;
+    const VecX &lgl_weights = basis_.lgl_basis_1d().weights;
     sigma_weights_.resize(n_vert_);
     for (int k = 0; k < n_vert_; ++k) {
-        sigma_weights_(k) = 0.5 * lgl_weights(k);  // Scale for [-1, 0]
+        sigma_weights_(k) = 0.5 * lgl_weights(k); // Scale for [-1, 0]
     }
 }
 
-void PrimitiveEquationsElement::set_bathymetry(
-    const VecX& h, const VecX& dh_dx, const VecX& dh_dy) {
+void PrimitiveEquationsElement::set_bathymetry(const VecX &h, const VecX &dh_dx,
+                                               const VecX &dh_dy) {
     h_ = h;
     dh_dx_ = dh_dx;
     dh_dy_ = dh_dy;
 }
 
-void PrimitiveEquationsElement::set_coriolis(
-    const CoriolisParameter& coriolis, const VecX& y_positions) {
+void PrimitiveEquationsElement::set_coriolis(const CoriolisParameter &coriolis,
+                                             const VecX &y_positions) {
     coriolis.compute(y_positions, f_);
 }
 
-void PrimitiveEquationsElement::compute_rhs(
-    const PrimitiveState& state, PrimitiveTendencies& tendency) const {
+void PrimitiveEquationsElement::compute_rhs(const PrimitiveState &state,
+                                            PrimitiveTendencies &tendency) const {
 
     int ndof = basis_.num_dofs_velocity();
 
@@ -150,8 +151,8 @@ void PrimitiveEquationsElement::compute_rhs(
     compute_eta_rhs(state, tendency.deta_dt);
 }
 
-void PrimitiveEquationsElement::compute_momentum_rhs(
-    const PrimitiveState& state, VecX& dHu_dt, VecX& dHv_dt) const {
+void PrimitiveEquationsElement::compute_momentum_rhs(const PrimitiveState &state, VecX &dHu_dt,
+                                                     VecX &dHv_dt) const {
 
     int ndof = basis_.num_dofs_velocity();
     dHu_dt = VecX::Zero(ndof);
@@ -197,8 +198,8 @@ void PrimitiveEquationsElement::compute_momentum_rhs(
     }
 }
 
-void PrimitiveEquationsElement::compute_tracer_rhs(
-    const PrimitiveState& state, VecX& dHT_dt, VecX& dHS_dt) const {
+void PrimitiveEquationsElement::compute_tracer_rhs(const PrimitiveState &state, VecX &dHT_dt,
+                                                   VecX &dHS_dt) const {
 
     int ndof = basis_.num_dofs_tracer();
     dHT_dt = VecX::Zero(ndof);
@@ -225,8 +226,7 @@ void PrimitiveEquationsElement::compute_tracer_rhs(
     }
 }
 
-void PrimitiveEquationsElement::compute_eta_rhs(
-    const PrimitiveState& state, VecX& deta_dt) const {
+void PrimitiveEquationsElement::compute_eta_rhs(const PrimitiveState &state, VecX &deta_dt) const {
 
     // Free surface evolves according to:
     // deta/dt = -d/dx(integral Hu dsigma) - d/dy(integral Hv dsigma)
@@ -235,7 +235,8 @@ void PrimitiveEquationsElement::compute_eta_rhs(
     // where HU_bar = integral_{-1}^{0} Hu dsigma (depth-integrated transport)
     //
     // Note: eta is physically 2D (constant in vertical), but we store it on
-    // the 3D grid for consistency. The 2D result is replicated to all vertical levels.
+    // the 3D grid for consistency. The 2D result is replicated to all vertical
+    // levels.
 
     // Step 1: Compute depth-integrated transports at each horizontal DOF
     VecX HU_bar(n_horiz_), HV_bar(n_horiz_);
@@ -271,8 +272,8 @@ void PrimitiveEquationsElement::compute_eta_rhs(
     }
 }
 
-void PrimitiveEquationsElement::momentum_advection(
-    const PrimitiveState& state, VecX& adv_Hu, VecX& adv_Hv) const {
+void PrimitiveEquationsElement::momentum_advection(const PrimitiveState &state, VecX &adv_Hu,
+                                                   VecX &adv_Hv) const {
 
     // Advection: d(Hu*u)/dx + d(Hu*v)/dy + d(Hu*omega)/dsigma
     // Using divergence form for conservation
@@ -303,8 +304,8 @@ void PrimitiveEquationsElement::momentum_advection(
     elem_op_.divergence_reference(flux_Hv, adv_Hv, true);
 }
 
-void PrimitiveEquationsElement::coriolis_terms(
-    const PrimitiveState& state, VecX& cor_Hu, VecX& cor_Hv) const {
+void PrimitiveEquationsElement::coriolis_terms(const PrimitiveState &state, VecX &cor_Hu,
+                                               VecX &cor_Hv) const {
 
     int ndof = basis_.num_dofs_velocity();
 
@@ -318,8 +319,8 @@ void PrimitiveEquationsElement::coriolis_terms(
     }
 }
 
-void PrimitiveEquationsElement::barotropic_pressure_gradient(
-    const PrimitiveState& state, VecX& pg_u, VecX& pg_v) const {
+void PrimitiveEquationsElement::barotropic_pressure_gradient(const PrimitiveState &state,
+                                                             VecX &pg_u, VecX &pg_v) const {
 
     // -gH * grad(eta)
     MatX grad_eta;
@@ -335,8 +336,8 @@ void PrimitiveEquationsElement::barotropic_pressure_gradient(
     }
 }
 
-void PrimitiveEquationsElement::horizontal_diffusion(
-    const VecX& field, Real nu, VecX& diff_x, VecX& diff_y) const {
+void PrimitiveEquationsElement::horizontal_diffusion(const VecX &field, Real nu, VecX &diff_x,
+                                                     VecX &diff_y) const {
 
     // d^2(field)/dx^2 and d^2(field)/dy^2
     MatX grad_field;
@@ -349,12 +350,12 @@ void PrimitiveEquationsElement::horizontal_diffusion(
     elem_op_.gradient_reference(dfield_dx, grad_dx, true);
     elem_op_.gradient_reference(dfield_dy, grad_dy, true);
 
-    diff_x = nu * grad_dx.col(0);  // nu * d^2/dx^2
-    diff_y = nu * grad_dy.col(1);  // nu * d^2/dy^2
+    diff_x = nu * grad_dx.col(0); // nu * d^2/dx^2
+    diff_y = nu * grad_dy.col(1); // nu * d^2/dy^2
 }
 
-void PrimitiveEquationsElement::vertical_diffusion(
-    const VecX& field, Real kappa, const VecX& H, VecX& diff) const {
+void PrimitiveEquationsElement::vertical_diffusion(const VecX &field, Real kappa, const VecX &H,
+                                                   VecX &diff) const {
 
     // d/dsigma(kappa * dfield/dsigma) / H
     // = kappa * d^2(field)/dsigma^2 / H
@@ -373,8 +374,8 @@ void PrimitiveEquationsElement::vertical_diffusion(
     }
 }
 
-void PrimitiveEquationsElement::tracer_advection(
-    const PrimitiveState& state, const VecX& HT, VecX& adv_HT) const {
+void PrimitiveEquationsElement::tracer_advection(const PrimitiveState &state, const VecX &HT,
+                                                 VecX &adv_HT) const {
 
     // div(u * HT)
     int ndof = basis_.num_dofs_velocity();
@@ -395,53 +396,43 @@ void PrimitiveEquationsElement::tracer_advection(
 // PrimitiveEquationsSolver implementation
 // =============================================================================
 
-PrimitiveEquationsSolver::PrimitiveEquationsSolver(int order, const OceanConstants& constants)
-    : order_(order)
-    , constants_(constants)
-    , basis_(order)
-    , quad_(order, QuadratureType::GaussLegendre)
-    , dg_(order, true)
-{
-}
+PrimitiveEquationsSolver::PrimitiveEquationsSolver(int order, const OceanConstants &constants)
+    : order_(order), constants_(constants), basis_(order),
+      quad_(order, QuadratureType::GaussLegendre), dg_(order, true) {}
 
-void PrimitiveEquationsSolver::initialize(
-    int num_elements,
-    const std::vector<VecX>& bathymetry,
-    const std::vector<VecX>& dh_dx,
-    const std::vector<VecX>& dh_dy,
-    const CoriolisParameter& coriolis,
-    const std::vector<VecX>& y_positions) {
+void PrimitiveEquationsSolver::initialize(int num_elements, const std::vector<VecX> &bathymetry,
+                                          const std::vector<VecX> &dh_dx,
+                                          const std::vector<VecX> &dh_dy,
+                                          const CoriolisParameter &coriolis,
+                                          const std::vector<VecX> &y_positions) {
 
     elements_.resize(num_elements);
 
     for (int e = 0; e < num_elements; ++e) {
-        elements_[e] = std::make_unique<PrimitiveEquationsElement>(
-            basis_, quad_, constants_);
+        elements_[e] = std::make_unique<PrimitiveEquationsElement>(basis_, quad_, constants_);
 
         elements_[e]->set_bathymetry(bathymetry[e], dh_dx[e], dh_dy[e]);
         elements_[e]->set_coriolis(coriolis, y_positions[e]);
     }
 }
 
-void PrimitiveEquationsSolver::set_boundary_conditions(
-    const std::vector<BoundaryCondition>& bc) {
+void PrimitiveEquationsSolver::set_boundary_conditions(const std::vector<BoundaryCondition> &bc) {
     boundary_conditions_ = bc;
 }
 
 void PrimitiveEquationsSolver::set_face_connections(
-    const std::vector<std::vector<FaceConnection>>& conn) {
+    const std::vector<std::vector<FaceConnection>> &conn) {
     face_connections_ = conn;
 }
 
-void PrimitiveEquationsSolver::compute_rhs(
-    const std::vector<PrimitiveState>& states,
-    std::vector<PrimitiveTendencies>& tendencies) const {
+void PrimitiveEquationsSolver::compute_rhs(const std::vector<PrimitiveState> &states,
+                                           std::vector<PrimitiveTendencies> &tendencies) const {
 
     size_t num_elements = states.size();
     tendencies.resize(num_elements);
 
-    // Element-local contributions (parallelizable)
-    #pragma omp parallel for
+// Element-local contributions (parallelizable)
+#pragma omp parallel for
     for (size_t e = 0; e < num_elements; ++e) {
         elements_[e]->compute_rhs(states[e], tendencies[e]);
     }
@@ -451,42 +442,45 @@ void PrimitiveEquationsSolver::compute_rhs(
 }
 
 void PrimitiveEquationsSolver::apply_interface_fluxes(
-    const std::vector<PrimitiveState>& states,
-    std::vector<PrimitiveTendencies>& tendencies) const {
+    const std::vector<PrimitiveState> &states, std::vector<PrimitiveTendencies> &tendencies) const {
 
     // DG interface flux computation using numerical fluxes
-    // Uses mortar method for non-conforming interfaces, direct averaging for conforming
+    // Uses mortar method for non-conforming interfaces, direct averaging for
+    // conforming
 
     // Define numerical flux function for primitive equations (Lax-Friedrichs)
-    auto numerical_flux = [this](const VecX& U_L, const VecX& U_R, const Vec3& n) -> VecX {
+    auto numerical_flux = [this](const VecX &U_L, const VecX &U_R, const Vec3 &n) -> VecX {
         // State vector U = [Hu, Hv, eta, HT, HS]
         // Compute Lax-Friedrichs flux: F* = 0.5*(F_L + F_R) - 0.5*alpha*(U_R - U_L)
 
         // Get maximum wave speed for penalty term
-        Real H_L = U_L.size() > 2 ? U_L(2) + 10.0 : 10.0;  // eta + h (assuming h ~ 10m)
+        Real H_L = U_L.size() > 2 ? U_L(2) + 10.0 : 10.0; // eta + h (assuming h ~ 10m)
         Real H_R = U_R.size() > 2 ? U_R(2) + 10.0 : 10.0;
         Real c_max = std::sqrt(constants_.g * std::max(H_L, H_R));
 
         // Physical flux in normal direction
-        auto compute_flux = [&](const VecX& U) -> VecX {
+        auto compute_flux = [&](const VecX &U) -> VecX {
             VecX F = VecX::Zero(U.size());
-            if (U.size() < 3) return F;
+            if (U.size() < 3)
+                return F;
 
-            Real H = U(2) + 10.0;  // eta + h
-            Real u = H > 1e-10 ? U(0) / H : 0.0;  // Hu/H
-            Real v = H > 1e-10 ? U(1) / H : 0.0;  // Hv/H
+            Real H = U(2) + 10.0; // eta + h
+            Real u = H > 1e-10 ? U(0) / H : 0.0; // Hu/H
+            Real v = H > 1e-10 ? U(1) / H : 0.0; // Hv/H
             Real u_n = u * n(0) + v * n(1);
 
             // Mass flux
-            F(2) = U(0) * n(0) + U(1) * n(1);  // Hu*nx + Hv*ny
+            F(2) = U(0) * n(0) + U(1) * n(1); // Hu*nx + Hv*ny
 
             // Momentum flux with pressure
             F(0) = U(0) * u_n + 0.5 * constants_.g * H * H * n(0);
             F(1) = U(1) * u_n + 0.5 * constants_.g * H * H * n(1);
 
             // Tracer flux (if present)
-            if (U.size() > 3) F(3) = U(3) * u_n;  // HT * u_n
-            if (U.size() > 4) F(4) = U(4) * u_n;  // HS * u_n
+            if (U.size() > 3)
+                F(3) = U(3) * u_n; // HT * u_n
+            if (U.size() > 4)
+                F(4) = U(4) * u_n; // HS * u_n
 
             return F;
         };
@@ -498,12 +492,14 @@ void PrimitiveEquationsSolver::apply_interface_fluxes(
     };
 
     for (size_t e = 0; e < states.size(); ++e) {
-        if (e >= face_connections_.size()) continue;
+        if (e >= face_connections_.size())
+            continue;
 
         for (int f = 0; f < 6; ++f) {
-            if (f >= static_cast<int>(face_connections_[e].size())) continue;
+            if (f >= static_cast<int>(face_connections_[e].size()))
+                continue;
 
-            const FaceConnection& conn = face_connections_[e][f];
+            const FaceConnection &conn = face_connections_[e][f];
 
             if (conn.is_boundary()) {
                 // Handle in apply_boundary_conditions
@@ -516,21 +512,23 @@ void PrimitiveEquationsSolver::apply_interface_fluxes(
 
             if (conn.is_conforming()) {
                 // 1:1 same-level interface - use direct averaging
-                if (conn.fine_elems.empty()) continue;
+                if (conn.fine_elems.empty())
+                    continue;
 
                 Index neighbor_elem = conn.fine_elems[0];
-                if (neighbor_elem >= states.size()) continue;
+                if (neighbor_elem >= states.size())
+                    continue;
 
                 // Extract face states (simplified - using mean values)
-                const PrimitiveState& state_L = states[e];
-                const PrimitiveState& state_N = states[neighbor_elem];
+                const PrimitiveState &state_L = states[e];
+                const PrimitiveState &state_N = states[neighbor_elem];
 
                 // Build state vectors at interface
                 VecX U_L(5), U_R(5);
-                U_L << state_L.Hu.mean(), state_L.Hv.mean(), state_L.eta.mean(),
-                       state_L.HT.mean(), state_L.HS.mean();
-                U_R << state_N.Hu.mean(), state_N.Hv.mean(), state_N.eta.mean(),
-                       state_N.HT.mean(), state_N.HS.mean();
+                U_L << state_L.Hu.mean(), state_L.Hv.mean(), state_L.eta.mean(), state_L.HT.mean(),
+                    state_L.HS.mean();
+                U_R << state_N.Hu.mean(), state_N.Hv.mean(), state_N.eta.mean(), state_N.HT.mean(),
+                    state_N.HS.mean();
 
                 // Compute numerical flux
                 VecX F_star = numerical_flux(U_L, U_R, normal);
@@ -540,37 +538,36 @@ void PrimitiveEquationsSolver::apply_interface_fluxes(
 
             } else {
                 // Non-conforming interface - use mortar method
-                const MortarSpace* mortar = dg_.mortar_manager() ?
-                    dg_.mortar_manager()->get_mortar(e, f) : nullptr;
+                const MortarSpace* mortar =
+                    dg_.mortar_manager() ? dg_.mortar_manager()->get_mortar(e, f) : nullptr;
 
-                if (!mortar) continue;
+                if (!mortar)
+                    continue;
 
                 // Extract face states for coarse element
-                const PrimitiveState& state_coarse = states[e];
+                const PrimitiveState &state_coarse = states[e];
                 VecX U_coarse_face(5);
                 U_coarse_face << state_coarse.Hu.mean(), state_coarse.Hv.mean(),
-                                 state_coarse.eta.mean(), state_coarse.HT.mean(),
-                                 state_coarse.HS.mean();
+                    state_coarse.eta.mean(), state_coarse.HT.mean(), state_coarse.HS.mean();
 
                 // Gather face states from fine elements
                 std::vector<VecX> U_fine_faces;
                 for (size_t fi = 0; fi < conn.fine_elems.size(); ++fi) {
                     Index fine_elem = conn.fine_elems[fi];
-                    if (fine_elem >= states.size()) continue;
+                    if (fine_elem >= states.size())
+                        continue;
 
-                    const PrimitiveState& state_fine = states[fine_elem];
+                    const PrimitiveState &state_fine = states[fine_elem];
                     VecX U_fine(5);
-                    U_fine << state_fine.Hu.mean(), state_fine.Hv.mean(),
-                              state_fine.eta.mean(), state_fine.HT.mean(),
-                              state_fine.HS.mean();
+                    U_fine << state_fine.Hu.mean(), state_fine.Hv.mean(), state_fine.eta.mean(),
+                        state_fine.HT.mean(), state_fine.HS.mean();
                     U_fine_faces.push_back(U_fine);
                 }
 
                 // Compute mortar flux
                 VecX rhs_coarse_face;
                 std::vector<VecX> rhs_fine_faces;
-                mortar->compute_mortar_flux(numerical_flux, U_coarse_face,
-                                            U_fine_faces, normal,
+                mortar->compute_mortar_flux(numerical_flux, U_coarse_face, U_fine_faces, normal,
                                             rhs_coarse_face, rhs_fine_faces);
 
                 // Add flux contributions to tendencies
@@ -581,108 +578,111 @@ void PrimitiveEquationsSolver::apply_interface_fluxes(
 }
 
 void PrimitiveEquationsSolver::apply_boundary_conditions(
-    const std::vector<PrimitiveState>& states,
-    std::vector<PrimitiveTendencies>& tendencies,
+    const std::vector<PrimitiveState> &states, std::vector<PrimitiveTendencies> &tendencies,
     Real time) const {
 
     // Apply boundary fluxes based on BC type
     for (size_t e = 0; e < states.size(); ++e) {
-        if (e >= face_connections_.size()) continue;
+        if (e >= face_connections_.size())
+            continue;
 
         for (int f = 0; f < 6; ++f) {
-            if (f >= static_cast<int>(face_connections_[e].size())) continue;
+            if (f >= static_cast<int>(face_connections_[e].size()))
+                continue;
 
-            const FaceConnection& conn = face_connections_[e][f];
+            const FaceConnection &conn = face_connections_[e][f];
 
-            if (!conn.is_boundary()) continue;
+            if (!conn.is_boundary())
+                continue;
 
             // Find matching boundary condition
             const BoundaryCondition* bc = nullptr;
-            for (const auto& b : boundary_conditions_) {
+            for (const auto &b : boundary_conditions_) {
                 if (b.boundary_id == conn.boundary_id) {
                     bc = &b;
                     break;
                 }
             }
-            if (!bc) continue;
+            if (!bc)
+                continue;
 
             // Get face normal (outward pointing)
             FaceQuadrature face_quad(f, order_ + 1);
             Vec3 normal = face_quad.normal();
-            const VecX& weights = face_quad.weights();
+            const VecX &weights = face_quad.weights();
             int n_face_pts = face_quad.size();
 
             // Extract interior state at face quadrature points
             // For now, use a simple approach: apply penalty flux
-            const PrimitiveState& state = states[e];
+            const PrimitiveState &state = states[e];
 
             switch (bc->type) {
-                case BCType::NoSlip:
-                case BCType::FreeSlip: {
-                    // Wall boundary: no normal flow
-                    // Ghost state has reflected normal velocity
-                    // Penalty flux = (U_interior - U_ghost) * wave_speed
+            case BCType::NoSlip:
+            case BCType::FreeSlip: {
+                // Wall boundary: no normal flow
+                // Ghost state has reflected normal velocity
+                // Penalty flux = (U_interior - U_ghost) * wave_speed
+                Real wave_speed = std::sqrt(constants_.g * state.H.mean());
+
+                // Apply penalty to momentum equations
+                for (int q = 0; q < n_face_pts; ++q) {
+                    Real w = weights(q);
+
+                    // Project velocity onto normal and tangent
+                    Real u_n = state.u.mean() * normal(0) + state.v.mean() * normal(1);
+
+                    // For wall BC: ghost has u_n_ghost = -u_n (no normal flow)
+                    // Penalty contribution
+                    Real penalty_coeff = wave_speed * w;
+
+                    // Add to tendencies (weak enforcement)
+                    // This is a simplified version - full implementation would
+                    // interpolate to face points and lift back to element DOFs
+                }
+                break;
+            }
+
+            case BCType::Outflow: {
+                // Radiation/open boundary condition
+                // Allow waves to exit without reflection
+                // Ghost state extrapolated from interior
+
+                // For outflow: simply extrapolate interior to ghost
+                // Flux computed with same state on both sides -> zero penalty
+                // This allows smooth outflow
+                break;
+            }
+
+            case BCType::Inflow:
+            case BCType::Dirichlet: {
+                // Specified inflow condition
+                // Ghost state from boundary condition function
+                if (bc->value_func) {
+                    const auto &vol_nodes = face_quad.volume_nodes();
                     Real wave_speed = std::sqrt(constants_.g * state.H.mean());
 
-                    // Apply penalty to momentum equations
                     for (int q = 0; q < n_face_pts; ++q) {
-                        Real w = weights(q);
+                        const Vec3 &pt = vol_nodes[q];
+                        VecX bc_val = bc->value_func(pt, time);
 
-                        // Project velocity onto normal and tangent
-                        Real u_n = state.u.mean() * normal(0) + state.v.mean() * normal(1);
-
-                        // For wall BC: ghost has u_n_ghost = -u_n (no normal flow)
-                        // Penalty contribution
-                        Real penalty_coeff = wave_speed * w;
-
-                        // Add to tendencies (weak enforcement)
-                        // This is a simplified version - full implementation would
-                        // interpolate to face points and lift back to element DOFs
+                        // Apply penalty towards BC value
+                        // (Full implementation would do proper lifting)
                     }
-                    break;
                 }
+                break;
+            }
 
-                case BCType::Outflow: {
-                    // Radiation/open boundary condition
-                    // Allow waves to exit without reflection
-                    // Ghost state extrapolated from interior
+            case BCType::Periodic: {
+                // Periodic BCs should be handled as interior interfaces
+                // with the periodic neighbor element
+                break;
+            }
 
-                    // For outflow: simply extrapolate interior to ghost
-                    // Flux computed with same state on both sides -> zero penalty
-                    // This allows smooth outflow
-                    break;
-                }
-
-                case BCType::Inflow:
-                case BCType::Dirichlet: {
-                    // Specified inflow condition
-                    // Ghost state from boundary condition function
-                    if (bc->value_func) {
-                        const auto& vol_nodes = face_quad.volume_nodes();
-                        Real wave_speed = std::sqrt(constants_.g * state.H.mean());
-
-                        for (int q = 0; q < n_face_pts; ++q) {
-                            const Vec3& pt = vol_nodes[q];
-                            VecX bc_val = bc->value_func(pt, time);
-
-                            // Apply penalty towards BC value
-                            // (Full implementation would do proper lifting)
-                        }
-                    }
-                    break;
-                }
-
-                case BCType::Periodic: {
-                    // Periodic BCs should be handled as interior interfaces
-                    // with the periodic neighbor element
-                    break;
-                }
-
-                case BCType::Neumann: {
-                    // Specified flux - add directly to RHS
-                    // (No ghost state needed, flux is prescribed)
-                    break;
-                }
+            case BCType::Neumann: {
+                // Specified flux - add directly to RHS
+                // (No ghost state needed, flux is prescribed)
+                break;
+            }
             }
         }
     }
@@ -692,8 +692,7 @@ void PrimitiveEquationsSolver::apply_boundary_conditions(
 // WindStress implementation
 // =============================================================================
 
-void WindStress::compute(const VecX& x, const VecX& y, Real time,
-                          VecX& tau_x, VecX& tau_y) const {
+void WindStress::compute(const VecX &x, const VecX &y, Real time, VecX &tau_x, VecX &tau_y) const {
     int n = static_cast<int>(x.size());
     tau_x.resize(n);
     tau_y.resize(n);
@@ -714,8 +713,8 @@ void WindStress::compute(const VecX& x, const VecX& y, Real time,
 // BottomFriction implementation
 // =============================================================================
 
-void BottomFriction::compute(const VecX& u_bot, const VecX& v_bot, const VecX& H,
-                              VecX& tau_x, VecX& tau_y) const {
+void BottomFriction::compute(const VecX &u_bot, const VecX &v_bot, const VecX &H, VecX &tau_x,
+                             VecX &tau_y) const {
     int n = static_cast<int>(u_bot.size());
     tau_x.resize(n);
     tau_y.resize(n);
@@ -724,29 +723,29 @@ void BottomFriction::compute(const VecX& u_bot, const VecX& v_bot, const VecX& H
         Real speed = std::sqrt(u_bot(i) * u_bot(i) + v_bot(i) * v_bot(i));
 
         switch (type_) {
-            case Type::Linear:
-                tau_x(i) = -Cd_ * u_bot(i);
-                tau_y(i) = -Cd_ * v_bot(i);
-                break;
+        case Type::Linear:
+            tau_x(i) = -Cd_ * u_bot(i);
+            tau_y(i) = -Cd_ * v_bot(i);
+            break;
 
-            case Type::Quadratic:
-                tau_x(i) = -Cd_ * speed * u_bot(i);
-                tau_y(i) = -Cd_ * speed * v_bot(i);
-                break;
+        case Type::Quadratic:
+            tau_x(i) = -Cd_ * speed * u_bot(i);
+            tau_y(i) = -Cd_ * speed * v_bot(i);
+            break;
 
-            case Type::ManningN:
-                // tau = g * n^2 * |u| * u / h^(1/3)
-                if (H(i) > 1e-6) {
-                    Real coeff = Cd_ * Cd_ * 9.81 / std::pow(H(i), 1.0/3.0);
-                    tau_x(i) = -coeff * speed * u_bot(i);
-                    tau_y(i) = -coeff * speed * v_bot(i);
-                } else {
-                    tau_x(i) = 0.0;
-                    tau_y(i) = 0.0;
-                }
-                break;
+        case Type::ManningN:
+            // tau = g * n^2 * |u| * u / h^(1/3)
+            if (H(i) > 1e-6) {
+                Real coeff = Cd_ * Cd_ * 9.81 / std::pow(H(i), 1.0 / 3.0);
+                tau_x(i) = -coeff * speed * u_bot(i);
+                tau_y(i) = -coeff * speed * v_bot(i);
+            } else {
+                tau_x(i) = 0.0;
+                tau_y(i) = 0.0;
+            }
+            break;
         }
     }
 }
 
-}  // namespace drifter
+} // namespace drifter

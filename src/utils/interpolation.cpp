@@ -19,4 +19,4 @@ namespace drifter {
 // - Post-processing (e.g., cross-sections)
 // - AMR solution projection
 
-}  // namespace drifter
+} // namespace drifter

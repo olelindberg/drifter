@@ -10,13 +10,11 @@ namespace drifter {
 // MortarSpace implementation
 // =============================================================================
 
-MortarSpace::MortarSpace(
-    const FaceConnection &conn, const HexahedronBasis &basis_coarse,
-    const HexahedronBasis &basis_fine, int face_id)
+MortarSpace::MortarSpace(const FaceConnection &conn, const HexahedronBasis &basis_coarse,
+                         const HexahedronBasis &basis_fine, int face_id)
     : conn_type_(conn.type), face_id_(face_id),
       mortar_order_(std::max(basis_coarse.order(), basis_fine.order())),
-      num_mortar_dofs_((mortar_order_ + 1) * (mortar_order_ + 1)),
-      num_fine_(conn.num_fine_faces()),
+      num_mortar_dofs_((mortar_order_ + 1) * (mortar_order_ + 1)), num_fine_(conn.num_fine_faces()),
       mortar_quad_(2 * mortar_order_ + 1, QuadratureType::GaussLegendre) {
 
     // Compute sub-face bounds for each fine element
@@ -79,8 +77,8 @@ void MortarSpace::compute_subface_bounds() {
     }
 }
 
-void MortarSpace::build_projection_operators(
-    const HexahedronBasis &basis_coarse, const HexahedronBasis &basis_fine) {
+void MortarSpace::build_projection_operators(const HexahedronBasis &basis_coarse,
+                                             const HexahedronBasis &basis_fine) {
 
     int nq = mortar_quad_.size();
     int np = mortar_order_ + 1;
@@ -144,8 +142,7 @@ void MortarSpace::build_projection_operators(
             for (int jc = 0; jc < np_coarse; ++jc) {
                 for (int ic = 0; ic < np_coarse; ++ic) {
                     int dof_coarse = ic + np_coarse * jc;
-                    B_coarse(m, dof_coarse) +=
-                        w * Phi_mortar(q, m) * psi_t1(ic) * psi_t2(jc);
+                    B_coarse(m, dof_coarse) += w * Phi_mortar(q, m) * psi_t1(ic) * psi_t2(jc);
                 }
             }
         }
@@ -189,12 +186,8 @@ void MortarSpace::build_projection_operators(
 
                 // Map mortar coords to fine face reference coords [-1,1]^2
                 Vec2 xi_fine;
-                xi_fine(0) =
-                    2.0 * (xi_mortar(0) - sf_min(0)) / (sf_max(0) - sf_min(0)) -
-                    1.0;
-                xi_fine(1) =
-                    2.0 * (xi_mortar(1) - sf_min(1)) / (sf_max(1) - sf_min(1)) -
-                    1.0;
+                xi_fine(0) = 2.0 * (xi_mortar(0) - sf_min(0)) / (sf_max(0) - sf_min(0)) - 1.0;
+                xi_fine(1) = 2.0 * (xi_mortar(1) - sf_min(1)) / (sf_max(1) - sf_min(1)) - 1.0;
 
                 VecX psi_t1 = fine_1d.evaluate(xi_fine(0));
                 VecX psi_t2 = fine_1d.evaluate(xi_fine(1));
@@ -203,8 +196,8 @@ void MortarSpace::build_projection_operators(
                     for (int jf = 0; jf < np_fine; ++jf) {
                         for (int if_ = 0; if_ < np_fine; ++if_) {
                             int dof_fine = if_ + np_fine * jf;
-                            B_fine(m, dof_fine) += w_mortar * Phi_mortar(q, m) *
-                                                   psi_t1(if_) * psi_t2(jf);
+                            B_fine(m, dof_fine) +=
+                                w_mortar * Phi_mortar(q, m) * psi_t1(if_) * psi_t2(jf);
                         }
                     }
                 }
@@ -216,10 +209,10 @@ void MortarSpace::build_projection_operators(
     }
 }
 
-void MortarSpace::compute_mortar_flux(
-    const NumericalFluxFunc &flux_func, const VecX &U_coarse_face,
-    const std::vector<VecX> &U_fine_faces, const Vec3 &normal,
-    VecX &rhs_coarse_face, std::vector<VecX> &rhs_fine_faces) const {
+void MortarSpace::compute_mortar_flux(const NumericalFluxFunc &flux_func, const VecX &U_coarse_face,
+                                      const std::vector<VecX> &U_fine_faces, const Vec3 &normal,
+                                      VecX &rhs_coarse_face,
+                                      std::vector<VecX> &rhs_fine_faces) const {
 
     // Project coarse solution to mortar space
     VecX U_coarse_mortar = P_coarse_ * U_coarse_face;
@@ -235,8 +228,7 @@ void MortarSpace::compute_mortar_flux(
 
     // For each mortar DOF (or quadrature point), evaluate flux
     // Here we use a simplified approach: evaluate at mortar nodes
-    const LagrangeBasis1D mortar_1d =
-        LagrangeBasis1D::create_lgl(mortar_order_);
+    const LagrangeBasis1D mortar_1d = LagrangeBasis1D::create_lgl(mortar_order_);
     int np = mortar_order_ + 1;
 
     for (int j = 0; j < np; ++j) {
@@ -282,13 +274,11 @@ void MortarInterfaceManager::register_interface(const FaceConnection &conn) {
 void MortarInterfaceManager::build_operators() {
     for (const auto &conn : connections_) {
         auto key = std::make_pair(conn.coarse_elem, conn.coarse_face_id);
-        mortars_[key] = std::make_unique<MortarSpace>(
-            conn, *basis_, *basis_, conn.coarse_face_id);
+        mortars_[key] = std::make_unique<MortarSpace>(conn, *basis_, *basis_, conn.coarse_face_id);
     }
 }
 
-const MortarSpace *
-MortarInterfaceManager::get_mortar(Index coarse_elem, int face_id) const {
+const MortarSpace* MortarInterfaceManager::get_mortar(Index coarse_elem, int face_id) const {
     auto it = mortars_.find({coarse_elem, face_id});
     if (it != mortars_.end()) {
         return it->second.get();
@@ -304,8 +294,8 @@ bool MortarInterfaceManager::has_mortar(Index coarse_elem, int face_id) const {
 // ConformingInterface implementation
 // =============================================================================
 
-ConformingInterface::ConformingInterface(
-    const HexahedronBasis &basis, int face_id_left, int face_id_right)
+ConformingInterface::ConformingInterface(const HexahedronBasis &basis, int face_id_left,
+                                         int face_id_right)
     : needs_orientation_flip_(false) {
 
     // Get face interpolation matrices
@@ -313,8 +303,7 @@ ConformingInterface::ConformingInterface(
     interp_right_ = basis.interp_to_face_lgl(face_id_right);
 
     // Get face quadrature
-    FaceQuadrature fquad(
-        face_id_left, basis.order(), QuadratureType::GaussLobatto);
+    FaceQuadrature fquad(face_id_left, basis.order(), QuadratureType::GaussLobatto);
     num_quad_ = fquad.size();
     quad_weights_ = fquad.quad_2d().weights();
 
@@ -328,10 +317,9 @@ ConformingInterface::ConformingInterface(
     // For now, assume consistent orientation
 }
 
-void ConformingInterface::compute_flux(
-    const NumericalFluxFunc &flux_func, const VecX &U_left_face,
-    const VecX &U_right_face, const Vec3 &normal, VecX &rhs_left_face,
-    VecX &rhs_right_face) const {
+void ConformingInterface::compute_flux(const NumericalFluxFunc &flux_func, const VecX &U_left_face,
+                                       const VecX &U_right_face, const Vec3 &normal,
+                                       VecX &rhs_left_face, VecX &rhs_right_face) const {
 
     rhs_left_face = VecX::Zero(U_left_face.size());
     rhs_right_face = VecX::Zero(U_right_face.size());
@@ -360,9 +348,8 @@ void ConformingInterface::compute_flux(
 
 namespace flux {
 
-VecX lax_friedrichs(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n, Real max_speed,
-    const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux) {
+VecX lax_friedrichs(const VecX &U_L, const VecX &U_R, const Vec3 &n, Real max_speed,
+                    const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux) {
     VecX F_L = physical_flux(U_L, n);
     VecX F_R = physical_flux(U_R, n);
 
@@ -370,9 +357,8 @@ VecX lax_friedrichs(
     return 0.5 * (F_L + F_R) - 0.5 * max_speed * (U_R - U_L);
 }
 
-VecX central(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n,
-    const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux) {
+VecX central(const VecX &U_L, const VecX &U_R, const Vec3 &n,
+             const std::function<VecX(const VecX &, const Vec3 &)> &physical_flux) {
     VecX F_L = physical_flux(U_L, n);
     VecX F_R = physical_flux(U_R, n);
 
@@ -380,8 +366,7 @@ VecX central(
     return 0.5 * (F_L + F_R);
 }
 
-VecX upwind(
-    const VecX &U_L, const VecX &U_R, const Vec3 &n, const Vec3 &velocity) {
+VecX upwind(const VecX &U_L, const VecX &U_R, const Vec3 &n, const Vec3 &velocity) {
     Real v_n = velocity.dot(n);
 
     // F* = v · n * U_upwind
@@ -398,10 +383,9 @@ VecX upwind(
 // Conservation verification
 // =============================================================================
 
-Real verify_mortar_conservation(
-    const MortarSpace &mortar, const VecX &rhs_coarse,
-    const std::vector<VecX> &rhs_fine, const VecX &quad_weights_coarse,
-    const std::vector<VecX> &quad_weights_fine) {
+Real verify_mortar_conservation(const MortarSpace &mortar, const VecX &rhs_coarse,
+                                const std::vector<VecX> &rhs_fine, const VecX &quad_weights_coarse,
+                                const std::vector<VecX> &quad_weights_fine) {
 
     // Compute integral of flux on coarse side
     Real integral_coarse = 0.0;

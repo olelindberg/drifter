@@ -23,4 +23,4 @@ namespace drifter {
 // 4. Coriolis parameter from latitude
 //    - f = 2*Ω*sin(φ)
 
-}  // namespace drifter
+} // namespace drifter

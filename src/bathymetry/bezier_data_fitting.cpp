@@ -5,18 +5,15 @@
 
 namespace drifter {
 
-BezierDataFittingAssembler::BezierDataFittingAssembler(
-    const QuadtreeAdapter &mesh)
+BezierDataFittingAssembler::BezierDataFittingAssembler(const QuadtreeAdapter &mesh)
     : mesh_(mesh), basis_(std::make_unique<BezierBasis2D>()) {}
 
-void BezierDataFittingAssembler::set_scattered_points(
-    const std::vector<BathymetryPoint> &points) {
+void BezierDataFittingAssembler::set_scattered_points(const std::vector<BathymetryPoint> &points) {
     points_ = points;
     assign_points_to_elements();
 }
 
-void BezierDataFittingAssembler::set_scattered_points(
-    const std::vector<Vec3> &points) {
+void BezierDataFittingAssembler::set_scattered_points(const std::vector<Vec3> &points) {
     points_.clear();
     points_.reserve(points.size());
     for (const auto &p : points) {
@@ -25,8 +22,8 @@ void BezierDataFittingAssembler::set_scattered_points(
     assign_points_to_elements();
 }
 
-void BezierDataFittingAssembler::set_from_bathymetry_source(
-    const BathymetrySource &source, int ngauss) {
+void BezierDataFittingAssembler::set_from_bathymetry_source(const BathymetrySource &source,
+                                                            int ngauss) {
     // Note: Cannot safely store reference to source (lifetime issue).
     // The bathy_func_ will be set if set_from_function is called instead.
     // For Dirichlet BCs with BathymetrySource, caller should wrap in a
@@ -66,8 +63,8 @@ void BezierDataFittingAssembler::set_from_bathymetry_source(
     }
 }
 
-void BezierDataFittingAssembler::set_from_function(
-    std::function<Real(Real, Real)> bathy_func, int ngauss) {
+void BezierDataFittingAssembler::set_from_function(std::function<Real(Real, Real)> bathy_func,
+                                                   int ngauss) {
     // Store the function for later evaluation (needed for Dirichlet BCs)
     bathy_func_ = bathy_func;
 
@@ -117,8 +114,7 @@ Index BezierDataFittingAssembler::find_element(Real x, Real y) const {
     return mesh_.find_element(Vec2(x, y));
 }
 
-Vec2 BezierDataFittingAssembler::physical_to_param(
-    Index elem, Real x, Real y) const {
+Vec2 BezierDataFittingAssembler::physical_to_param(Index elem, Real x, Real y) const {
     const QuadBounds &bounds = mesh_.element_bounds(elem);
     Real u = (x - bounds.xmin) / (bounds.xmax - bounds.xmin);
     Real v = (y - bounds.ymin) / (bounds.ymax - bounds.ymin);
@@ -165,19 +161,17 @@ void BezierDataFittingAssembler::compute_gauss_quadrature(int ngauss) {
         Real w2 = 0.4679139345726910 / 2.0;
         Real w3 = 0.1713244923791704 / 2.0;
 
-        gauss_nodes_ << (1.0 - x3) / 2.0, (1.0 - x1) / 2.0, (1.0 - x2) / 2.0,
-            (1.0 + x2) / 2.0, (1.0 + x1) / 2.0, (1.0 + x3) / 2.0;
+        gauss_nodes_ << (1.0 - x3) / 2.0, (1.0 - x1) / 2.0, (1.0 - x2) / 2.0, (1.0 + x2) / 2.0,
+            (1.0 + x1) / 2.0, (1.0 + x3) / 2.0;
         gauss_weights_ << w3, w1, w2, w2, w1, w3;
     } else {
-        throw std::invalid_argument(
-            "BezierDataFittingAssembler: ngauss must be 1-6");
+        throw std::invalid_argument("BezierDataFittingAssembler: ngauss must be 1-6");
     }
 }
 
 void BezierDataFittingAssembler::assemble(SpMat &B, VecX &b, VecX &w) const {
     if (points_.empty()) {
-        throw std::runtime_error(
-            "BezierDataFittingAssembler: no data points set");
+        throw std::runtime_error("BezierDataFittingAssembler: no data points set");
     }
 
     Index npoints = num_points();
@@ -222,11 +216,9 @@ void BezierDataFittingAssembler::assemble(SpMat &B, VecX &b, VecX &w) const {
     B.setFromTriplets(triplets.begin(), triplets.end());
 }
 
-void BezierDataFittingAssembler::assemble_normal_equations(
-    MatX &AtWA, VecX &AtWb) const {
+void BezierDataFittingAssembler::assemble_normal_equations(MatX &AtWA, VecX &AtWb) const {
     if (points_.empty()) {
-        throw std::runtime_error(
-            "BezierDataFittingAssembler: no data points set");
+        throw std::runtime_error("BezierDataFittingAssembler: no data points set");
     }
 
     Index ndofs = total_dofs();
@@ -245,8 +237,7 @@ void BezierDataFittingAssembler::assemble_normal_equations(
 
     // Per-thread storage (eliminates critical section)
     std::vector<std::vector<Eigen::Triplet<Real>>> thread_triplets(num_threads);
-    std::vector<std::vector<Real>> thread_rhs(
-        num_threads, std::vector<Real>(ndofs, 0.0));
+    std::vector<std::vector<Real>> thread_rhs(num_threads, std::vector<Real>(ndofs, 0.0));
 
 #pragma omp parallel
     {
@@ -266,8 +257,7 @@ void BezierDataFittingAssembler::assemble_normal_equations(
                 continue;
 
             // Build local matrices
-            MatX local_AtWA =
-                MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
+            MatX local_AtWA = MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
             VecX local_AtWb = VecX::Zero(BezierBasis2D::NDOF);
 
             for (Index p : elem_points) {
@@ -287,8 +277,7 @@ void BezierDataFittingAssembler::assemble_normal_equations(
             for (Index i = 0; i < BezierBasis2D::NDOF; ++i) {
                 for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
                     if (std::abs(local_AtWA(i, j)) > 1e-16) {
-                        thread_triplets[tid].emplace_back(
-                            base + i, base + j, local_AtWA(i, j));
+                        thread_triplets[tid].emplace_back(base + i, base + j, local_AtWA(i, j));
                     }
                 }
                 thread_rhs[tid][base + i] += local_AtWb(i);
@@ -299,8 +288,7 @@ void BezierDataFittingAssembler::assemble_normal_equations(
     // Merge thread-local triplets sequentially
     std::vector<Eigen::Triplet<Real>> triplets;
     for (const auto &thread_trips : thread_triplets) {
-        triplets.insert(
-            triplets.end(), thread_trips.begin(), thread_trips.end());
+        triplets.insert(triplets.end(), thread_trips.begin(), thread_trips.end());
     }
 
     // Merge thread-local RHS vectors
@@ -320,11 +308,9 @@ void BezierDataFittingAssembler::assemble_normal_equations(
     AtWb = Eigen::Map<VecX>(rhs_contributions.data(), ndofs);
 }
 
-void BezierDataFittingAssembler::assemble_normal_equations_sparse(
-    SpMat &AtWA, VecX &AtWb) const {
+void BezierDataFittingAssembler::assemble_normal_equations_sparse(SpMat &AtWA, VecX &AtWb) const {
     if (points_.empty()) {
-        throw std::runtime_error(
-            "BezierDataFittingAssembler: no data points set");
+        throw std::runtime_error("BezierDataFittingAssembler: no data points set");
     }
 
     Index ndofs = total_dofs();
@@ -345,8 +331,7 @@ void BezierDataFittingAssembler::assemble_normal_equations_sparse(
     // Pre-reserve triplet capacity based on element count
     // Each element contributes at most 36×36 = 1,296 triplets
     Index elements_per_thread = (num_elements + num_threads - 1) / num_threads;
-    Index triplets_per_thread =
-        elements_per_thread * BezierBasis2D::NDOF * BezierBasis2D::NDOF;
+    Index triplets_per_thread = elements_per_thread * BezierBasis2D::NDOF * BezierBasis2D::NDOF;
 
 #pragma omp parallel
     {
@@ -367,8 +352,7 @@ void BezierDataFittingAssembler::assemble_normal_equations_sparse(
                 continue;
 
             // Build local matrices (36×36 block)
-            MatX local_AtWA =
-                MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
+            MatX local_AtWA = MatX::Zero(BezierBasis2D::NDOF, BezierBasis2D::NDOF);
             VecX local_AtWb = VecX::Zero(BezierBasis2D::NDOF);
 
             for (Index p : elem_points) {
@@ -389,8 +373,7 @@ void BezierDataFittingAssembler::assemble_normal_equations_sparse(
                 for (Index j = 0; j < BezierBasis2D::NDOF; ++j) {
                     Real value = local_AtWA(i, j);
                     if (std::abs(value) > 1e-16) {
-                        thread_triplets[tid].emplace_back(
-                            base + i, base + j, value);
+                        thread_triplets[tid].emplace_back(base + i, base + j, value);
                     }
                 }
                 // Add to thread-local RHS
@@ -409,8 +392,7 @@ void BezierDataFittingAssembler::assemble_normal_equations_sparse(
     std::vector<Eigen::Triplet<Real>> triplets;
     triplets.reserve(total_triplets);
     for (const auto &thread_trips : thread_triplets) {
-        triplets.insert(
-            triplets.end(), thread_trips.begin(), thread_trips.end());
+        triplets.insert(triplets.end(), thread_trips.begin(), thread_trips.end());
     }
 
     // Build sparse matrix directly (no dense intermediate)

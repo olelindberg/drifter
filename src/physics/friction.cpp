@@ -19,4 +19,4 @@ namespace drifter {
 //   C_d = [κ / ln(z_b/z_0)]²
 //   where z_0 is bottom roughness length
 
-}  // namespace drifter
+} // namespace drifter

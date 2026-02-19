@@ -35,8 +35,8 @@ struct CubicHangingNodeConstraint {
 struct CubicEdgeDerivativeConstraint {
     Index elem1, elem2;
     int edge1, edge2;
-    Real t;                ///< Parameter position along edge (0 to 1)
-    int deriv_order;       ///< Always 1 for C¹
+    Real t; ///< Parameter position along edge (0 to 1)
+    int deriv_order; ///< Always 1 for C¹
     VecX coeffs1, coeffs2; ///< Basis derivative coefficients (16 values each)
     Real scale1, scale2;
 };
@@ -61,9 +61,7 @@ public:
 
     Index global_dof(Index elem, int local_dof) const;
     const std::vector<Index> &element_dofs(Index elem) const;
-    const std::vector<std::vector<Index>> &all_element_dofs() const {
-        return elem_to_global_;
-    }
+    const std::vector<std::vector<Index>> &all_element_dofs() const { return elem_to_global_; }
 
     bool is_boundary_dof(Index dof) const;
     const std::vector<Index> &boundary_dofs() const { return boundary_dofs_; }
@@ -72,15 +70,10 @@ public:
     // Constraint handling
     // =========================================================================
 
-    const std::vector<CubicHangingNodeConstraint> &constraints() const {
-        return constraints_;
-    }
-    Index num_constraints() const {
-        return static_cast<Index>(constraints_.size());
-    }
+    const std::vector<CubicHangingNodeConstraint> &constraints() const { return constraints_; }
+    Index num_constraints() const { return static_cast<Index>(constraints_.size()); }
 
-    const std::vector<CubicEdgeDerivativeConstraint> &
-    edge_derivative_constraints() const {
+    const std::vector<CubicEdgeDerivativeConstraint> &edge_derivative_constraints() const {
         return edge_derivative_constraints_;
     }
     Index num_edge_derivative_constraints() const {
