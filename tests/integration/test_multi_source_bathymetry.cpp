@@ -288,12 +288,10 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainAdaptiveRefinement) {
 
   auto errors = smoother.estimate_errors();
   std::vector<Real> element_rms(smoother.mesh().num_elements(), 0.0);
-  std::vector<Real> element_std(smoother.mesh().num_elements(), 0.0);
   std::vector<Real> refinement_levels(smoother.mesh().num_elements(), 0.0);
 
   for (const auto &e : errors) {
     element_rms[e.element] = e.normalized_error;
-    element_std[e.element] = e.std_error;
   }
   for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
     refinement_levels[i] =
@@ -305,7 +303,6 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainAdaptiveRefinement) {
       [&smoother](Real x, Real y) { return smoother.evaluate(x, y); }, 6,
       "depth",
       {{"rms_error", element_rms},
-       {"std_error", element_std},
        {"refinement_level", refinement_levels}});
 
   std::cout << "Output written to: " << output_file << ".vtu" << std::endl;
@@ -433,7 +430,7 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainWithPolygonMask) {
   config.max_elements = 10000;
   config.smoother_config.lambda = 1000.0;
   config.verbose = true;
-  config.error_metric_type = ErrorMetricType::RelativeError;
+  config.error_metric_type = ErrorMetricType::NormalizedError;
 
   // Start with single element covering entire domain
   auto start = std::chrono::high_resolution_clock::now();
@@ -486,12 +483,10 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainWithPolygonMask) {
 
   auto errors = smoother.estimate_errors();
   std::vector<Real> element_rms(num_elements, 0.0);
-  std::vector<Real> element_std(num_elements, 0.0);
   std::vector<Real> refinement_levels(num_elements, 0.0);
 
   for (const auto &e : errors) {
     element_rms[e.element] = e.normalized_error;
-    element_std[e.element] = e.std_error;
   }
   for (Index i = 0; i < num_elements; ++i) {
     refinement_levels[i] =
@@ -503,7 +498,6 @@ TEST_F(MultiSourceBathymetryTest, LargeDomainWithPolygonMask) {
       [&smoother](Real x, Real y) { return smoother.evaluate(x, y); }, 6,
       "depth",
       {{"rms_error", element_rms},
-       {"std_error", element_std},
        {"refinement_level", refinement_levels},
        {"in_north_sea_baltic", in_region}});
 

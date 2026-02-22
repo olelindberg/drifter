@@ -53,9 +53,8 @@ void write_error_csv(const std::string &dir, int iteration,
     }
 
     // Write header
-    ofs << "element_id,center_x,center_y,l2_error,max_error,normalized_error,"
-           "mean_error,std_error,mean_depth,relative_error,"
-           "coarsening_error,mean_difference,volume_change,marked\n";
+    ofs << "element_id,center_x,center_y,l2_error,normalized_error,"
+           "mean_difference,volume_change,marked\n";
 
     // Write data
     ofs << std::scientific << std::setprecision(8);
@@ -66,11 +65,8 @@ void write_error_csv(const std::string &dir, int iteration,
         bool is_marked = marked_set.count(err.element) > 0;
 
         ofs << err.element << "," << cx << "," << cy << "," << err.l2_error << ","
-            << err.normalized_error << "," // max_error same as normalized for now
-            << err.normalized_error << "," << err.mean_error << "," << err.std_error << ","
-            << err.mean_depth << "," << err.relative_error << "," << err.coarsening_error << ","
-            << err.mean_difference << "," << err.volume_change << "," << (is_marked ? 1 : 0)
-            << "\n";
+            << err.normalized_error << "," << err.mean_difference << "," << err.volume_change << ","
+            << (is_marked ? 1 : 0) << "\n";
     }
 
     ofs.close();
@@ -264,10 +260,8 @@ void AdaptiveCGLinearBezierSmoother::apply_bathymetry_to_smoother() {
 // Error estimation
 // =============================================================================
 
-void AdaptiveCGLinearBezierSmoother::compute_element_error_statistics(Index elem, Real &l2_error,
-                                                                      Real &mean_error,
-                                                                      Real &std_error,
-                                                                      Real &mean_depth) const {
+void AdaptiveCGLinearBezierSmoother::compute_element_error_statistics(Index elem,
+                                                                      Real &l2_error) const {
     if (!smoother_ || !smoother_->is_solved()) {
         throw std::runtime_error("AdaptiveCGLinearBezierSmoother: must solve "
                                  "before computing errors");
@@ -278,11 +272,8 @@ void AdaptiveCGLinearBezierSmoother::compute_element_error_statistics(Index elem
     Real dy = bounds.ymax - bounds.ymin;
     int ngauss = config_.ngauss_error;
 
-    // Accumulate weighted sums in a single pass
-    Real sum_error = 0.0;
+    // Accumulate weighted sum of squared errors
     Real sum_error_sq = 0.0;
-    Real sum_depth = 0.0;
-    Real total_weight = 0.0;
 
     // 2D Gauss-Legendre quadrature
     for (int j = 0; j < ngauss; ++j) {
@@ -301,22 +292,11 @@ void AdaptiveCGLinearBezierSmoother::compute_element_error_statistics(Index elem
             // CG linear Bezier approximation value
             Real z_bezier = smoother_->evaluate(x, y);
 
-            // Accumulate weighted error statistics
+            // Accumulate weighted squared error
             Real diff = z_data - z_bezier;
-            sum_error += w * diff;
             sum_error_sq += w * diff * diff;
-            sum_depth += w * z_data;
-            total_weight += w;
         }
     }
-
-    // Weighted mean and variance using E[X²] - E[X]² formula
-    mean_error = sum_error / total_weight;
-    Real variance = (sum_error_sq / total_weight) - mean_error * mean_error;
-    std_error = std::sqrt(std::max(0.0, variance));
-
-    // Mean depth for relative error normalization
-    mean_depth = sum_depth / total_weight;
 
     // L2 error = sqrt(integral of diff^2 over element)
     // The quadrature weights sum to 1 on [0,1]^2, so multiply by area
@@ -332,11 +312,6 @@ AdaptiveCGLinearBezierSmoother::estimate_element_error(Index elem) const {
     if (is_element_on_land(elem)) {
         result.l2_error = 0.0;
         result.normalized_error = 0.0;
-        result.mean_error = 0.0;
-        result.std_error = 0.0;
-        result.mean_depth = 0.0;
-        result.relative_error = 0.0;
-        result.coarsening_error = 0.0;
         result.mean_difference = 0.0;
         result.volume_change = 0.0;
         result.should_refine = false;
@@ -348,21 +323,14 @@ AdaptiveCGLinearBezierSmoother::estimate_element_error(Index elem) const {
     Real dy = bounds.ymax - bounds.ymin;
     Real area = dx * dy;
 
-    // Compute all error statistics in one pass
-    compute_element_error_statistics(elem, result.l2_error, result.mean_error, result.std_error,
-                                     result.mean_depth);
+    // Compute L2 error via Gauss quadrature
+    compute_element_error_statistics(elem, result.l2_error);
 
     // Normalize by sqrt(area) to get average error magnitude (RMS)
     result.normalized_error = result.l2_error / std::sqrt(area);
 
-    // Relative error: normalize by depth to make metric depth-independent
-    // depth_scale prevents blow-up near shoreline where depth approaches zero
-    result.relative_error =
-        result.normalized_error / (std::abs(result.mean_depth) + config_.depth_scale);
-
     // Compute coarsening metrics (solution change from refinement)
-    compute_coarsening_metrics(elem, result.coarsening_error, result.mean_difference,
-                               result.volume_change);
+    compute_coarsening_metrics(elem, result.mean_difference, result.volume_change);
 
     // Refinement decision based on selected metric
     result.should_refine = (error_metric(result) > config_.error_threshold);
@@ -501,11 +469,9 @@ Real AdaptiveCGLinearBezierSmoother::evaluate_prev_solution(Real x, Real y) cons
     return 0.0; // No stored solution found
 }
 
-void AdaptiveCGLinearBezierSmoother::compute_coarsening_metrics(Index elem, Real &coarsening_error,
-                                                                Real &mean_difference,
+void AdaptiveCGLinearBezierSmoother::compute_coarsening_metrics(Index elem, Real &mean_difference,
                                                                 Real &volume_change) const {
     // Default to zero
-    coarsening_error = 0.0;
     mean_difference = 0.0;
     volume_change = 0.0;
 
@@ -523,7 +489,6 @@ void AdaptiveCGLinearBezierSmoother::compute_coarsening_metrics(Index elem, Real
     Real area = dx * dy;
     int ngauss = config_.ngauss_error;
 
-    Real sum_diff_sq = 0.0; // For L2 norm
     Real sum_abs_diff = 0.0; // For L1 norm
 
     for (int j = 0; j < ngauss; ++j) {
@@ -539,14 +504,9 @@ void AdaptiveCGLinearBezierSmoother::compute_coarsening_metrics(Index elem, Real
             Real z_coarse = evaluate_prev_solution(x, y);
 
             Real diff = z_fine - z_coarse;
-            sum_diff_sq += w * diff * diff;
             sum_abs_diff += w * std::abs(diff);
         }
     }
-
-    // L2-based coarsening error: ||z_fine - z_coarse||_L2 × √A [m²]
-    Real l2_norm = std::sqrt(sum_diff_sq * area);
-    coarsening_error = l2_norm * std::sqrt(area);
 
     // Mean difference: ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
     // Gauss weights sum to 1 on [0,1]², so sum_abs_diff is already the mean
@@ -760,53 +720,12 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
     // Compute statistics using selected error metric
     Real max_err = 0.0;
     Real sum_err = 0.0;
-    Index worst_elem = 0;
     for (const auto &err : errors) {
         Real metric = error_metric(err);
         if (metric > max_err) {
             max_err = metric;
-            worst_elem = err.element;
         }
         sum_err += metric;
-    }
-
-    // Debug output for elements with relative_error > 1
-    if (config_.verbose && config_.error_metric_type == ErrorMetricType::RelativeError &&
-        max_err > 1.0) {
-        const auto &worst = errors[worst_elem];
-        const QuadBounds &bounds = quadtree_->element_bounds(worst_elem);
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-
-        std::cout << "\n=== DEBUG: Element " << worst_elem
-                  << " has relative_error=" << worst.relative_error << " > 1 ===\n";
-        std::cout << "  Bounds: [" << bounds.xmin << ", " << bounds.xmax << "] x [" << bounds.ymin
-                  << ", " << bounds.ymax << "]\n";
-        std::cout << "  Size: " << dx << " x " << dy << " m\n";
-        std::cout << "  l2_error=" << worst.l2_error << "\n";
-        std::cout << "  normalized_error=" << worst.normalized_error << " m\n";
-        std::cout << "  mean_depth=" << worst.mean_depth << " m\n";
-        std::cout << "  depth_scale=" << config_.depth_scale << " m\n";
-        std::cout << "  Formula: " << worst.normalized_error << " / (" << std::abs(worst.mean_depth)
-                  << " + " << config_.depth_scale << ") = " << worst.relative_error << "\n";
-
-        // Print Gauss point details
-        int ngauss = config_.ngauss_error;
-        std::cout << "  Gauss point details (" << ngauss << "x" << ngauss << "):\n";
-        for (int j = 0; j < ngauss; ++j) {
-            for (int i = 0; i < ngauss; ++i) {
-                Real u = gauss_nodes_(i);
-                Real v = gauss_nodes_(j);
-                Real x = bounds.xmin + u * dx;
-                Real y = bounds.ymin + v * dy;
-                Real z_data = bathy_func_(x, y);
-                Real z_bezier = smoother_->evaluate(x, y);
-                std::cout << "    [" << i << "," << j << "]: x=" << x << ", y=" << y
-                          << ", z_data=" << z_data << ", z_bezier=" << z_bezier
-                          << ", diff=" << (z_data - z_bezier) << "\n";
-            }
-        }
-        std::cout << std::endl;
     }
 
     result.num_elements = quadtree_->num_elements();
@@ -819,8 +738,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
 
     // Bootstrap: don't claim convergence on first iteration with coarsening
     // metrics (since all coarsening metrics = 0 when no previous solution exists)
-    bool is_coarsening_metric = (config_.error_metric_type == ErrorMetricType::CoarseningError ||
-                                 config_.error_metric_type == ErrorMetricType::MeanDifference ||
+    bool is_coarsening_metric = (config_.error_metric_type == ErrorMetricType::MeanDifference ||
                                  config_.error_metric_type == ErrorMetricType::VolumeChange);
     bool is_bootstrap = (is_coarsening_metric && prev_solutions_.empty());
     if (is_bootstrap) {
@@ -872,18 +790,12 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
 
         // Collect per-element error indicators
         std::vector<Real> element_rms(quadtree_->num_elements(), 0.0);
-        std::vector<Real> element_mean_err(quadtree_->num_elements(), 0.0);
-        std::vector<Real> element_std(quadtree_->num_elements(), 0.0);
-        std::vector<Real> element_coarsening(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_mean_diff(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_volume_change(quadtree_->num_elements(), 0.0);
         std::vector<Real> refinement_levels(quadtree_->num_elements(), 0.0);
 
         for (const auto &e : errors) {
             element_rms[e.element] = e.normalized_error;
-            element_mean_err[e.element] = e.mean_error;
-            element_std[e.element] = e.std_error;
-            element_coarsening[e.element] = e.coarsening_error;
             element_mean_diff[e.element] = e.mean_difference;
             element_volume_change[e.element] = e.volume_change;
         }
@@ -895,9 +807,6 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
             vtk_file, *quadtree_, [this](Real x, Real y) { return smoother_->evaluate(x, y); }, 6,
             "elevation",
             {{"rms_error", element_rms},
-             {"mean_error", element_mean_err},
-             {"std_error", element_std},
-             {"coarsening_error", element_coarsening},
              {"mean_difference", element_mean_diff},
              {"volume_change", element_volume_change},
              {"refinement_level", refinement_levels}});

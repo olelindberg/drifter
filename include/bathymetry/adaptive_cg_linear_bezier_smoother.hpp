@@ -76,13 +76,10 @@ enum class MarkingStrategy {
 /// @brief Error metric type for adaptive refinement decisions
 enum class ErrorMetricType {
     NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area) [meters]
-    StdError, ///< Standard deviation of error within element [meters]
-    RelativeError, ///< RMS error / (|mean_depth| + depth_scale) [dimensionless]
 
     // Coarsening error indicators (solution change due to refinement)
-    CoarseningError, ///< ||z_fine - z_coarse||_L2 × √A — solution change [m²]
     MeanDifference, ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA — mean abs diff [m]
-    VolumeChange ///< ∫∫|z_fine - z_coarse|dA — total volume change [m³]
+    VolumeChange    ///< ∫∫|z_fine - z_coarse|dA — total volume change [m³]
 };
 
 /// @brief Reason for adaptive convergence
@@ -101,16 +98,7 @@ struct CGLinearElementErrorEstimate {
     Real normalized_error; ///< Error normalized by sqrt(element area) (RMS)
     bool should_refine; ///< Marked for refinement
 
-    // Statistical decomposition of error (RMS² = mean² + std²)
-    Real mean_error; ///< Signed weighted mean error: E[z_data - z_bezier]
-    Real std_error; ///< Std dev around mean (captures local variability)
-
-    // Depth-independent metrics
-    Real mean_depth; ///< Weighted mean depth within element
-    Real relative_error; ///< normalized_error / (|mean_depth| + depth_scale)
-
     // Coarsening error indicators (solution change due to refinement)
-    Real coarsening_error; ///< ||z_fine - z_coarse||_L2 × √A [m²]
     Real mean_difference; ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
     Real volume_change; ///< ∫∫|z_fine - z_coarse|dA [m³]
 };
@@ -125,13 +113,6 @@ struct AdaptiveCGLinearBezierConfig {
 
     /// @brief Which error metric to use for refinement decisions
     ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
-
-    /// @brief Characteristic depth for relative error regularization (meters)
-    /// Prevents blow-up near shoreline where depth approaches zero.
-    /// At depths >> depth_scale, behaves like pure relative error.
-    /// At depths << depth_scale, behaves like absolute error scaled by
-    /// depth_scale.
-    Real depth_scale = 1.0;
 
     // Marking strategy selection
     MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
@@ -385,23 +366,13 @@ private:
     /// @brief Compute error statistics for element via Gauss quadrature
     /// @param elem Element index
     /// @param[out] l2_error L2 error ||z_data - z_bezier||_L2 over element
-    /// @param[out] mean_error Weighted mean error (signed)
-    /// @param[out] std_error Standard deviation around mean
-    /// @param[out] mean_depth Weighted mean depth within element
-    void compute_element_error_statistics(Index elem, Real &l2_error, Real &mean_error,
-                                          Real &std_error, Real &mean_depth) const;
+    void compute_element_error_statistics(Index elem, Real &l2_error) const;
 
     /// @brief Get the error metric value based on config
     /// @param err Error estimate for an element
     /// @return The selected metric value
     Real error_metric(const CGLinearElementErrorEstimate &err) const {
         switch (config_.error_metric_type) {
-        case ErrorMetricType::RelativeError:
-            return err.relative_error;
-        case ErrorMetricType::StdError:
-            return err.std_error;
-        case ErrorMetricType::CoarseningError:
-            return err.coarsening_error;
         case ErrorMetricType::MeanDifference:
             return err.mean_difference;
         case ErrorMetricType::VolumeChange:
@@ -419,13 +390,11 @@ private:
     /// @brief Print profiling report to stdout
     void print_profile_report() const;
 
-    /// @brief Compute all coarsening error metrics
+    /// @brief Compute coarsening error metrics
     /// @param elem Element index
-    /// @param[out] coarsening_error ||z_fine - z_coarse||_L2 × √A [m²]
     /// @param[out] mean_difference ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
     /// @param[out] volume_change ∫∫|z_fine - z_coarse|dA [m³]
-    void compute_coarsening_metrics(Index elem, Real &coarsening_error, Real &mean_difference,
-                                    Real &volume_change) const;
+    void compute_coarsening_metrics(Index elem, Real &mean_difference, Real &volume_change) const;
 
     /// @brief Store current solution coefficients keyed by Morton code
     void store_current_solution();

@@ -117,7 +117,7 @@ public:
 
     /// @brief Set profile for timing solve phase
     /// @param profile Pointer to profile struct (null to disable profiling)
-    void set_solve_profile(CGCubicSolveProfile *profile) { solve_profile_ = profile; }
+    void set_solve_profile(CGCubicSolveProfile* profile) { solve_profile_ = profile; }
 
     // =========================================================================
     // Solution evaluation
@@ -169,7 +169,7 @@ private:
     bool solved_ = false;
     bool data_set_ = false;
 
-    CGCubicSolveProfile *solve_profile_ = nullptr;
+    CGCubicSolveProfile* solve_profile_ = nullptr;
 
     SpMat H_global_;
     SpMat BtWB_global_;
