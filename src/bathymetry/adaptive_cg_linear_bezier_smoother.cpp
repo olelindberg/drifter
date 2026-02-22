@@ -549,114 +549,44 @@ std::vector<Index> AdaptiveCGLinearBezierSmoother::select_elements_for_refinemen
     if (errors.empty())
         return {};
 
+    // Dorfler bulk marking with symmetry extension:
+    // 1. Find cutoff via greedy accumulation of squared errors
+    // 2. Include ALL elements at or above the cutoff error
+
+    Real total_sq = 0.0;
+    for (const auto &err : errors) {
+        Real metric = error_metric(err);
+        total_sq += metric * metric;
+    }
+
+    // Sort copy by error descending (stable for deterministic ordering)
+    auto sorted = errors;
+    std::stable_sort(
+        sorted.begin(), sorted.end(),
+        [this](const CGLinearElementErrorEstimate &a, const CGLinearElementErrorEstimate &b) {
+            return error_metric(a) > error_metric(b);
+        });
+
+    // Greedy selection to find cutoff error
+    Real target = config_.dorfler_theta * total_sq;
+    Real accumulated = 0.0;
+    Real cutoff_error = 0.0;
+
+    for (const auto &err : sorted) {
+        if (accumulated >= target)
+            break;
+        Real metric = error_metric(err);
+        accumulated += metric * metric;
+        cutoff_error = metric;
+    }
+
+    // Symmetry extension: include ALL elements at or above cutoff
     std::vector<Index> selected;
-
-    switch (config_.marking_strategy) {
-    case MarkingStrategy::DorflerSymmetric: {
-        // Dorfler bulk marking with symmetry extension:
-        // 1. Find cutoff via greedy accumulation of squared errors
-        // 2. Include ALL elements at or above the cutoff error
-
-        Real total_sq = 0.0;
-        for (const auto &err : errors) {
-            Real metric = error_metric(err);
-            total_sq += metric * metric;
-        }
-
-        // Sort copy by error descending (stable for deterministic ordering)
-        auto sorted = errors;
-        std::stable_sort(
-            sorted.begin(), sorted.end(),
-            [this](const CGLinearElementErrorEstimate &a, const CGLinearElementErrorEstimate &b) {
-                return error_metric(a) > error_metric(b);
-            });
-
-        // Greedy selection to find cutoff error
-        Real target = config_.dorfler_theta * total_sq;
-        Real accumulated = 0.0;
-        Real cutoff_error = 0.0;
-
-        for (const auto &err : sorted) {
-            if (accumulated >= target)
-                break;
-            Real metric = error_metric(err);
-            accumulated += metric * metric;
-            cutoff_error = metric;
-        }
-
-        // Symmetry extension: include ALL elements at or above cutoff
-        Real threshold_val = cutoff_error * (1.0 - config_.symmetry_tolerance);
-        for (const auto &err : errors) {
-            if (error_metric(err) >= threshold_val) {
-                selected.push_back(err.element);
-            }
-        }
-        break;
-    }
-
-    case MarkingStrategy::Dorfler: {
-        // Standard Dorfler without symmetry extension
-
-        Real total_sq = 0.0;
-        for (const auto &err : errors) {
-            Real metric = error_metric(err);
-            total_sq += metric * metric;
-        }
-
-        auto sorted = errors;
-        std::stable_sort(
-            sorted.begin(), sorted.end(),
-            [this](const CGLinearElementErrorEstimate &a, const CGLinearElementErrorEstimate &b) {
-                return error_metric(a) > error_metric(b);
-            });
-
-        Real target = config_.dorfler_theta * total_sq;
-        Real accumulated = 0.0;
-
-        for (const auto &err : sorted) {
-            if (accumulated >= target)
-                break;
+    Real threshold_val = cutoff_error * (1.0 - config_.symmetry_tolerance);
+    for (const auto &err : errors) {
+        if (error_metric(err) >= threshold_val) {
             selected.push_back(err.element);
-            accumulated += error_metric(err) * error_metric(err);
         }
-        break;
-    }
-
-    case MarkingStrategy::RelativeThreshold: {
-        // Refine all elements with error > alpha * max_error
-
-        Real max_err = 0.0;
-        for (const auto &err : errors) {
-            max_err = std::max(max_err, error_metric(err));
-        }
-        Real threshold = config_.relative_alpha * max_err;
-
-        for (const auto &err : errors) {
-            if (error_metric(err) > threshold) {
-                selected.push_back(err.element);
-            }
-        }
-        break;
-    }
-
-    case MarkingStrategy::FixedFraction:
-    default: {
-        // Legacy: top refine_fraction elements
-
-        auto sorted = errors;
-        std::sort(
-            sorted.begin(), sorted.end(),
-            [this](const CGLinearElementErrorEstimate &a, const CGLinearElementErrorEstimate &b) {
-                return error_metric(a) > error_metric(b);
-            });
-        Index num = static_cast<Index>(
-            std::ceil(config_.refine_fraction * static_cast<Real>(sorted.size())));
-        num = std::max(Index(1), num);
-        for (Index i = 0; i < num && i < static_cast<Index>(sorted.size()); ++i) {
-            selected.push_back(sorted[i].element);
-        }
-        break;
-    }
     }
 
     // Ensure at least one element selected

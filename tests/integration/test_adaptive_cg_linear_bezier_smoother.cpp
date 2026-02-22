@@ -724,7 +724,6 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest,
   };
 
   AdaptiveCGLinearBezierConfig config;
-  config.marking_strategy = MarkingStrategy::DorflerSymmetric;
   config.dorfler_theta = 0.5;
   config.error_threshold = 2.0;
   config.max_iterations = 3;
@@ -764,56 +763,9 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest,
 }
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       RelativeThresholdPreservesSymmetryForGaussianBump) {
-  auto symmetric_bump = [](Real x, Real y) {
-    Real cx = 50.0, cy = 50.0, sigma = 15.0;
-    Real dx = x - cx, dy = y - cy;
-    return 50.0 * std::exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma));
-  };
-
-  AdaptiveCGLinearBezierConfig config;
-  config.marking_strategy = MarkingStrategy::RelativeThreshold;
-  config.relative_alpha = 0.3;
-  config.error_threshold = 2.0;
-  config.max_iterations = 3;
-  config.smoother_config.lambda = 10.0;
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-  smoother.set_bathymetry_data(symmetric_bump);
-  smoother.solve_adaptive();
-
-  EXPECT_TRUE(smoother.is_solved());
-  EXPECT_GT(smoother.mesh().num_elements(), 16);
-
-  const auto &mesh = smoother.mesh();
-  int q1 = 0, q2 = 0, q3 = 0, q4 = 0;
-  for (Index e = 0; e < mesh.num_elements(); ++e) {
-    const auto &bounds = mesh.element_bounds(e);
-    Real cx = (bounds.xmin + bounds.xmax) / 2.0;
-    Real cy = (bounds.ymin + bounds.ymax) / 2.0;
-    if (cx < 50.0 && cy < 50.0)
-      q1++;
-    else if (cx >= 50.0 && cy < 50.0)
-      q2++;
-    else if (cx < 50.0 && cy >= 50.0)
-      q3++;
-    else
-      q4++;
-  }
-
-  std::cout << "RelativeThreshold quadrant counts: " << q1 << " " << q2 << " "
-            << q3 << " " << q4 << "\n";
-
-  EXPECT_EQ(q1, q2) << "X-symmetry broken";
-  EXPECT_EQ(q1, q3) << "Y-symmetry broken";
-  EXPECT_EQ(q1, q4) << "Diagonal symmetry broken";
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest,
        DorflerSymmetricConvergesOnQuadratic) {
-  // Verify DorflerSymmetric achieves convergence comparable to FixedFraction
+  // Verify DorflerSymmetric achieves convergence
   AdaptiveCGLinearBezierConfig config;
-  config.marking_strategy = MarkingStrategy::DorflerSymmetric;
   config.dorfler_theta = 0.5;
   config.error_threshold = 0.1;
   config.max_iterations = 8;
@@ -839,30 +791,6 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest,
 
   std::cout << "DorflerSymmetric quadratic: " << result.num_elements
             << " elements, max_error=" << result.max_error << " m\n";
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest, FixedFractionBackwardCompatible) {
-  // Verify FixedFraction still works for backward compatibility
-  AdaptiveCGLinearBezierConfig config;
-  config.marking_strategy = MarkingStrategy::FixedFraction;
-  config.refine_fraction = 0.2;
-  config.error_threshold = 1.0;
-  config.max_iterations = 5;
-  config.max_elements = 200;
-  config.smoother_config.lambda = 10.0;
-
-  auto bump = [](Real x, Real y) {
-    Real cx = 50.0, cy = 50.0, sigma = 10.0;
-    Real dx = x - cx, dy = y - cy;
-    return 50.0 * std::exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma));
-  };
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
-  smoother.set_bathymetry_data(bump);
-  auto result = smoother.solve_adaptive();
-
-  EXPECT_TRUE(smoother.is_solved());
-  EXPECT_GT(result.num_elements, 4);
 }
 
 // =============================================================================

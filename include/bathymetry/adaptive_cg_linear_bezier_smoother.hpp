@@ -65,14 +65,6 @@ struct CGLinearIterationProfile {
     }
 };
 
-/// @brief Strategy for selecting elements to refine
-enum class MarkingStrategy {
-    FixedFraction, ///< Legacy: top refine_fraction elements (may break symmetry)
-    Dorfler, ///< Bulk criterion: squared errors >= theta * total
-    DorflerSymmetric, ///< Dorfler + include all elements at cutoff error
-    RelativeThreshold ///< All elements with error > alpha * max_error
-};
-
 /// @brief Error metric type for adaptive refinement decisions
 enum class ErrorMetricType {
     NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area) [meters]
@@ -114,21 +106,9 @@ struct AdaptiveCGLinearBezierConfig {
     /// @brief Which error metric to use for refinement decisions
     ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
 
-    // Marking strategy selection
-    MarkingStrategy marking_strategy = MarkingStrategy::DorflerSymmetric;
-
-    // Dorfler parameter: fraction of total squared error to capture
-    // theta = 0.5 means refine elements contributing >= 50% of total error
-    Real dorfler_theta = 0.5;
-
-    // Relative threshold: refine if error > alpha * max_error
-    Real relative_alpha = 0.3;
-
-    // Tolerance for grouping equal errors (symmetry preservation)
-    Real symmetry_tolerance = 1e-12;
-
-    // Legacy: fraction of elements to refine (only for FixedFraction strategy)
-    Real refine_fraction = 0.2;
+    // Dorfler marking parameters
+    Real dorfler_theta = 0.5;    ///< Fraction of total squared error to capture
+    Real symmetry_tolerance = 1e-12; ///< Tolerance for grouping equal errors
 
     // Error estimation
     int ngauss_error = 4; ///< Gauss points per direction for error integration
