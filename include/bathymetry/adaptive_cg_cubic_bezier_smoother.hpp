@@ -36,6 +36,40 @@ struct CGCubicElementErrorEstimate {
     bool should_refine; ///< Marked for refinement
 };
 
+/// @brief Timing profile for one adaptive iteration (all times in milliseconds)
+struct CGCubicIterationProfile {
+    // Top-level phases
+    double rebuild_ms = 0.0;           ///< Total rebuild_smoother() time
+    double solve_ms = 0.0;             ///< Total smoother_->solve() time
+    double error_estimation_ms = 0.0;  ///< Total estimate_errors() time
+    double marking_ms = 0.0;           ///< select_elements_for_refinement() time
+    double refinement_ms = 0.0;        ///< refine_elements() time
+
+    // Rebuild breakdown
+    double quadtree_build_ms = 0.0;    ///< QuadtreeAdapter construction
+    double smoother_init_ms = 0.0;     ///< CGCubicBezierBathymetrySmoother init
+    double hessian_assembly_ms = 0.0;  ///< assemble_thin_plate_hessian()
+    double data_fitting_ms = 0.0;      ///< assemble_data_fitting()
+
+    // Solve breakdown
+    double matrix_build_ms = 0.0;          ///< Q matrix construction
+    double constraint_build_ms = 0.0;      ///< C¹ edge constraint assembly
+    double kkt_assembly_ms = 0.0;          ///< KKT system build
+    double sparse_lu_compute_ms = 0.0;     ///< SparseLU factorization
+    double sparse_lu_solve_ms = 0.0;       ///< SparseLU back-substitution
+    double constraint_projection_ms = 0.0; ///< Constraint projection solve
+
+    // Context
+    Index num_elements = 0;
+    Index num_dofs = 0;
+    Index num_free_dofs = 0;
+    Index num_constraints = 0;
+
+    double total_ms() const {
+        return rebuild_ms + solve_ms + error_estimation_ms + marking_ms + refinement_ms;
+    }
+};
+
 /// @brief Configuration for adaptive CG cubic Bezier smoother
 struct AdaptiveCGCubicBezierConfig {
     // Stopping criteria
@@ -198,6 +232,23 @@ public:
     /// @param resolution Subdivisions per element edge for visualization
     void write_vtk(const std::string &filename, int resolution = 10) const;
 
+    // =========================================================================
+    // Profiling
+    // =========================================================================
+
+    /// @brief Enable/disable per-iteration profiling
+    /// @param enabled If true, collect timing data for each iteration
+    void enable_profiling(bool enabled) { profile_enabled_ = enabled; }
+
+    /// @brief Check if profiling is enabled
+    bool profiling_enabled() const { return profile_enabled_; }
+
+    /// @brief Get iteration profiles (one per completed iteration)
+    /// @return Vector of profiles, empty if profiling disabled or no iterations
+    const std::vector<CGCubicIterationProfile> &get_iteration_profiles() const {
+        return iteration_profiles_;
+    }
+
 private:
     // Configuration
     AdaptiveCGCubicBezierConfig config_;
@@ -219,6 +270,11 @@ private:
     // Gauss quadrature nodes and weights on [0, 1]
     VecX gauss_nodes_;
     VecX gauss_weights_;
+
+    // Profiling
+    bool profile_enabled_ = false;
+    std::vector<CGCubicIterationProfile> iteration_profiles_;
+    CGCubicIterationProfile* current_profile_ = nullptr; ///< Profile for current iteration
 
     // =========================================================================
     // Internal methods

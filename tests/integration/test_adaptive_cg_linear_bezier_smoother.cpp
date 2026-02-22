@@ -432,7 +432,7 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   Real domain_size = 100000.0;
 
   AdaptiveCGLinearBezierConfig config;
-  config.error_threshold = 1.0; // WENO indicator threshold [length⁴]
+  config.error_threshold = 1.0;
   config.error_metric_type = ErrorMetricType::VolumeChange;
   config.max_iterations = 32;
   config.max_elements = 10000;
@@ -440,11 +440,7 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.max_refinement_level = 12;
   config.verbose = true;
   config.ngauss_error = 6;
-  config.weno_gradient_weight = 1.0;
-  config.weno_curvature_weight = 1.0;
   config.error_output_dir = "/tmp/adaptive_cg_linear_errors";
-  config.weno_gradient_weight = 1.0;
-  config.weno_curvature_weight = 1.0;
   config.vtk_output_prefix = "/tmp/adaptive_cg_linear_bezier_kattegat";
 
   Real xmin = center_x - domain_size / 2;
@@ -460,15 +456,6 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
 
   AdaptiveCGLinearBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(depth_func);
-
-  // Set data cell size for WENO indicator scaling (50m GeoTIFF resolution)
-  smoother.set_data_cell_size(50.0);
-
-  // Set gradient function for WENO indicator (numerical differentiation)
-  smoother.set_gradient_function(create_gradient_output_function());
-
-  // Set curvature function for WENO indicator (numerical differentiation)
-  smoother.set_curvature_function(create_curvature_function());
 
   // Set land mask to skip refinement on land-only elements
   smoother.set_land_mask(create_land_mask());
@@ -490,12 +477,10 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
 
   EXPECT_TRUE(smoother.is_solved());
 
-  // Write raw bathymetry with per-point gradient and curvature indicators
+  // Write raw bathymetry VTK for visualization
   if (true) {
     std::string raw_output_file =
-        "/tmp/raw_bathymetry_with_indicators_kattegat.vtu";
-    auto grad_func = create_gradient_output_function();
-    auto curv_func = create_curvature_function();
+        "/tmp/raw_bathymetry_kattegat.vtu";
 
     // Sample at GeoTIFF resolution (50m)
     Real geotiff_resolution = 50.0;
@@ -572,37 +557,6 @@ TEST_F(AdaptiveCGLinearBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
         Real x = xmin + i * hx;
         Real z = depth_func(x, y);
         file << "          " << std::setprecision(10) << z << "\n";
-      }
-    }
-    file << "        </DataArray>\n";
-
-    // Gradient indicator: |grad z|^2 = (dz/dx)^2 + (dz/dy)^2
-    file << "        <DataArray type=\"Float64\" Name=\"gradient_indicator\" "
-            "format=\"ascii\">\n";
-    for (int j = 0; j < ny; ++j) {
-      Real y = ymin + j * hy;
-      for (int i = 0; i < nx; ++i) {
-        Real x = xmin + i * hx;
-        Real dh_dx, dh_dy;
-        grad_func(x, y, dh_dx, dh_dy);
-        Real grad_sq = dh_dx * dh_dx + dh_dy * dh_dy;
-        file << "          " << std::setprecision(10) << grad_sq << "\n";
-      }
-    }
-    file << "        </DataArray>\n";
-
-    // Curvature indicator: ||H||_F^2 = h_xx^2 + 2*h_xy^2 + h_yy^2
-    file << "        <DataArray type=\"Float64\" Name=\"curvature_indicator\" "
-            "format=\"ascii\">\n";
-    for (int j = 0; j < ny; ++j) {
-      Real y = ymin + j * hy;
-      for (int i = 0; i < nx; ++i) {
-        Real x = xmin + i * hx;
-        Real d2h_dx2, d2h_dxdy, d2h_dy2;
-        curv_func(x, y, d2h_dx2, d2h_dxdy, d2h_dy2);
-        Real hess_sq =
-            d2h_dx2 * d2h_dx2 + 2 * d2h_dxdy * d2h_dxdy + d2h_dy2 * d2h_dy2;
-        file << "          " << std::setprecision(10) << hess_sq << "\n";
       }
     }
     file << "        </DataArray>\n";
@@ -1151,276 +1105,12 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest, DepthScaleAffectsShallowRegions) {
 }
 
 // =============================================================================
-// WENO Indicator Tests
+// BathymetrySurface Integration Tests
 // =============================================================================
 
 TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       WenoIndicatorZeroForConstantSurface) {
-  // Constant surface: gradient=0, curvature=0, weno=0
-  AdaptiveCGLinearBezierConfig config;
-  config.smoother_config.lambda = 100.0;
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-
-  // Set constant bathymetry with gradient/curvature functions
-  smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
-  smoother.set_gradient_function([](Real, Real, Real &dh_dx, Real &dh_dy) {
-    dh_dx = 0.0;
-    dh_dy = 0.0;
-  });
-  smoother.set_curvature_function(
-      [](Real, Real, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-        d2h_dx2 = 0.0;
-        d2h_dxdy = 0.0;
-        d2h_dy2 = 0.0;
-      });
-
-  smoother.adapt_once();
-
-  auto errors = smoother.estimate_errors();
-  for (const auto &err : errors) {
-    EXPECT_NEAR(err.gradient_indicator, 0.0, TOLERANCE);
-    EXPECT_NEAR(err.curvature_indicator, 0.0, TOLERANCE);
-    EXPECT_NEAR(err.weno_indicator, 0.0, TOLERANCE);
-  }
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       WenoIndicatorPositiveGradientForLinearSurface) {
-  // Linear surface z = ax + by: gradient > 0, curvature = 0
-  Real a = 0.5, b = 0.3;
-
-  AdaptiveCGLinearBezierConfig config;
-  config.smoother_config.lambda = 100.0;
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-
-  smoother.set_bathymetry_data(
-      [a, b](Real x, Real y) { return 10.0 + a * x + b * y; });
-  smoother.set_gradient_function([a, b](Real, Real, Real &dh_dx, Real &dh_dy) {
-    dh_dx = a;
-    dh_dy = b;
-  });
-  smoother.set_curvature_function(
-      [](Real, Real, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-        d2h_dx2 = 0.0;
-        d2h_dxdy = 0.0;
-        d2h_dy2 = 0.0;
-      });
-
-  smoother.adapt_once();
-
-  auto errors = smoother.estimate_errors();
-  for (const auto &err : errors) {
-    // Gradient indicator should be positive (h² × |∇z|²)
-    EXPECT_GT(err.gradient_indicator, 0.0);
-
-    // Curvature indicator should be zero
-    EXPECT_NEAR(err.curvature_indicator, 0.0, TOLERANCE);
-
-    // WENO indicator equals gradient indicator when curvature is zero
-    EXPECT_NEAR(err.weno_indicator, err.gradient_indicator, TOLERANCE);
-  }
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       WenoIndicatorBothTermsForQuadraticSurface) {
-  // Quadratic surface z = ax² + by²: gradient > 0, curvature > 0
-  Real a = 0.001, b = 0.002;
-
-  AdaptiveCGLinearBezierConfig config;
-  config.smoother_config.lambda = 100.0;
-  config.error_threshold = 1000.0; // High threshold to prevent refinement
-  config.max_iterations = 1;
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-
-  smoother.set_bathymetry_data(
-      [a, b](Real x, Real y) { return 10.0 + a * x * x + b * y * y; });
-  smoother.set_gradient_function(
-      [a, b](Real x, Real y, Real &dh_dx, Real &dh_dy) {
-        dh_dx = 2.0 * a * x;
-        dh_dy = 2.0 * b * y;
-      });
-  smoother.set_curvature_function(
-      [a, b](Real, Real, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-        d2h_dx2 = 2.0 * a;
-        d2h_dxdy = 0.0;
-        d2h_dy2 = 2.0 * b;
-      });
-
-  auto result = smoother.solve_adaptive();
-  EXPECT_TRUE(smoother.is_solved());
-
-  auto errors = smoother.estimate_errors();
-  for (const auto &err : errors) {
-    // Both indicators should be positive
-    EXPECT_GT(err.gradient_indicator, 0.0);
-    EXPECT_GT(err.curvature_indicator, 0.0);
-
-    // WENO indicator should be sum of both
-    EXPECT_NEAR(err.weno_indicator,
-                err.gradient_indicator + err.curvature_indicator, TOLERANCE);
-  }
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       WenoIndicatorConservesTotalSquaredContribution) {
-  // Test that total squared indicator is conserved under refinement.
-  // This is essential for Dorfler marking to work correctly.
-  //
-  // Indicator formula: Δx² × mean(|∇z|²) × √A
-  // When a parent element is refined into 4 children:
-  //   Parent: indicator = Δx² × mean × √A
-  //   Children: each has indicator = Δx² × mean × √(A/4) = Δx² × mean × √A/2
-  //   Total squared: 4 × (indicator/2)² = indicator² (conserved!)
-
-  Real grad_magnitude = 0.5;
-
-  // Use a fixed data cell size
-  Real data_cell_size = 10.0;
-
-  // Solve on coarse mesh (4x4)
-  AdaptiveCGLinearBezierConfig config_coarse;
-  config_coarse.smoother_config.lambda = 100.0;
-  config_coarse.max_iterations = 1;
-
-  AdaptiveCGLinearBezierSmoother smoother_coarse(0.0, 100.0, 0.0, 100.0, 4, 4,
-                                                 config_coarse);
-  smoother_coarse.set_data_cell_size(data_cell_size);
-  smoother_coarse.set_bathymetry_data(
-      [grad_magnitude](Real x, Real) { return grad_magnitude * x; });
-  smoother_coarse.set_gradient_function(
-      [grad_magnitude](Real, Real, Real &dh_dx, Real &dh_dy) {
-        dh_dx = grad_magnitude;
-        dh_dy = 0.0;
-      });
-  smoother_coarse.adapt_once();
-
-  // Solve on fine mesh (8x8 = 4x refinement in each direction)
-  AdaptiveCGLinearBezierConfig config_fine;
-  config_fine.smoother_config.lambda = 100.0;
-  config_fine.max_iterations = 1;
-
-  AdaptiveCGLinearBezierSmoother smoother_fine(0.0, 100.0, 0.0, 100.0, 8, 8,
-                                               config_fine);
-  smoother_fine.set_data_cell_size(data_cell_size);
-  smoother_fine.set_bathymetry_data(
-      [grad_magnitude](Real x, Real) { return grad_magnitude * x; });
-  smoother_fine.set_gradient_function(
-      [grad_magnitude](Real, Real, Real &dh_dx, Real &dh_dy) {
-        dh_dx = grad_magnitude;
-        dh_dy = 0.0;
-      });
-  smoother_fine.adapt_once();
-
-  // Compute total squared indicator contribution
-  auto errors_coarse = smoother_coarse.estimate_errors();
-  auto errors_fine = smoother_fine.estimate_errors();
-
-  Real total_sq_coarse = 0.0, total_sq_fine = 0.0;
-  for (const auto &err : errors_coarse) {
-    total_sq_coarse += err.gradient_indicator * err.gradient_indicator;
-  }
-  for (const auto &err : errors_fine) {
-    total_sq_fine += err.gradient_indicator * err.gradient_indicator;
-  }
-
-  // Total squared contribution should be conserved (equal for both meshes)
-  // This is the key property for Dorfler marking to work correctly
-  EXPECT_NEAR(total_sq_coarse, total_sq_fine, 1e-6)
-      << "Total squared indicator contribution should be conserved under "
-         "uniform refinement";
-
-  // Verify expected values:
-  // Coarse: 16 elements, each 25m × 25m, area=625, sqrt(area)=25
-  //   indicator = 10² × 0.25 × 25 = 625
-  //   total_sq = 16 × 625² = 6,250,000
-  // Fine: 64 elements, each 12.5m × 12.5m, area=156.25, sqrt(area)=12.5
-  //   indicator = 10² × 0.25 × 12.5 = 312.5
-  //   total_sq = 64 × 312.5² = 6,250,000
-  Real expected_total_sq = 16 * 625 * 625;
-  EXPECT_NEAR(total_sq_coarse, expected_total_sq, 1e-6)
-      << "Coarse mesh total squared should equal 16 × 625² = "
-      << expected_total_sq;
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest, WenoIndicatorWeightsAreRespected) {
-  // Test that weno_gradient_weight and weno_curvature_weight are applied
-  Real a = 0.001, b = 0.001;
-
-  AdaptiveCGLinearBezierConfig config;
-  config.smoother_config.lambda = 100.0;
-  config.weno_gradient_weight = 2.0;
-  config.weno_curvature_weight = 0.5;
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-
-  smoother.set_bathymetry_data(
-      [a, b](Real x, Real y) { return 10.0 + a * x * x + b * y * y; });
-  smoother.set_gradient_function(
-      [a, b](Real x, Real y, Real &dh_dx, Real &dh_dy) {
-        dh_dx = 2.0 * a * x;
-        dh_dy = 2.0 * b * y;
-      });
-  smoother.set_curvature_function(
-      [a, b](Real, Real, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-        d2h_dx2 = 2.0 * a;
-        d2h_dxdy = 0.0;
-        d2h_dy2 = 2.0 * b;
-      });
-
-  smoother.adapt_once();
-
-  auto errors = smoother.estimate_errors();
-  for (const auto &err : errors) {
-    Real expected_weno =
-        2.0 * err.gradient_indicator + 0.5 * err.curvature_indicator;
-    EXPECT_NEAR(err.weno_indicator, expected_weno, TOLERANCE);
-  }
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       WenoIndicatorMetricTypeSelectsCorrectValue) {
-  // Test that selecting WenoIndicator as error_metric_type works
-  Real a = 0.001;
-
-  AdaptiveCGLinearBezierConfig config;
-  config.smoother_config.lambda = 100.0;
-  config.error_metric_type = ErrorMetricType::WenoIndicator;
-  config.error_threshold = 1000.0; // High threshold
-
-  AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-
-  smoother.set_bathymetry_data(
-      [a](Real x, Real y) { return 10.0 + a * x * x + a * y * y; });
-  smoother.set_gradient_function([a](Real x, Real y, Real &dh_dx, Real &dh_dy) {
-    dh_dx = 2.0 * a * x;
-    dh_dy = 2.0 * a * y;
-  });
-  smoother.set_curvature_function(
-      [a](Real, Real, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-        d2h_dx2 = 2.0 * a;
-        d2h_dxdy = 0.0;
-        d2h_dy2 = 2.0 * a;
-      });
-
-  auto result = smoother.solve_adaptive();
-
-  EXPECT_TRUE(smoother.is_solved());
-  // max_error should be the weno_indicator value
-  auto errors = smoother.estimate_errors();
-  Real max_weno = 0.0;
-  for (const auto &err : errors) {
-    max_weno = std::max(max_weno, err.weno_indicator);
-  }
-  EXPECT_NEAR(result.max_error, max_weno, TOLERANCE);
-}
-
-TEST_F(AdaptiveCGLinearBezierSmootherTest,
-       SetBathymetrySurfaceSetsAllFunctions) {
-  // Test that set_bathymetry_surface sets depth, gradient, curvature, and land
-  // mask functions - the key is that the solver runs without errors
+       SetBathymetrySurfaceSetsDepthAndLandMask) {
+  // Test that set_bathymetry_surface sets depth and land mask functions
 
   // Create a simple BathymetryData for testing
   auto bathy_data = std::make_shared<BathymetryData>();
@@ -1444,21 +1134,13 @@ TEST_F(AdaptiveCGLinearBezierSmootherTest,
   AdaptiveCGLinearBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
   smoother.set_bathymetry_surface(surface);
 
-  // Should be able to solve without errors (all functions set)
+  // Should be able to solve without errors (depth and land mask set)
   auto result = smoother.solve_adaptive();
   EXPECT_TRUE(smoother.is_solved());
 
-  // Check that WENO indicators are computed (values may be non-zero due to
-  // finite difference boundary artifacts, but the computation should complete)
+  // Verify error estimates are computed
   auto errors = smoother.estimate_errors();
   EXPECT_EQ(errors.size(), static_cast<size_t>(smoother.mesh().num_elements()));
-
-  // Verify the indicators exist and are finite
-  for (const auto &err : errors) {
-    EXPECT_TRUE(std::isfinite(err.gradient_indicator));
-    EXPECT_TRUE(std::isfinite(err.curvature_indicator));
-    EXPECT_TRUE(std::isfinite(err.weno_indicator));
-  }
 }
 
 // =============================================================================

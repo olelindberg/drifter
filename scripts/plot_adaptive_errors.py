@@ -194,16 +194,16 @@ def main():
     parser.add_argument("directory", help="Directory containing error CSV files")
     parser.add_argument(
         "--metric",
-        default="weno_indicator",
+        default="normalized_error",
         choices=[
             "l2_error",
             "normalized_error",
             "mean_error",
             "std_error",
             "relative_error",
-            "gradient_indicator",
-            "curvature_indicator",
-            "weno_indicator",
+            "coarsening_error",
+            "mean_difference",
+            "volume_change",
         ],
         help="Error metric to plot",
     )

@@ -55,7 +55,6 @@ void write_error_csv(const std::string &dir, int iteration,
     // Write header
     ofs << "element_id,center_x,center_y,l2_error,max_error,normalized_error,"
            "mean_error,std_error,mean_depth,relative_error,"
-           "gradient_indicator,curvature_indicator,weno_indicator,"
            "coarsening_error,mean_difference,volume_change,marked\n";
 
     // Write data
@@ -69,9 +68,8 @@ void write_error_csv(const std::string &dir, int iteration,
         ofs << err.element << "," << cx << "," << cy << "," << err.l2_error << ","
             << err.normalized_error << "," // max_error same as normalized for now
             << err.normalized_error << "," << err.mean_error << "," << err.std_error << ","
-            << err.mean_depth << "," << err.relative_error << "," << err.gradient_indicator << ","
-            << err.curvature_indicator << "," << err.weno_indicator << "," << err.coarsening_error
-            << "," << err.mean_difference << "," << err.volume_change << "," << (is_marked ? 1 : 0)
+            << err.mean_depth << "," << err.relative_error << "," << err.coarsening_error << ","
+            << err.mean_difference << "," << err.volume_change << "," << (is_marked ? 1 : 0)
             << "\n";
     }
 
@@ -98,12 +96,6 @@ AdaptiveCGLinearBezierSmoother::AdaptiveCGLinearBezierSmoother(
 
     // Initialize Gauss quadrature
     init_gauss_quadrature();
-
-    // Initialize data cell size to initial element size (can be overridden by
-    // set_bathymetry_surface())
-    Real dx = (xmax - xmin) / nx;
-    Real dy = (ymax - ymin) / ny;
-    data_cell_size_ = std::sqrt(dx * dy);
 }
 
 AdaptiveCGLinearBezierSmoother::AdaptiveCGLinearBezierSmoother(
@@ -114,15 +106,6 @@ AdaptiveCGLinearBezierSmoother::AdaptiveCGLinearBezierSmoother(
 
     // Initialize Gauss quadrature
     init_gauss_quadrature();
-
-    // Initialize data cell size to first element's size (can be overridden by
-    // set_bathymetry_surface())
-    if (quadtree_->num_elements() > 0) {
-        const QuadBounds &bounds = quadtree_->element_bounds(0);
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-        data_cell_size_ = std::sqrt(dx * dy);
-    }
 }
 
 // =============================================================================
@@ -188,36 +171,12 @@ void AdaptiveCGLinearBezierSmoother::set_land_mask(std::function<bool(Real, Real
     land_mask_func_ = std::move(is_land_func);
 }
 
-void AdaptiveCGLinearBezierSmoother::set_gradient_function(
-    std::function<void(Real, Real, Real &, Real &)> grad_func) {
-    grad_func_ = std::move(grad_func);
-}
-
-void AdaptiveCGLinearBezierSmoother::set_curvature_function(
-    std::function<void(Real, Real, Real &, Real &, Real &)> curv_func) {
-    curv_func_ = std::move(curv_func);
-}
-
 void AdaptiveCGLinearBezierSmoother::set_bathymetry_surface(const BathymetrySurface &surface) {
     // Set depth function
     bathy_func_ = [&surface](Real x, Real y) -> Real { return surface.depth(x, y); };
 
-    // Set gradient function
-    grad_func_ = [&surface](Real x, Real y, Real &dh_dx, Real &dh_dy) {
-        surface.gradient(x, y, dh_dx, dh_dy);
-    };
-
-    // Set curvature function
-    curv_func_ = [&surface](Real x, Real y, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-        surface.curvature(x, y, d2h_dx2, d2h_dxdy, d2h_dy2);
-    };
-
     // Set land mask function
     land_mask_func_ = [&surface](Real x, Real y) -> bool { return surface.is_land(x, y); };
-
-    // Store GeoTIFF cell size for WENO indicator scaling
-    // This is the Δx in the WENO formula - the DATA resolution, not mesh size
-    data_cell_size_ = surface.cell_size();
 }
 
 bool AdaptiveCGLinearBezierSmoother::is_element_on_land(Index elem) const {
@@ -377,9 +336,6 @@ AdaptiveCGLinearBezierSmoother::estimate_element_error(Index elem) const {
         result.std_error = 0.0;
         result.mean_depth = 0.0;
         result.relative_error = 0.0;
-        result.gradient_indicator = 0.0;
-        result.curvature_indicator = 0.0;
-        result.weno_indicator = 0.0;
         result.coarsening_error = 0.0;
         result.mean_difference = 0.0;
         result.volume_change = 0.0;
@@ -403,12 +359,6 @@ AdaptiveCGLinearBezierSmoother::estimate_element_error(Index elem) const {
     // depth_scale prevents blow-up near shoreline where depth approaches zero
     result.relative_error =
         result.normalized_error / (std::abs(result.mean_depth) + config_.depth_scale);
-
-    // Compute WENO indicators from raw bathymetry data
-    result.gradient_indicator = compute_gradient_indicator(elem);
-    result.curvature_indicator = compute_curvature_indicator(elem);
-    result.weno_indicator = config_.weno_gradient_weight * result.gradient_indicator +
-                            config_.weno_curvature_weight * result.curvature_indicator;
 
     // Compute coarsening metrics (solution change from refinement)
     compute_coarsening_metrics(elem, result.coarsening_error, result.mean_difference,
@@ -447,94 +397,6 @@ Real AdaptiveCGLinearBezierSmoother::mean_error() const {
         sum_err += error_metric(err);
     }
     return errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
-}
-
-// =============================================================================
-// WENO indicator computation
-// =============================================================================
-
-Real AdaptiveCGLinearBezierSmoother::compute_gradient_indicator(Index elem) const {
-    if (!grad_func_)
-        return 0.0;
-
-    const QuadBounds &bounds = quadtree_->element_bounds(elem);
-    Real dx = bounds.xmax - bounds.xmin;
-    Real dy = bounds.ymax - bounds.ymin;
-    Real area = dx * dy;
-    int ngauss = config_.ngauss_error;
-
-    // Integrate |∇z|² over element using Gauss quadrature
-    Real sum_grad_sq = 0.0;
-    Real total_weight = 0.0;
-
-    for (int j = 0; j < ngauss; ++j) {
-        for (int i = 0; i < ngauss; ++i) {
-            Real u = gauss_nodes_(i);
-            Real v = gauss_nodes_(j);
-            Real w = gauss_weights_(i) * gauss_weights_(j);
-
-            Real x = bounds.xmin + u * dx;
-            Real y = bounds.ymin + v * dy;
-
-            Real dh_dx, dh_dy;
-            grad_func_(x, y, dh_dx, dh_dy);
-
-            sum_grad_sq += w * (dh_dx * dh_dx + dh_dy * dh_dy);
-            total_weight += w;
-        }
-    }
-
-    Real mean_grad_sq = sum_grad_sq / total_weight;
-
-    // WENO scaling: Δx² × mean(|∇z|²) × √A
-    // Δx is the data cell size (fixed at initialization)
-    // Multiply by sqrt(area) to make "integral-like" for Dorfler marking:
-    // When element is refined into 4 children, total contribution is conserved.
-    Real delta_x_sq = data_cell_size_ * data_cell_size_;
-    return delta_x_sq * mean_grad_sq * std::sqrt(area);
-}
-
-Real AdaptiveCGLinearBezierSmoother::compute_curvature_indicator(Index elem) const {
-    if (!curv_func_)
-        return 0.0;
-
-    const QuadBounds &bounds = quadtree_->element_bounds(elem);
-    Real dx = bounds.xmax - bounds.xmin;
-    Real dy = bounds.ymax - bounds.ymin;
-    Real area = dx * dy;
-    int ngauss = config_.ngauss_error;
-
-    // Integrate |H|²_F (Frobenius norm of Hessian squared) over element
-    Real sum_curv_sq = 0.0;
-    Real total_weight = 0.0;
-
-    for (int j = 0; j < ngauss; ++j) {
-        for (int i = 0; i < ngauss; ++i) {
-            Real u = gauss_nodes_(i);
-            Real v = gauss_nodes_(j);
-            Real w = gauss_weights_(i) * gauss_weights_(j);
-
-            Real x = bounds.xmin + u * dx;
-            Real y = bounds.ymin + v * dy;
-
-            Real d2h_dx2, d2h_dxdy, d2h_dy2;
-            curv_func_(x, y, d2h_dx2, d2h_dxdy, d2h_dy2);
-
-            // Frobenius norm of Hessian: ||H||²_F = h_xx² + 2*h_xy² + h_yy²
-            Real hess_sq = d2h_dx2 * d2h_dx2 + 2.0 * d2h_dxdy * d2h_dxdy + d2h_dy2 * d2h_dy2;
-            sum_curv_sq += w * hess_sq;
-            total_weight += w;
-        }
-    }
-
-    Real mean_curv_sq = sum_curv_sq / total_weight;
-
-    // WENO scaling: Δx⁴ × mean(|H|²_F) × √A
-    // Δx is the data cell size (fixed at initialization)
-    // Multiply by sqrt(area) to make "integral-like" for Dorfler marking:
-    // When element is refined into 4 children, total contribution is conserved.
-    Real delta_x_4 = data_cell_size_ * data_cell_size_ * data_cell_size_ * data_cell_size_;
-    return delta_x_4 * mean_curv_sq * std::sqrt(area);
 }
 
 // =============================================================================
@@ -1012,9 +874,6 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
         std::vector<Real> element_rms(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_mean_err(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_std(quadtree_->num_elements(), 0.0);
-        std::vector<Real> element_gradient(quadtree_->num_elements(), 0.0);
-        std::vector<Real> element_curvature(quadtree_->num_elements(), 0.0);
-        std::vector<Real> element_weno(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_coarsening(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_mean_diff(quadtree_->num_elements(), 0.0);
         std::vector<Real> element_volume_change(quadtree_->num_elements(), 0.0);
@@ -1024,9 +883,6 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
             element_rms[e.element] = e.normalized_error;
             element_mean_err[e.element] = e.mean_error;
             element_std[e.element] = e.std_error;
-            element_gradient[e.element] = e.gradient_indicator;
-            element_curvature[e.element] = e.curvature_indicator;
-            element_weno[e.element] = e.weno_indicator;
             element_coarsening[e.element] = e.coarsening_error;
             element_mean_diff[e.element] = e.mean_difference;
             element_volume_change[e.element] = e.volume_change;
@@ -1041,9 +897,6 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
             {{"rms_error", element_rms},
              {"mean_error", element_mean_err},
              {"std_error", element_std},
-             {"gradient_indicator", element_gradient},
-             {"curvature_indicator", element_curvature},
-             {"weno_indicator", element_weno},
              {"coarsening_error", element_coarsening},
              {"mean_difference", element_mean_diff},
              {"volume_change", element_volume_change},
@@ -1156,29 +1009,12 @@ void AdaptiveCGLinearBezierSmoother::write_vtk(const std::string &filename, int 
         throw std::runtime_error("AdaptiveCGLinearBezierSmoother: must solve before writing VTK");
     }
 
-    // Compute per-element indicators for cell data
-    auto errors = estimate_errors();
-    std::vector<Real> gradient_ind(quadtree_->num_elements(), 0.0);
-    std::vector<Real> curvature_ind(quadtree_->num_elements(), 0.0);
-    std::vector<Real> weno_ind(quadtree_->num_elements(), 0.0);
-
-    for (const auto &err : errors) {
-        gradient_ind[err.element] = err.gradient_indicator;
-        curvature_ind[err.element] = err.curvature_indicator;
-        weno_ind[err.element] = err.weno_indicator;
-    }
-
-    std::vector<std::pair<std::string, std::vector<Real>>> cell_data = {
-        {"gradient_indicator", std::move(gradient_ind)},
-        {"curvature_indicator", std::move(curvature_ind)},
-        {"weno_indicator", std::move(weno_ind)}};
-
-    // Call VTK writer with cell data
+    // Call VTK writer with empty cell data
     const auto &dof_mgr = smoother_->dof_manager();
     io::write_cg_bezier_surface_vtk(
         filename, *quadtree_, [this](Real x, Real y) { return evaluate(x, y); },
         dof_mgr.xmin_domain(), dof_mgr.ymin_domain(), dof_mgr.inv_quantization_tol(),
-        resolution > 0 ? resolution : 6, "elevation", cell_data);
+        resolution > 0 ? resolution : 6, "elevation", {});
 }
 
 // =============================================================================

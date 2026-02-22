@@ -237,8 +237,8 @@ public:
     /// Get the underlying data
     const BathymetryData &data() const { return *data_; }
 
-    /// Get characteristic cell size (sqrt of pixel area) for WENO indicators
-    /// This is the Δx in the WENO smoothness indicator formula
+    /// Get characteristic cell size (sqrt of pixel area)
+    /// @return Characteristic length scale of the data resolution
     Real cell_size() const {
         Real dx = std::abs(data_->geotransform[1]);
         Real dy = std::abs(data_->geotransform[5]);

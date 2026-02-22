@@ -170,33 +170,6 @@ Solved via KKT system with constraint projection for exact satisfaction.
 
 **Non-conforming meshes:** Hanging node constraints via de Casteljau subdivision ensure continuity at 2:1 T-junctions.
 
-### WENO Smoothness Indicators (`bathymetry/adaptive_cg_*_smoother.hpp`)
-
-WENO-style smoothness indicators measure local complexity of raw bathymetry data for adaptive refinement. Unlike fitting error (data vs approximation), these capture intrinsic terrain roughness.
-
-**Indicator types** (`ErrorMetricType` enum) — all dimensionless:
-| Indicator | Formula | Purpose |
-|-----------|---------|---------|
-| `GradientIndicator` | mean(\|∇z\|²) | Steep slopes (slope² is dimensionless) |
-| `CurvatureIndicator` | h² × mean(\|H\|²_F) | High curvature regions (ridges, canyons) |
-| `WenoIndicator` | w_g × gradient + w_c × curvature | Combined (configurable weights) |
-
-**Definitions:**
-- `|∇z|² = (∂z/∂x)² + (∂z/∂y)²` — squared gradient magnitude (slope²)
-- `|H|²_F = (∂²z/∂x²)² + 2·(∂²z/∂x∂y)² + (∂²z/∂y²)²` — Frobenius norm of Hessian squared
-
-**Dimensional analysis:**
-- Gradient: `[m/m]² = dimensionless`
-- Curvature: `h² × [1/m]² = [m²] × [1/m²] = dimensionless`
-- Combined: dimensionless, enabling mesh-size-independent thresholds
-
-**Configuration** (`AdaptiveCG*BezierConfig`):
-- `error_metric_type` - Select which metric drives refinement
-- `weno_gradient_weight` / `weno_curvature_weight` - Weights for combined indicator
-- Requires `set_gradient_function()` and `set_curvature_function()` or `set_bathymetry_surface()`
-
-**Use cases**: Pre-adaptation before solving, feature-driven refinement (coastlines, submarine canyons), or when fitting error alone misses important terrain features.
-
 ## Testing
 
 Tests use GoogleTest framework with fixtures in `tests/test_utils.hpp`:

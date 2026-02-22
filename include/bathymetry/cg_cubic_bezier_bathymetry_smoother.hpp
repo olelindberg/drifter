@@ -23,6 +23,16 @@ class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
 
+/// @brief Timing profile for solve phase (all times in milliseconds)
+struct CGCubicSolveProfile {
+    double matrix_build_ms = 0.0;          ///< Q matrix construction
+    double constraint_build_ms = 0.0;      ///< C¹ edge constraint assembly (in DOF manager)
+    double kkt_assembly_ms = 0.0;          ///< KKT system build
+    double sparse_lu_compute_ms = 0.0;     ///< SparseLU factorization
+    double sparse_lu_solve_ms = 0.0;       ///< SparseLU back-substitution
+    double constraint_projection_ms = 0.0; ///< Constraint projection solve
+};
+
 /// @brief Configuration for CG cubic Bezier bathymetry smoother
 struct CGCubicBezierSmootherConfig {
     /// Data fitting weight relative to smoothness
@@ -105,6 +115,10 @@ public:
     void solve();
     bool is_solved() const { return solved_; }
 
+    /// @brief Set profile for timing solve phase
+    /// @param profile Pointer to profile struct (null to disable profiling)
+    void set_solve_profile(CGCubicSolveProfile *profile) { solve_profile_ = profile; }
+
     // =========================================================================
     // Solution evaluation
     // =========================================================================
@@ -154,6 +168,8 @@ private:
     VecX solution_;
     bool solved_ = false;
     bool data_set_ = false;
+
+    CGCubicSolveProfile *solve_profile_ = nullptr;
 
     SpMat H_global_;
     SpMat BtWB_global_;

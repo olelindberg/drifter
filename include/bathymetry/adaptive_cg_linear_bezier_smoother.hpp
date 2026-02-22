@@ -79,12 +79,6 @@ enum class ErrorMetricType {
     StdError, ///< Standard deviation of error within element [meters]
     RelativeError, ///< RMS error / (|mean_depth| + depth_scale) [dimensionless]
 
-    // WENO-style smoothness indicators (from raw GeoTIFF data)
-    // Multiplied by √A for integral-like behavior with Dorfler marking
-    GradientIndicator, ///< Δx² × mean(|∇z|²) × √A — WENO l=1 term [m³]
-    CurvatureIndicator, ///< Δx⁴ × mean(|H|²_F) × √A — WENO l=2 term [m³]
-    WenoIndicator, ///< Combined: w_g × gradient + w_c × curvature [m³]
-
     // Coarsening error indicators (solution change due to refinement)
     CoarseningError, ///< ||z_fine - z_coarse||_L2 × √A — solution change [m²]
     MeanDifference, ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA — mean abs diff [m]
@@ -114,12 +108,6 @@ struct CGLinearElementErrorEstimate {
     // Depth-independent metrics
     Real mean_depth; ///< Weighted mean depth within element
     Real relative_error; ///< normalized_error / (|mean_depth| + depth_scale)
-
-    // WENO-style smoothness indicators (from raw bathymetry data)
-    // Multiplied by √A for integral-like behavior with Dorfler marking
-    Real gradient_indicator; ///< Δx² × mean(|∇z|²) × √A [WENO l=1 term, m³]
-    Real curvature_indicator; ///< Δx⁴ × mean(|H|²_F) × √A [WENO l=2 term, m³]
-    Real weno_indicator; ///< Combined: w_g × gradient + w_c × curvature [m³]
 
     // Coarsening error indicators (solution change due to refinement)
     Real coarsening_error; ///< ||z_fine - z_coarse||_L2 × √A [m²]
@@ -163,13 +151,6 @@ struct AdaptiveCGLinearBezierConfig {
 
     // Error estimation
     int ngauss_error = 4; ///< Gauss points per direction for error integration
-
-    // WENO indicator weights
-    /// @brief Weight for gradient term in WENO indicator (default 1.0)
-    Real weno_gradient_weight = 1.0;
-
-    /// @brief Weight for curvature term in WENO indicator (default 1.0)
-    Real weno_curvature_weight = 1.0;
 
     // Smoother configuration (passed to CGLinearBezierBathymetrySmoother)
     CGLinearBezierSmootherConfig smoother_config;
@@ -268,24 +249,9 @@ public:
     /// Elements entirely on land will not be refined
     void set_land_mask(std::function<bool(Real, Real)> is_land_func);
 
-    /// @brief Set bathymetry gradient function (for WENO indicator)
-    /// @param grad_func Function (x, y, &dh_dx, &dh_dy) -> void
-    void set_gradient_function(std::function<void(Real, Real, Real &, Real &)> grad_func);
-
-    /// @brief Set bathymetry curvature function (for WENO indicator)
-    /// @param curv_func Function (x, y, &d2h_dx2, &d2h_dxdy, &d2h_dy2) -> void
-    void set_curvature_function(std::function<void(Real, Real, Real &, Real &, Real &)> curv_func);
-
-    /// @brief Set bathymetry from BathymetrySurface (sets depth, gradient, and
-    /// curvature)
-    /// @param surface BathymetrySurface providing depth, gradient, curvature
+    /// @brief Set bathymetry from BathymetrySurface (sets depth and land mask)
+    /// @param surface BathymetrySurface providing depth and land mask
     void set_bathymetry_surface(const BathymetrySurface &surface);
-
-    /// @brief Set data cell size for WENO indicator scaling
-    /// @param cell_size Data resolution (e.g., GeoTIFF cell size in meters)
-    /// This overrides the default (initial element size) used for WENO scaling.
-    /// Only needed if not using set_bathymetry_surface().
-    void set_data_cell_size(Real cell_size) { data_cell_size_ = cell_size; }
 
     // =========================================================================
     // Adaptive solve
@@ -371,10 +337,6 @@ private:
     // Optional land mask
     std::function<bool(Real, Real)> land_mask_func_;
 
-    // Optional gradient/curvature functions for WENO indicator
-    std::function<void(Real, Real, Real &, Real &)> grad_func_;
-    std::function<void(Real, Real, Real &, Real &, Real &)> curv_func_;
-
     // Current smoother (recreated after each refinement)
     std::unique_ptr<CGLinearBezierBathymetrySmoother> smoother_;
 
@@ -388,9 +350,6 @@ private:
     // Gauss quadrature nodes and weights on [0, 1]
     VecX gauss_nodes_;
     VecX gauss_weights_;
-
-    // GeoTIFF cell size for WENO indicator scaling (Δx in WENO formula)
-    Real data_cell_size_ = 0.0;
 
     // Previous solutions keyed by (Morton code, level_x, level_y)
     // Morton alone doesn't uniquely identify an element - same Morton can exist
@@ -441,12 +400,6 @@ private:
             return err.relative_error;
         case ErrorMetricType::StdError:
             return err.std_error;
-        case ErrorMetricType::GradientIndicator:
-            return err.gradient_indicator;
-        case ErrorMetricType::CurvatureIndicator:
-            return err.curvature_indicator;
-        case ErrorMetricType::WenoIndicator:
-            return err.weno_indicator;
         case ErrorMetricType::CoarseningError:
             return err.coarsening_error;
         case ErrorMetricType::MeanDifference:
@@ -465,16 +418,6 @@ private:
 
     /// @brief Print profiling report to stdout
     void print_profile_report() const;
-
-    /// @brief Compute gradient indicator: Δx² × mean(|∇z|²) [m²]
-    /// @param elem Element index
-    /// @return WENO l=1 smoothness indicator, or 0 if no gradient function set
-    Real compute_gradient_indicator(Index elem) const;
-
-    /// @brief Compute curvature indicator: Δx⁴ × mean(|H|²_F) [m²]
-    /// @param elem Element index
-    /// @return WENO l=2 smoothness indicator, or 0 if no curvature function set
-    Real compute_curvature_indicator(Index elem) const;
 
     /// @brief Compute all coarsening error metrics
     /// @param elem Element index

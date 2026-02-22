@@ -187,57 +187,6 @@ protected:
     };
   }
 
-  /// @brief Create gradient function with output parameters (for
-  /// set_gradient_function)
-  /// @return Function computing dh/dx and dh/dy via output parameters
-  std::function<void(Real, Real, Real &, Real &)>
-  create_gradient_output_function() const {
-    return [this](Real x, Real y, Real &dh_dx, Real &dh_dy) {
-      constexpr Real h = 1.0; // 1 meter spacing
-      try {
-        dh_dx = (bathymetry().evaluate(x + h, y) -
-                 bathymetry().evaluate(x - h, y)) /
-                (2 * h);
-        dh_dy = (bathymetry().evaluate(x, y + h) -
-                 bathymetry().evaluate(x, y - h)) /
-                (2 * h);
-      } catch (const std::out_of_range &) {
-        dh_dx = 0.0;
-        dh_dy = 0.0;
-      }
-    };
-  }
-
-  /// @brief Create curvature function using central differences
-  /// @return Function computing d2h/dx2, d2h/dxdy, d2h/dy2 via output
-  /// parameters
-  std::function<void(Real, Real, Real &, Real &, Real &)>
-  create_curvature_function() const {
-    return
-        [this](Real x, Real y, Real &d2h_dx2, Real &d2h_dxdy, Real &d2h_dy2) {
-          constexpr Real h = 1.0; // 1 meter spacing
-          try {
-            Real z_xp = bathymetry().evaluate(x + h, y);
-            Real z_xm = bathymetry().evaluate(x - h, y);
-            Real z_yp = bathymetry().evaluate(x, y + h);
-            Real z_ym = bathymetry().evaluate(x, y - h);
-            Real z_c = bathymetry().evaluate(x, y);
-            Real z_xpyp = bathymetry().evaluate(x + h, y + h);
-            Real z_xmym = bathymetry().evaluate(x - h, y - h);
-            Real z_xpym = bathymetry().evaluate(x + h, y - h);
-            Real z_xmyp = bathymetry().evaluate(x - h, y + h);
-
-            d2h_dx2 = (z_xp - 2 * z_c + z_xm) / (h * h);
-            d2h_dy2 = (z_yp - 2 * z_c + z_ym) / (h * h);
-            d2h_dxdy = (z_xpyp - z_xpym - z_xmyp + z_xmym) / (4 * h * h);
-          } catch (const std::out_of_range &) {
-            d2h_dx2 = 0.0;
-            d2h_dxdy = 0.0;
-            d2h_dy2 = 0.0;
-          }
-        };
-  }
-
   /// @brief Get bathymetry bounds in EPSG:3034 coordinates
   void get_bathymetry_bounds(Real &xmin, Real &xmax, Real &ymin,
                              Real &ymax) const {

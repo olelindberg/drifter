@@ -396,12 +396,12 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
 // =============================================================================
 
 class AdaptiveCGCubicBezierSmootherGeoTiffTest : public BathymetryTestFixture {
-  protected:
-    static constexpr Real TOLERANCE = 1e-10;
-    static constexpr Real LOOSE_TOLERANCE = 1e-6;
+protected:
+  static constexpr Real TOLERANCE = 1e-10;
+  static constexpr Real LOOSE_TOLERANCE = 1e-6;
 };
 
-TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, DISABLED_AdaptiveGeoTiffRefinement) {
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   if (!data_files_exist()) {
     GTEST_SKIP() << "Bathymetry data not available";
   }
@@ -433,6 +433,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, DISABLED_AdaptiveGeoTiffRefinem
 
   AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(depth_func);
+  smoother.enable_profiling(true);
 
   auto start = std::chrono::high_resolution_clock::now();
   auto result = smoother.solve_adaptive();
@@ -448,6 +449,50 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, DISABLED_AdaptiveGeoTiffRefinem
   std::cout << "  Converged: " << (result.converged ? "yes" : "no")
             << std::endl;
   std::cout << "  Time: " << time_ms << " ms" << std::endl;
+
+  // Print profiling breakdown
+  const auto &profiles = smoother.get_iteration_profiles();
+  if (!profiles.empty()) {
+    std::cout << "\n=== Profiling Breakdown ===" << std::endl;
+    double total_rebuild = 0, total_solve = 0, total_error = 0;
+    double total_marking = 0, total_refine = 0;
+    double total_lu_compute = 0, total_lu_solve = 0, total_projection = 0;
+
+    for (size_t i = 0; i < profiles.size(); ++i) {
+      const auto &p = profiles[i];
+      std::cout << "Iter " << i << ": " << p.num_elements << " elems, "
+                << p.num_dofs << " dofs, " << p.num_constraints << " constraints"
+                << std::endl;
+      std::cout << "  Phases: rebuild=" << p.rebuild_ms << "ms, solve="
+                << p.solve_ms << "ms, error=" << p.error_estimation_ms
+                << "ms, marking=" << p.marking_ms << "ms, refine="
+                << p.refinement_ms << "ms" << std::endl;
+      std::cout << "  Solve: matrix=" << p.matrix_build_ms << "ms, constraint="
+                << p.constraint_build_ms << "ms, kkt=" << p.kkt_assembly_ms
+                << "ms, lu_compute=" << p.sparse_lu_compute_ms
+                << "ms, lu_solve=" << p.sparse_lu_solve_ms
+                << "ms, projection=" << p.constraint_projection_ms << "ms"
+                << std::endl;
+
+      total_rebuild += p.rebuild_ms;
+      total_solve += p.solve_ms;
+      total_error += p.error_estimation_ms;
+      total_marking += p.marking_ms;
+      total_refine += p.refinement_ms;
+      total_lu_compute += p.sparse_lu_compute_ms;
+      total_lu_solve += p.sparse_lu_solve_ms;
+      total_projection += p.constraint_projection_ms;
+    }
+
+    std::cout << "\nTotals across " << profiles.size() << " iterations:"
+              << std::endl;
+    std::cout << "  rebuild=" << total_rebuild << "ms, solve=" << total_solve
+              << "ms, error=" << total_error << "ms, marking=" << total_marking
+              << "ms, refine=" << total_refine << "ms" << std::endl;
+    std::cout << "  Solve breakdown: lu_compute=" << total_lu_compute
+              << "ms, lu_solve=" << total_lu_solve
+              << "ms, projection=" << total_projection << "ms" << std::endl;
+  }
 
   EXPECT_TRUE(smoother.is_solved());
 

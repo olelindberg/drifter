@@ -1,5 +1,6 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
+#include "core/scoped_timer.hpp"
 #include "mesh/refine_mask.hpp"
 #include <algorithm>
 #include <cmath>
@@ -314,17 +315,126 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
         throw std::runtime_error("AdaptiveCGCubicBezierSmoother: bathymetry data not set");
     }
 
+    // Clear previous profiling data
+    iteration_profiles_.clear();
+
     CGCubicAdaptationResult result;
 
     for (int iter = 0; iter < config_.max_iterations; ++iter) {
-        result = adapt_once();
+        CGCubicIterationProfile profile;
+        current_profile_ = profile_enabled_ ? &profile : nullptr;
+
+        // Create smoother if not exists
+        if (!smoother_) {
+            OptionalScopedTimer t(current_profile_ ? &profile.rebuild_ms : nullptr);
+            rebuild_smoother();
+        }
+
+        // Set up solve profiling
+        CGCubicSolveProfile solve_profile;
+        if (current_profile_) {
+            smoother_->set_solve_profile(&solve_profile);
+        }
+
+        // Solve on current mesh
+        {
+            OptionalScopedTimer t(current_profile_ ? &profile.solve_ms : nullptr);
+            smoother_->solve();
+        }
+
+        // Copy solve breakdown to iteration profile
+        if (current_profile_) {
+            profile.matrix_build_ms = solve_profile.matrix_build_ms;
+            profile.constraint_build_ms = solve_profile.constraint_build_ms;
+            profile.kkt_assembly_ms = solve_profile.kkt_assembly_ms;
+            profile.sparse_lu_compute_ms = solve_profile.sparse_lu_compute_ms;
+            profile.sparse_lu_solve_ms = solve_profile.sparse_lu_solve_ms;
+            profile.constraint_projection_ms = solve_profile.constraint_projection_ms;
+            smoother_->set_solve_profile(nullptr);
+        }
+
+        // Estimate errors
+        std::vector<CGCubicElementErrorEstimate> errors;
+        {
+            OptionalScopedTimer t(current_profile_ ? &profile.error_estimation_ms : nullptr);
+            errors = estimate_errors();
+        }
+
+        // Compute statistics (marking phase)
+        Real max_err = 0.0;
+        Real sum_err = 0.0;
+        std::vector<Index> valid_refine;
+        {
+            OptionalScopedTimer t(current_profile_ ? &profile.marking_ms : nullptr);
+
+            for (const auto &err : errors) {
+                max_err = std::max(max_err, err.normalized_error);
+                sum_err += err.normalized_error;
+            }
+
+            // Sort errors and select elements for refinement
+            std::sort(errors.begin(), errors.end(),
+                      [](const CGCubicElementErrorEstimate &a,
+                         const CGCubicElementErrorEstimate &b) {
+                          return a.normalized_error > b.normalized_error;
+                      });
+
+            Index num_to_refine = static_cast<Index>(
+                std::ceil(config_.refine_fraction * static_cast<Real>(errors.size())));
+            num_to_refine = std::max(Index(1), num_to_refine);
+
+            for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size()); ++i) {
+                Index elem = errors[i].element;
+                QuadLevel level = quadtree_->element_level(elem);
+                if (level.max_level() < config_.max_refinement_level) {
+                    valid_refine.push_back(elem);
+                }
+            }
+        }
+
+        // Build result
+        result.iteration = iter;
+        result.num_elements = quadtree_->num_elements();
+        result.max_error = max_err;
+        result.mean_error = errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
+
+        // Check stopping criteria
+        bool error_converged = (max_err <= config_.error_threshold);
+        bool max_elements_reached = (static_cast<int>(result.num_elements) >= config_.max_elements);
+
+        if (error_converged || max_elements_reached || valid_refine.empty()) {
+            result.converged = true;
+            result.elements_refined = 0;
+        } else {
+            // Refine elements
+            {
+                OptionalScopedTimer t(current_profile_ ? &profile.refinement_ms : nullptr);
+                refine_elements(valid_refine);
+            }
+            result.elements_refined = static_cast<Index>(valid_refine.size());
+            result.converged = false;
+        }
+
+        // Record profile context
+        if (current_profile_) {
+            profile.num_elements = result.num_elements;
+            profile.num_dofs = smoother_->num_global_dofs();
+            profile.num_free_dofs = smoother_->num_free_dofs();
+            profile.num_constraints = smoother_->num_constraints();
+            iteration_profiles_.push_back(profile);
+        }
+
         history_.push_back(result);
 
         if (config_.verbose) {
             std::cout << "Iteration " << iter << ": " << result.num_elements << " elements, "
                       << "max_error=" << result.max_error << " m, "
                       << "mean_error=" << result.mean_error << " m, "
-                      << "refined=" << result.elements_refined << "\n";
+                      << "refined=" << result.elements_refined;
+            if (current_profile_) {
+                std::cout << ", time=" << profile.total_ms() << " ms";
+            }
+            std::cout << "\n";
         }
 
         if (result.converged) {
@@ -334,6 +444,8 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
             break;
         }
     }
+
+    current_profile_ = nullptr;
 
     // Ensure final smoother is solved (in case we stopped after refinement)
     if (smoother_ && !smoother_->is_solved()) {
