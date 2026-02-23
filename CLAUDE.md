@@ -88,10 +88,8 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 
 **bathymetry/** - 2D bathymetry surface fitting (uses `QuadtreeAdapter`, not `OctreeAdapter`)
 - `QuadtreeAdapter` - 2D AMR quadtree for bathymetry mesh refinement
-- `CGBezierBathymetrySmoother` - Quintic Bezier (C² continuity) with shared DOFs at element boundaries
 - `CGCubicBezierBathymetrySmoother` - Cubic Bezier (C¹ continuity)
 - `CGLinearBezierBathymetrySmoother` - Linear Bezier (C⁰ continuity)
-- `CGTriharmonicBezierBathymetrySmoother` - Quintic Bezier with triharmonic energy
 - See detailed documentation in the "CG Bezier Bathymetry Smoother" section below
 
 **physics/** - Ocean physics
@@ -145,12 +143,10 @@ CG (Continuous Galerkin) Bezier smoothers fit Bezier surfaces to bathymetry data
 **Available Smoothers:**
 | Class | Degree | Continuity | DOFs/element |
 |-------|--------|------------|--------------|
-| `CGBezierBathymetrySmoother` | Quintic (5) | C² | 36 |
 | `CGCubicBezierBathymetrySmoother` | Cubic (3) | C¹ | 16 |
 | `CGLinearBezierBathymetrySmoother` | Linear (1) | C⁰ | 4 |
-| `CGTriharmonicBezierBathymetrySmoother` | Quintic (5) | C² | 36 |
 
-**Adaptive variants:** `AdaptiveCGBezierSmoother`, `AdaptiveCGCubicBezierSmoother` - error-driven mesh refinement.
+**Adaptive variants:** `AdaptiveCGCubicBezierSmoother`, `AdaptiveCGLinearBezierSmoother` - error-driven mesh refinement.
 
 **Optimization (ShipMesh Formulation):**
 
@@ -162,9 +158,9 @@ Uses smoothness-first formulation: `Q = α·H + λ·(BᵀWB + εI)` where H is t
 
 Solved via KKT system with constraint projection for exact satisfaction.
 
-**Key Configuration (`CGBezierSmootherConfig`):**
+**Key Configuration (`CGCubicBezierSmootherConfig`):**
 - `lambda` - Data fitting weight
-- `enable_edge_constraints` / `edge_ngauss` - C¹/C² edge derivative constraints
+- `enable_edge_constraints` / `edge_ngauss` - C¹ edge derivative constraints
 - `enable_natural_bc` - Zero normal curvature at boundaries (default, preferred)
 - `enable_boundary_dirichlet` - Pin corners to data (can cause oscillations)
 
@@ -190,11 +186,8 @@ Test files in `tests/integration/`:
 
 | File | Purpose |
 |------|---------|
-| `test_cg_bezier_bathymetry_smoother.cpp` | CG quintic Bezier (C²), DOF sharing, edge constraints, non-conforming meshes |
 | `test_cg_cubic_bezier_bathymetry_smoother.cpp` | CG cubic Bezier (C¹), edge constraints, non-conforming meshes |
 | `test_cg_linear_bezier_bathymetry_smoother.cpp` | CG linear Bezier (C⁰), DOF sharing |
-| `test_cg_triharmonic_bezier_bathymetry_smoother.cpp` | CG quintic with triharmonic energy |
-| `test_adaptive_cg_bezier_smoother.cpp` | Adaptive refinement for CG quintic smoother |
 | `test_adaptive_cg_cubic_bezier_smoother.cpp` | Adaptive refinement for CG cubic smoother |
 | `test_adaptive_cg_linear_bezier_smoother.cpp` | Adaptive refinement for CG linear smoother |
 | `test_multi_source_bathymetry.cpp` | Multi-source bathymetry loading and blending |

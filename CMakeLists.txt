@@ -120,10 +120,8 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/bezier_basis_2d.cpp
     src/bathymetry/thin_plate_hessian.cpp
     src/bathymetry/bezier_data_fitting.cpp
-    # CG Bezier bathymetry smoother (quintic with C² continuity)
+    # CG Bezier DOF manager (shared by cubic smoother)
     src/bathymetry/cg_bezier_dof_manager.cpp
-    src/bathymetry/cg_bezier_bathymetry_smoother.cpp
-    src/bathymetry/adaptive_cg_bezier_smoother.cpp
     # CG Bezier bathymetry smoother (cubic with C¹ continuity)
     src/bathymetry/cubic_bezier_basis_2d.cpp
     src/bathymetry/cubic_thin_plate_hessian.cpp
@@ -136,9 +134,6 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/cg_linear_bezier_dof_manager.cpp
     src/bathymetry/cg_linear_bezier_bathymetry_smoother.cpp
     src/bathymetry/adaptive_cg_linear_bezier_smoother.cpp
-    # CG Bezier bathymetry smoother (quintic with triharmonic energy)
-    src/bathymetry/triharmonic_hessian.cpp
-    src/bathymetry/cg_triharmonic_bezier_bathymetry_smoother.cpp
 )
 
 set(DG_SOURCES
