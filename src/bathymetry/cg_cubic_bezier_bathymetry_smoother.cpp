@@ -76,10 +76,7 @@ void CGCubicBezierBathymetrySmoother::init_components() {
     thin_plate_hessian_ =
         std::make_unique<CubicThinPlateHessian>(config_.ngauss_energy, config_.gradient_weight);
     dof_manager_ = std::make_unique<CGCubicBezierDofManager>(*quadtree_);
-
-    if (config_.enable_c1_edge_constraints) {
-        dof_manager_->build_edge_derivative_constraints(config_.edge_ngauss);
-    }
+    dof_manager_->build_edge_derivative_constraints(config_.edge_ngauss);
 
     solution_.setZero(dof_manager_->num_global_dofs());
 }

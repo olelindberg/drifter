@@ -4,7 +4,7 @@
 /// @brief CG cubic Bezier bathymetry smoother with C¹ continuity constraints
 ///
 /// Uses Continuous Galerkin assembly where DOFs at element boundaries are
-/// shared. Cubic Bezier (degree 3, 4×4 = 16 DOFs) with optional C¹ constraints.
+/// shared. Cubic Bezier (degree 3, 4×4 = 16 DOFs) with C¹ constraints.
 
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
@@ -60,10 +60,7 @@ struct CGCubicBezierSmootherConfig {
     /// Tolerance for bound constraint satisfaction
     Real bound_tolerance = 1e-10;
 
-    /// Enable C¹ edge constraints (z_n matching at Gauss points)
-    bool enable_c1_edge_constraints = false;
-
-    /// Number of Gauss points per edge for edge constraints
+    /// Number of Gauss points per edge for C¹ edge constraints
     int edge_ngauss = 4;
 };
 

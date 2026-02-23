@@ -359,7 +359,6 @@ TEST_F(CGCubicBezierSmootherTest, C1EdgeConstraints) {
 
     CGCubicBezierSmootherConfig config;
     config.lambda = 10.0;
-    config.enable_c1_edge_constraints = true;
     config.edge_ngauss = 4;
 
     CGCubicBezierBathymetrySmoother smoother(mesh, config);
@@ -538,7 +537,6 @@ TEST_F(CGCubicBezierSmootherTest, VTKOutputWithC1Constraints) {
 
     CGCubicBezierSmootherConfig config;
     config.lambda = 10.0;
-    config.enable_c1_edge_constraints = true;
 
     CGCubicBezierBathymetrySmoother smoother(mesh, config);
     smoother.set_bathymetry_data(bathy);
@@ -731,12 +729,11 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, KattegatIntegration) {
     EXPECT_LT(avg_diff, 50.0);  // Average error less than 50m
 }
 
-TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_KattegatCompareConstraintModes) {
+TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_KattegatWithC1Constraints) {
     if (!data_files_exist()) {
         GTEST_SKIP() << "Bathymetry data not available";
     }
 
-    // Compare no constraints, vertex-only, edge-only, and combined
     Real center_x = 4095238.0;
     Real center_y = 3344695.0;
     Real domain_size = 30000.0;
@@ -746,74 +743,58 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_KattegatCompareConstraintModes
     Real ymin = center_y - domain_size / 2;
     Real ymax = center_y + domain_size / 2;
 
-    std::cout << "=== CG Cubic Bezier with C¹ Constraints Comparison ===" << std::endl;
+    std::cout << "=== CG Cubic Bezier with C¹ Constraints ===" << std::endl;
 
     QuadtreeAdapter mesh;
     mesh.build_uniform(xmin, xmax, ymin, ymax, 8, 8);
 
     auto depth_func = create_depth_function();
 
-    // Test configurations
-    struct TestConfig {
-        bool edge;
-        std::string suffix;
-    };
-    std::vector<TestConfig> configs = {
-        {false, "no_constraints"},
-        {true, "c1_edge"}
-    };
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.ngauss_data = 4;
+    config.ngauss_energy = 4;
+    config.edge_ngauss = 4;
 
-    for (const auto& tc : configs) {
-        CGCubicBezierSmootherConfig config;
-        config.lambda = 1.0;
-        config.ngauss_data = 4;
-        config.ngauss_energy = 4;
-        config.enable_c1_edge_constraints = tc.edge;
-        config.edge_ngauss = 4;
+    CGCubicBezierBathymetrySmoother smoother(mesh, config);
+    smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
 
-        CGCubicBezierBathymetrySmoother smoother(mesh, config);
-        smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+    std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
+    std::cout << "Edge derivative constraints: "
+              << smoother.dof_manager().num_edge_derivative_constraints() << std::endl;
 
-        std::cout << "\n--- Config: " << tc.suffix << " ---" << std::endl;
-        std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
-        std::cout << "Edge derivative constraints: "
-                  << smoother.dof_manager().num_edge_derivative_constraints() << std::endl;
+    smoother.solve();
+    EXPECT_TRUE(smoother.is_solved());
 
-        smoother.solve();
-        EXPECT_TRUE(smoother.is_solved());
+    std::string output_base = "/tmp/cg_cubic_bezier_kattegat_c1";
+    smoother.write_vtk(output_base, 10);
+    std::cout << "Output: " << output_base << ".vtu" << std::endl;
 
-        std::string output_base = "/tmp/cg_cubic_bezier_kattegat_" + tc.suffix;
-        smoother.write_vtk(output_base, 10);
-        std::cout << "Output: " << output_base << ".vtu" << std::endl;
+    // Check constraint violation
+    Real violation = smoother.constraint_violation();
+    std::cout << "Constraint violation: " << violation << std::endl;
 
-        // Check constraint violation
-        Real violation = smoother.constraint_violation();
-        std::cout << "Constraint violation: " << violation << std::endl;
+    // Compute data fitting error
+    Real max_diff = 0.0;
+    Real sum_diff = 0.0;
+    int count = 0;
 
-        // Compute data fitting error
-        Real max_diff = 0.0;
-        Real sum_diff = 0.0;
-        int count = 0;
+    for (Index e = 0; e < mesh.num_elements(); ++e) {
+        const auto& bounds = mesh.element_bounds(e);
+        Real cx = 0.5 * (bounds.xmin + bounds.xmax);
+        Real cy = 0.5 * (bounds.ymin + bounds.ymax);
 
-        for (Index e = 0; e < mesh.num_elements(); ++e) {
-            const auto& bounds = mesh.element_bounds(e);
-            Real cx = 0.5 * (bounds.xmin + bounds.xmax);
-            Real cy = 0.5 * (bounds.ymin + bounds.ymax);
+        Real expected = depth_func(cx, cy);
+        Real computed = smoother.evaluate(cx, cy);
+        Real diff = std::abs(expected - computed);
 
-            Real expected = depth_func(cx, cy);
-            Real computed = smoother.evaluate(cx, cy);
-            Real diff = std::abs(expected - computed);
-
-            max_diff = std::max(max_diff, diff);
-            sum_diff += diff;
-            count++;
-        }
-
-        Real avg_diff = sum_diff / count;
-        std::cout << "Max diff: " << max_diff << " m, Avg diff: " << avg_diff << " m" << std::endl;
+        max_diff = std::max(max_diff, diff);
+        sum_diff += diff;
+        count++;
     }
 
-    std::cout << "\nCompare outputs in ParaView to see effect of C¹ constraints on boundary kinks." << std::endl;
+    Real avg_diff = sum_diff / count;
+    std::cout << "Max diff: " << max_diff << " m, Avg diff: " << avg_diff << " m" << std::endl;
 }
 
 // =============================================================================
@@ -879,24 +860,12 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     // Mesh sizes to test
     std::vector<int> mesh_sizes = {4, 8, 12, 16, 24, 32};
 
-    // Constraint configurations
-    struct ConstraintConfig {
-        std::string name;
-        bool edge_constraints;
-    };
-
-    std::vector<ConstraintConfig> constraint_configs = {
-        {"no_constraints", false},
-        {"c1_edge_only", true},
-    };
-
     // Lambda values to test
     std::vector<Real> lambda_values = {100.0, 10.0, 1.0, 0.1, 0.01};
 
     // Results storage
     struct EvalResult {
         int mesh_size;
-        std::string config_name;
         Real lambda;
         Index num_elements;
         Index num_dofs;
@@ -912,75 +881,71 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
 
     std::cout << "\n=== CGCubicBezierBathymetrySmoother Uniform Grid Evaluation ===" << std::endl;
     std::cout << "Domain: 30km x 30km, ngauss_error=6" << std::endl;
-    std::cout << "Running " << mesh_sizes.size() * constraint_configs.size() * lambda_values.size()
+    std::cout << "Running " << mesh_sizes.size() * lambda_values.size()
               << " configurations..." << std::endl;
 
     for (int mesh_n : mesh_sizes) {
-        for (const auto& cc : constraint_configs) {
-            for (Real lambda : lambda_values) {
-                // Create uniform mesh
-                QuadtreeAdapter mesh;
-                mesh.build_uniform(xmin, xmax, ymin, ymax, mesh_n, mesh_n);
+        for (Real lambda : lambda_values) {
+            // Create uniform mesh
+            QuadtreeAdapter mesh;
+            mesh.build_uniform(xmin, xmax, ymin, ymax, mesh_n, mesh_n);
 
-                CGCubicBezierSmootherConfig config;
-                config.lambda = lambda;
-                config.ngauss_data = 4;
-                config.ngauss_energy = 4;
-                config.enable_c1_edge_constraints = cc.edge_constraints;
-                config.edge_ngauss = 4;
+            CGCubicBezierSmootherConfig config;
+            config.lambda = lambda;
+            config.ngauss_data = 4;
+            config.ngauss_energy = 4;
+            config.edge_ngauss = 4;
 
-                CGCubicBezierBathymetrySmoother smoother(mesh, config);
-                smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
+            CGCubicBezierBathymetrySmoother smoother(mesh, config);
+            smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
 
-                // Time the solve
-                auto start = std::chrono::high_resolution_clock::now();
-                smoother.solve();
-                auto end = std::chrono::high_resolution_clock::now();
-                double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+            // Time the solve
+            auto start = std::chrono::high_resolution_clock::now();
+            smoother.solve();
+            auto end = std::chrono::high_resolution_clock::now();
+            double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
-                // Compute errors
-                Real max_err = 0.0;
-                Real sum_err = 0.0;
-                Index num_elems = mesh.num_elements();
+            // Compute errors
+            Real max_err = 0.0;
+            Real sum_err = 0.0;
+            Index num_elems = mesh.num_elements();
 
-                for (Index e = 0; e < num_elems; ++e) {
-                    const auto& bounds = mesh.element_bounds(e);
-                    Real dx = bounds.xmax - bounds.xmin;
-                    Real dy = bounds.ymax - bounds.ymin;
-                    Real area = dx * dy;
+            for (Index e = 0; e < num_elems; ++e) {
+                const auto& bounds = mesh.element_bounds(e);
+                Real dx = bounds.xmax - bounds.xmin;
+                Real dy = bounds.ymax - bounds.ymin;
+                Real area = dx * dy;
 
-                    Real l2_err = compute_element_l2_error(smoother, bounds);
-                    Real normalized_err = l2_err / std::sqrt(area);
+                Real l2_err = compute_element_l2_error(smoother, bounds);
+                Real normalized_err = l2_err / std::sqrt(area);
 
-                    max_err = std::max(max_err, normalized_err);
-                    sum_err += normalized_err;
-                }
-
-                Real mean_err = sum_err / static_cast<Real>(num_elems);
-
-                // Collect metrics
-                EvalResult er;
-                er.mesh_size = mesh_n;
-                er.config_name = cc.name;
-                er.lambda = lambda;
-                er.num_elements = num_elems;
-                er.num_dofs = smoother.num_global_dofs();
-                er.max_error = max_err;
-                er.mean_error = mean_err;
-                er.data_residual = smoother.data_residual();
-                er.constraint_violation = smoother.constraint_violation();
-                er.regularization_energy = smoother.regularization_energy();
-                er.wall_time_ms = time_ms;
-
-                results.push_back(er);
-
-                std::cout << "  " << mesh_n << "x" << mesh_n << " " << cc.name
-                          << " lambda=" << lambda << ": "
-                          << "max_err=" << max_err << " m, "
-                          << "time=" << time_ms << " ms" << std::endl;
-
-                EXPECT_TRUE(smoother.is_solved());
+                max_err = std::max(max_err, normalized_err);
+                sum_err += normalized_err;
             }
+
+            Real mean_err = sum_err / static_cast<Real>(num_elems);
+
+            // Collect metrics
+            EvalResult er;
+            er.mesh_size = mesh_n;
+            er.lambda = lambda;
+            er.num_elements = num_elems;
+            er.num_dofs = smoother.num_global_dofs();
+            er.max_error = max_err;
+            er.mean_error = mean_err;
+            er.data_residual = smoother.data_residual();
+            er.constraint_violation = smoother.constraint_violation();
+            er.regularization_energy = smoother.regularization_energy();
+            er.wall_time_ms = time_ms;
+
+            results.push_back(er);
+
+            std::cout << "  " << mesh_n << "x" << mesh_n
+                      << " lambda=" << lambda << ": "
+                      << "max_err=" << max_err << " m, "
+                      << "time=" << time_ms << " ms" << std::endl;
+
+            EXPECT_TRUE(smoother.is_solved());
         }
     }
 
@@ -1000,8 +965,8 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     ofs << "ngauss_energy: 4\n\n";
 
     ofs << "## Results\n\n";
-    ofs << "| Mesh | Config | Lambda | Elements | DOFs | Max Err (m) | Mean Err (m) | Data Res | Constr Viol | Reg Energy | Time (ms) |\n";
-    ofs << "|------|--------|--------|----------|------|-------------|--------------|----------|-------------|------------|----------|\n";
+    ofs << "| Mesh | Lambda | Elements | DOFs | Max Err (m) | Mean Err (m) | Data Res | Constr Viol | Reg Energy | Time (ms) |\n";
+    ofs << "|------|--------|----------|------|-------------|--------------|----------|-------------|------------|----------|\n";
 
     for (const auto& r : results) {
         // Format lambda appropriately
@@ -1013,7 +978,6 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
         }
 
         ofs << "| " << r.mesh_size << "x" << r.mesh_size
-            << " | " << r.config_name
             << " | " << lambda_ss.str()
             << " | " << r.num_elements
             << " | " << r.num_dofs
@@ -1039,11 +1003,11 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     ofs << "- **Reg Energy**: Thin plate regularization energy x^T H x\n";
     ofs << "- **Time**: Wall clock time for solve() in milliseconds\n\n";
 
-    // Compute key findings - best configuration per mesh size
+    // Compute key findings - best lambda per mesh size
     ofs << "## Key Findings\n\n";
-    ofs << "### Best Configurations by Mesh Size\n\n";
-    ofs << "| Mesh | Best Config | Best λ | Max Error | Time |\n";
-    ofs << "|------|-------------|--------|-----------|------|\n";
+    ofs << "### Best Lambda by Mesh Size\n\n";
+    ofs << "| Mesh | Best λ | Max Error | Time |\n";
+    ofs << "|------|--------|-----------|------|\n";
 
     for (int mesh_n : mesh_sizes) {
         // Find best result for this mesh size (lowest max_error)
@@ -1073,7 +1037,6 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
             }
 
             ofs << "| " << best->mesh_size << "×" << best->mesh_size
-                << " | " << best->config_name
                 << " | " << lambda_ss.str()
                 << " | " << std::fixed << std::setprecision(1) << best->max_error << "m"
                 << " | " << time_str
@@ -1122,26 +1085,6 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     ofs << "2. **Mesh refinement helps**: Error decreases from ~" << std::fixed << std::setprecision(0)
         << error_4x4 << "m (4×4) to ~" << std::setprecision(1) << error_32x32 << "m (32×32)\n\n";
 
-    // Constraint comparison
-    ofs << "3. **Constraint comparison**:\n";
-    ofs << "   - **c1_vertex_only**: Best for small meshes (4×4, 8×8), fastest\n";
-    ofs << "   - **c1_edge_only**: Best for large meshes (16×16+), similar accuracy to c1_vertex_edge but ~2.5× faster\n";
-    ofs << "   - **c1_vertex_edge**: Slowest (2-3× slower), minimal accuracy gain over c1_edge_only\n\n";
-
-    // Timing comparison for 32x32
-    double time_vertex_32 = 0, time_edge_32 = 0, time_both_32 = 0;
-    for (const auto& r : results) {
-        if (r.mesh_size == 32 && r.lambda == 10.0) {
-            if (r.config_name == "c1_vertex_only") time_vertex_32 = r.wall_time_ms;
-            if (r.config_name == "c1_edge_only") time_edge_32 = r.wall_time_ms;
-            if (r.config_name == "c1_vertex_edge") time_both_32 = r.wall_time_ms;
-        }
-    }
-    ofs << "4. **Scaling** (32×32 mesh at λ=10):\n";
-    ofs << "   - c1_vertex_only: " << std::fixed << std::setprecision(1) << (time_vertex_32/1000.0) << "s\n";
-    ofs << "   - c1_edge_only: " << std::fixed << std::setprecision(1) << (time_edge_32/1000.0) << "s\n";
-    ofs << "   - c1_vertex_edge: " << std::fixed << std::setprecision(1) << (time_both_32/1000.0) << "s\n\n";
-
     // Over-smoothing warning
     Real max_error_low_lambda = 0;
     for (const auto& r : results) {
@@ -1149,7 +1092,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
             max_error_low_lambda = r.max_error;
         }
     }
-    ofs << "5. **Over-smoothing**: λ≤0.1 causes significant error increase (up to "
+    ofs << "3. **Over-smoothing**: λ≤0.1 causes significant error increase (up to "
         << std::fixed << std::setprecision(0) << max_error_low_lambda << "m for λ=0.01)\n\n";
 
     // Comparison note with quintic
