@@ -6,7 +6,8 @@
 
 namespace drifter {
 
-CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh) : mesh_(mesh) {
+CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
+    : CGBezierDofManagerBase(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {
@@ -37,79 +38,13 @@ CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh) 
     // Scale: resolve positions to 1e-8 of minimum element size
     inv_quantization_tol_ = 1.0 / (min_element_size * 1e-8);
 
-    elem_to_global_.resize(num_elements);
-    for (Index e = 0; e < num_elements; ++e) {
-        elem_to_global_[e].resize(LinearBezierBasis2D::NDOF, -1);
-    }
+    initialize_elem_to_global(num_elements, LinearBezierBasis2D::NDOF);
 
     // For linear elements, all DOFs are corners - single pass suffices
     assign_vertex_dofs();
-    identify_boundary_dofs();
+    identify_boundary_dofs_impl([this](int edge) { return basis_.edge_dofs(edge); });
     build_hanging_node_constraints();
     build_dof_mappings();
-}
-
-Index CGLinearBezierDofManager::global_dof(Index elem, int local_dof) const {
-    if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range("CGLinearBezierDofManager: element index out of range");
-    }
-    if (local_dof < 0 || local_dof >= LinearBezierBasis2D::NDOF) {
-        throw std::out_of_range("CGLinearBezierDofManager: local DOF index out of range");
-    }
-    return elem_to_global_[elem][local_dof];
-}
-
-const std::vector<Index> &CGLinearBezierDofManager::element_dofs(Index elem) const {
-    if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range("CGLinearBezierDofManager: element index out of range");
-    }
-    return elem_to_global_[elem];
-}
-
-bool CGLinearBezierDofManager::is_boundary_dof(Index dof) const {
-    return boundary_dof_set_.count(dof) > 0;
-}
-
-bool CGLinearBezierDofManager::is_constrained(Index dof) const {
-    return constrained_dofs_.count(dof) > 0;
-}
-
-Index CGLinearBezierDofManager::global_to_free(Index global_dof) const {
-    if (global_dof < 0 || global_dof >= num_global_dofs_) {
-        return -1;
-    }
-    return global_to_free_[global_dof];
-}
-
-Index CGLinearBezierDofManager::free_to_global(Index free_dof) const {
-    if (free_dof < 0 || free_dof >= num_free_dofs_) {
-        return -1;
-    }
-    return free_to_global_[free_dof];
-}
-
-SpMat CGLinearBezierDofManager::build_constraint_matrix() const {
-    Index nrows = num_constraints();
-    Index ncols = num_global_dofs_;
-
-    if (nrows == 0) {
-        return SpMat(0, ncols);
-    }
-
-    std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(nrows * 3); // Each constraint: 1 slave + ~2 masters
-
-    for (Index row = 0; row < nrows; ++row) {
-        const auto &c = constraints_[row];
-        triplets.emplace_back(row, c.slave_dof, 1.0);
-        for (size_t i = 0; i < c.master_dofs.size(); ++i) {
-            triplets.emplace_back(row, c.master_dofs[i], -c.weights[i]);
-        }
-    }
-
-    SpMat A(nrows, ncols);
-    A.setFromTriplets(triplets.begin(), triplets.end());
-    return A;
 }
 
 // =============================================================================
@@ -133,15 +68,6 @@ Vec2 CGLinearBezierDofManager::get_dof_position(Index elem, int local_dof) const
     return Vec2(x, y);
 }
 
-Index CGLinearBezierDofManager::find_dof_at_position(const Vec2 &pos) const {
-    auto key = quantize_position(pos);
-    auto it = position_to_dof_.find(key);
-    if (it != position_to_dof_.end()) {
-        return it->second;
-    }
-    return -1;
-}
-
 // =============================================================================
 // DOF assignment (all DOFs are corners for linear elements)
 // =============================================================================
@@ -157,34 +83,15 @@ void CGLinearBezierDofManager::assign_vertex_dofs() {
     for (Index e = 0; e < mesh_.num_elements(); ++e) {
         for (int local_dof = 0; local_dof < LinearBezierBasis2D::NDOF; ++local_dof) {
             Vec2 pos = get_dof_position(e, local_dof);
-            auto key = quantize_position(pos);
 
             Index dof = find_dof_at_position(pos);
             if (dof < 0) {
-                dof = num_global_dofs_++;
-                position_to_dof_[key] = dof;
+                dof = register_dof_at_position(pos);
             }
 
             elem_to_global_[e][local_dof] = dof;
         }
     }
-}
-
-void CGLinearBezierDofManager::identify_boundary_dofs() {
-    boundary_dofs_.clear();
-    boundary_dof_set_.clear();
-
-    mesh_.for_each_boundary_edge([this](Index elem, int edge) {
-        std::vector<int> edge_dof_list = basis_.edge_dofs(edge);
-        for (int local_dof : edge_dof_list) {
-            Index global = elem_to_global_[elem][local_dof];
-            if (boundary_dof_set_.insert(global).second) {
-                boundary_dofs_.push_back(global);
-            }
-        }
-    });
-
-    std::sort(boundary_dofs_.begin(), boundary_dofs_.end());
 }
 
 // =============================================================================
@@ -273,16 +180,19 @@ void CGLinearBezierDofManager::build_hanging_node_constraints() {
     }
 }
 
-void CGLinearBezierDofManager::build_dof_mappings() {
-    global_to_free_.resize(num_global_dofs_, -1);
-    free_to_global_.clear();
-    free_to_global_.reserve(num_global_dofs_);
+// =============================================================================
+// Base class virtual method implementation
+// =============================================================================
 
-    num_free_dofs_ = 0;
-    for (Index g = 0; g < num_global_dofs_; ++g) {
-        if (!is_constrained(g)) {
-            global_to_free_[g] = num_free_dofs_++;
-            free_to_global_.push_back(g);
+void CGLinearBezierDofManager::get_constraint_triplets(
+    std::vector<Eigen::Triplet<Real>> &triplets) const {
+    triplets.reserve(num_constraints() * 3); // Each constraint: 1 slave + ~2 masters
+
+    for (Index row = 0; row < num_constraints(); ++row) {
+        const auto &c = constraints_[row];
+        triplets.emplace_back(row, c.slave_dof, 1.0);
+        for (size_t i = 0; i < c.master_dofs.size(); ++i) {
+            triplets.emplace_back(row, c.master_dofs[i], -c.weights[i]);
         }
     }
 }

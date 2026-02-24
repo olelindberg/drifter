@@ -1,13 +1,15 @@
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 
 namespace drifter {
 
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh) : mesh_(mesh) {
+CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
+    : CGBezierDofManagerBase(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {
@@ -16,81 +18,15 @@ CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh) : 
         return;
     }
 
-    elem_to_global_.resize(num_elements);
-    for (Index e = 0; e < num_elements; ++e) {
-        elem_to_global_[e].resize(CubicBezierBasis2D::NDOF, -1);
-    }
+    initialize_elem_to_global(num_elements, CubicBezierBasis2D::NDOF);
 
     assign_vertex_dofs();
     assign_edge_dofs();
     assign_interior_dofs();
     assign_edge_dofs_nonconforming();
-    identify_boundary_dofs();
+    identify_boundary_dofs_impl([this](int edge) { return basis_.edge_dofs(edge); });
     build_hanging_node_constraints();
     build_dof_mappings();
-}
-
-Index CGCubicBezierDofManager::global_dof(Index elem, int local_dof) const {
-    if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range("CGCubicBezierDofManager: element index out of range");
-    }
-    if (local_dof < 0 || local_dof >= CubicBezierBasis2D::NDOF) {
-        throw std::out_of_range("CGCubicBezierDofManager: local DOF index out of range");
-    }
-    return elem_to_global_[elem][local_dof];
-}
-
-const std::vector<Index> &CGCubicBezierDofManager::element_dofs(Index elem) const {
-    if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range("CGCubicBezierDofManager: element index out of range");
-    }
-    return elem_to_global_[elem];
-}
-
-bool CGCubicBezierDofManager::is_boundary_dof(Index dof) const {
-    return boundary_dof_set_.count(dof) > 0;
-}
-
-bool CGCubicBezierDofManager::is_constrained(Index dof) const {
-    return constrained_dofs_.count(dof) > 0;
-}
-
-Index CGCubicBezierDofManager::global_to_free(Index global_dof) const {
-    if (global_dof < 0 || global_dof >= num_global_dofs_) {
-        return -1;
-    }
-    return global_to_free_[global_dof];
-}
-
-Index CGCubicBezierDofManager::free_to_global(Index free_dof) const {
-    if (free_dof < 0 || free_dof >= num_free_dofs_) {
-        return -1;
-    }
-    return free_to_global_[free_dof];
-}
-
-SpMat CGCubicBezierDofManager::build_constraint_matrix() const {
-    Index nrows = num_constraints();
-    Index ncols = num_global_dofs_;
-
-    if (nrows == 0) {
-        return SpMat(0, ncols);
-    }
-
-    std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(nrows * 5);
-
-    for (Index row = 0; row < nrows; ++row) {
-        const auto &c = constraints_[row];
-        triplets.emplace_back(row, c.slave_dof, 1.0);
-        for (size_t i = 0; i < c.master_dofs.size(); ++i) {
-            triplets.emplace_back(row, c.master_dofs[i], -c.weights[i]);
-        }
-    }
-
-    SpMat A(nrows, ncols);
-    A.setFromTriplets(triplets.begin(), triplets.end());
-    return A;
 }
 
 // =============================================================================
@@ -108,15 +44,6 @@ Vec2 CGCubicBezierDofManager::get_dof_position(Index elem, int local_dof) const 
     Real x = bounds.xmin + param(0) * (bounds.xmax - bounds.xmin);
     Real y = bounds.ymin + param(1) * (bounds.ymax - bounds.ymin);
     return Vec2(x, y);
-}
-
-Index CGCubicBezierDofManager::find_dof_at_position(const Vec2 &pos) const {
-    auto key = quantize_position(pos);
-    auto it = position_to_dof_.find(key);
-    if (it != position_to_dof_.end()) {
-        return it->second;
-    }
-    return -1;
 }
 
 // =============================================================================
@@ -159,7 +86,7 @@ int CGCubicBezierDofManager::get_edge_for_dof(int local_dof) const {
 }
 
 // =============================================================================
-// DOF assignment (3-pass algorithm)
+// DOF assignment (4-pass algorithm)
 // =============================================================================
 
 void CGCubicBezierDofManager::assign_vertex_dofs() {
@@ -167,12 +94,10 @@ void CGCubicBezierDofManager::assign_vertex_dofs() {
         for (int corner = 0; corner < 4; ++corner) {
             int local_dof = basis_.corner_dof(corner);
             Vec2 pos = get_dof_position(e, local_dof);
-            auto key = quantize_position(pos);
 
             Index dof = find_dof_at_position(pos);
             if (dof < 0) {
-                dof = num_global_dofs_++;
-                position_to_dof_[key] = dof;
+                dof = register_dof_at_position(pos);
             }
 
             elem_to_global_[e][local_dof] = dof;
@@ -189,12 +114,10 @@ void CGCubicBezierDofManager::assign_edge_dofs() {
             for (size_t k = 1; k < edge_dof_list.size() - 1; ++k) {
                 int local_dof = edge_dof_list[k];
                 Vec2 pos = get_dof_position(e, local_dof);
-                auto key = quantize_position(pos);
 
                 Index dof = find_dof_at_position(pos);
                 if (dof < 0) {
-                    dof = num_global_dofs_++;
-                    position_to_dof_[key] = dof;
+                    dof = register_dof_at_position(pos);
                 }
 
                 elem_to_global_[e][local_dof] = dof;
@@ -279,23 +202,6 @@ void CGCubicBezierDofManager::assign_edge_dofs_nonconforming() {
     }
 }
 
-void CGCubicBezierDofManager::identify_boundary_dofs() {
-    boundary_dofs_.clear();
-    boundary_dof_set_.clear();
-
-    mesh_.for_each_boundary_edge([this](Index elem, int edge) {
-        std::vector<int> edge_dof_list = basis_.edge_dofs(edge);
-        for (int local_dof : edge_dof_list) {
-            Index global = elem_to_global_[elem][local_dof];
-            if (boundary_dof_set_.insert(global).second) {
-                boundary_dofs_.push_back(global);
-            }
-        }
-    });
-
-    std::sort(boundary_dofs_.begin(), boundary_dofs_.end());
-}
-
 // =============================================================================
 // Hanging node constraints
 // =============================================================================
@@ -372,16 +278,19 @@ void CGCubicBezierDofManager::build_hanging_node_constraints() {
     }
 }
 
-void CGCubicBezierDofManager::build_dof_mappings() {
-    global_to_free_.resize(num_global_dofs_, -1);
-    free_to_global_.clear();
-    free_to_global_.reserve(num_global_dofs_);
+// =============================================================================
+// Base class virtual method implementation
+// =============================================================================
 
-    num_free_dofs_ = 0;
-    for (Index g = 0; g < num_global_dofs_; ++g) {
-        if (!is_constrained(g)) {
-            global_to_free_[g] = num_free_dofs_++;
-            free_to_global_.push_back(g);
+void CGCubicBezierDofManager::get_constraint_triplets(
+    std::vector<Eigen::Triplet<Real>> &triplets) const {
+    triplets.reserve(num_constraints() * 5); // Each constraint: 1 slave + ~4 masters
+
+    for (Index row = 0; row < num_constraints(); ++row) {
+        const auto &c = constraints_[row];
+        triplets.emplace_back(row, c.slave_dof, 1.0);
+        for (size_t i = 0; i < c.master_dofs.size(); ++i) {
+            triplets.emplace_back(row, c.master_dofs[i], -c.weights[i]);
         }
     }
 }
