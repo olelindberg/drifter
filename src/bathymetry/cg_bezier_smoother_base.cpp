@@ -1,5 +1,6 @@
 #include "bathymetry/cg_bezier_smoother_base.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
+#include "bathymetry/bezier_hessian_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include <algorithm>
 #include <cmath>
@@ -204,6 +205,41 @@ Real CGBezierSmootherBase::regularization_energy() const {
     if (!solved_)
         return 0.0;
     return solution_.dot(H_global_ * solution_);
+}
+
+// =============================================================================
+// Hessian assembly
+// =============================================================================
+
+void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hessian) {
+    Index num_dofs = dof_manager_num_global_dofs();
+    Index num_elements = quadtree_->num_elements();
+    int ndof = hessian.num_dofs();
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(num_elements * ndof * ndof);
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        Vec2 size = quadtree_->element_size(elem);
+        Real dx = size(0);
+        Real dy = size(1);
+
+        MatX H_local = hessian.scaled_hessian(dx, dy);
+        const auto &global_dofs = element_global_dofs(elem);
+
+        for (int i = 0; i < ndof; ++i) {
+            Index I = global_dofs[i];
+            for (int j = 0; j < ndof; ++j) {
+                Index J = global_dofs[j];
+                if (std::abs(H_local(i, j)) > 1e-16) {
+                    triplets.emplace_back(I, J, H_local(i, j));
+                }
+            }
+        }
+    }
+
+    H_global_.resize(num_dofs, num_dofs);
+    H_global_.setFromTriplets(triplets.begin(), triplets.end());
 }
 
 } // namespace drifter

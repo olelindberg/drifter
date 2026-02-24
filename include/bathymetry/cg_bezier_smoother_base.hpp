@@ -22,6 +22,7 @@ namespace drifter {
 class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
+class BezierHessianBase;
 
 /// @brief Abstract base class for CG Bezier bathymetry smoothers
 ///
@@ -154,9 +155,22 @@ protected:
     /// @brief Get number of constraints from derived class DOF manager
     virtual Index dof_manager_num_constraints() const = 0;
 
+    /// @brief Get global DOF indices for an element
+    /// @param elem Element index
+    /// @return Reference to vector of global DOF indices
+    virtual const std::vector<Index> &element_global_dofs(Index elem) const = 0;
+
     // =========================================================================
     // Helper methods - implemented in base
     // =========================================================================
+
+    /// @brief Assemble global smoothness hessian matrix H_global_
+    ///
+    /// Uses the hessian's scaled_hessian() method and element_global_dofs()
+    /// to build the sparse global hessian matrix.
+    ///
+    /// @param hessian The hessian object (DirichletHessian or CubicThinPlateHessian)
+    void assemble_hessian_global(const BezierHessianBase &hessian);
 
     /// @brief Compute Gauss-Legendre quadrature points and weights on [0, 1]
     /// @param n Number of quadrature points (1-4)

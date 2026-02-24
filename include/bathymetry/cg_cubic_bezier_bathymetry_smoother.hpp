@@ -150,6 +150,9 @@ protected:
     Index dof_manager_num_global_dofs() const override { return dof_manager_->num_global_dofs(); }
     Index dof_manager_num_free_dofs() const override { return dof_manager_->num_free_dofs(); }
     Index dof_manager_num_constraints() const override { return dof_manager_->num_constraints(); }
+    const std::vector<Index> &element_global_dofs(Index elem) const override {
+        return dof_manager_->element_dofs(elem);
+    }
 
 private:
     CGCubicBezierSmootherConfig config_;
@@ -162,7 +165,6 @@ private:
     CGCubicIterationProfile* profile_ = nullptr;
 
     void init_components();
-    void assemble_thin_plate_hessian();
     void assemble_data_fitting(std::function<Real(Real, Real)> bathy_func);
     void solve_unconstrained();
     void solve_with_constraints();

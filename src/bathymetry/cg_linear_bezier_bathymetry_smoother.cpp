@@ -49,7 +49,7 @@ void CGLinearBezierBathymetrySmoother::set_bathymetry_data_impl(
     std::function<Real(Real, Real)> bathy_func) {
     {
         OptionalScopedTimer t(profile_ ? &profile_->hessian_assembly_ms : nullptr);
-        assemble_dirichlet_hessian();
+        assemble_hessian_global(*dirichlet_hessian_);
     }
     {
         OptionalScopedTimer t(profile_ ? &profile_->data_fitting_ms : nullptr);
@@ -60,36 +60,6 @@ void CGLinearBezierBathymetrySmoother::set_bathymetry_data_impl(
 // =============================================================================
 // Assembly
 // =============================================================================
-
-void CGLinearBezierBathymetrySmoother::assemble_dirichlet_hessian() {
-    Index num_dofs = dof_manager_->num_global_dofs();
-    Index num_elements = quadtree_->num_elements();
-
-    std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(num_elements * 4 * 4);
-
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        Vec2 size = quadtree_->element_size(elem);
-        Real dx = size(0);
-        Real dy = size(1);
-
-        MatX H_local = dirichlet_hessian_->scaled_hessian(dx, dy);
-        const auto &global_dofs = dof_manager_->element_dofs(elem);
-
-        for (int i = 0; i < LinearBezierBasis2D::NDOF; ++i) {
-            Index I = global_dofs[i];
-            for (int j = 0; j < LinearBezierBasis2D::NDOF; ++j) {
-                Index J = global_dofs[j];
-                if (std::abs(H_local(i, j)) > 1e-16) {
-                    triplets.emplace_back(I, J, H_local(i, j));
-                }
-            }
-        }
-    }
-
-    H_global_.resize(num_dofs, num_dofs);
-    H_global_.setFromTriplets(triplets.begin(), triplets.end());
-}
 
 void CGLinearBezierBathymetrySmoother::assemble_data_fitting(
     std::function<Real(Real, Real)> bathy_func) {

@@ -12,6 +12,7 @@
 /// The energy is quadratic in the control point values: E(z) = z^T * H * z
 /// where H is the precomputed Hessian matrix (4x4 for linear Bezier).
 
+#include "bathymetry/bezier_hessian_base.hpp"
 #include "bathymetry/linear_bezier_basis_2d.hpp"
 #include "core/types.hpp"
 #include <memory>
@@ -26,16 +27,15 @@ namespace drifter {
 ///
 /// This can be written as E = c^T * H * c where H is a 4x4 symmetric positive
 /// semi-definite matrix that depends only on the basis functions.
-class DirichletHessian {
+class DirichletHessian : public BezierHessianBase {
 public:
     /// @brief Construct Dirichlet Hessian with specified quadrature order
     /// @param ngauss Number of Gauss points per direction (default 2 for linear)
     explicit DirichletHessian(int ngauss = 2);
 
-    /// @brief Get the precomputed element Hessian matrix (4 x 4)
-    ///
-    /// This is for a single element with unit size [0,1]^2.
-    const MatX &element_hessian() const { return H_; }
+    // BezierHessianBase interface
+    int num_dofs() const override { return LinearBezierBasis2D::NDOF; }
+    const MatX &element_hessian() const override { return H_; }
 
     /// @brief Evaluate Dirichlet energy for given control point z-values
     /// @param coeffs Vector of 4 control point z-values
@@ -58,7 +58,7 @@ public:
     /// @param dx Element width
     /// @param dy Element height
     /// @return Scaled Hessian matrix (4 x 4)
-    MatX scaled_hessian(Real dx, Real dy) const;
+    MatX scaled_hessian(Real dx, Real dy) const override;
 
     /// @brief Number of Gauss points per direction
     int num_gauss_points() const { return ngauss_; }

@@ -54,7 +54,7 @@ void CGCubicBezierBathymetrySmoother::set_bathymetry_data_impl(
     std::function<Real(Real, Real)> bathy_func) {
     {
         OptionalScopedTimer t(profile_ ? &profile_->hessian_assembly_ms : nullptr);
-        assemble_thin_plate_hessian();
+        assemble_hessian_global(*thin_plate_hessian_);
     }
     {
         OptionalScopedTimer t(profile_ ? &profile_->data_fitting_ms : nullptr);
@@ -87,36 +87,6 @@ Vec2 CGCubicBezierBathymetrySmoother::evaluate_gradient_uv(const VecX &coeffs, R
 // =============================================================================
 // Assembly
 // =============================================================================
-
-void CGCubicBezierBathymetrySmoother::assemble_thin_plate_hessian() {
-    Index num_dofs = dof_manager_->num_global_dofs();
-    Index num_elements = quadtree_->num_elements();
-
-    std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(num_elements * 16 * 16);
-
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        Vec2 size = quadtree_->element_size(elem);
-        Real dx = size(0);
-        Real dy = size(1);
-
-        MatX H_local = thin_plate_hessian_->scaled_hessian(dx, dy);
-        const auto &global_dofs = dof_manager_->element_dofs(elem);
-
-        for (int i = 0; i < CubicBezierBasis2D::NDOF; ++i) {
-            Index I = global_dofs[i];
-            for (int j = 0; j < CubicBezierBasis2D::NDOF; ++j) {
-                Index J = global_dofs[j];
-                if (std::abs(H_local(i, j)) > 1e-16) {
-                    triplets.emplace_back(I, J, H_local(i, j));
-                }
-            }
-        }
-    }
-
-    H_global_.resize(num_dofs, num_dofs);
-    H_global_.setFromTriplets(triplets.begin(), triplets.end());
-}
 
 void CGCubicBezierBathymetrySmoother::assemble_data_fitting(
     std::function<Real(Real, Real)> bathy_func) {

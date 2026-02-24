@@ -10,6 +10,7 @@
 /// The energy is quadratic in the control point values: E(z) = z^T * H * z
 /// where H is the precomputed Hessian matrix (16x16 for cubic Bezier).
 
+#include "bathymetry/bezier_hessian_base.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "core/types.hpp"
 #include <memory>
@@ -24,16 +25,15 @@ namespace drifter {
 ///
 /// This can be written as E = c^T * H * c where H is a 16x16 symmetric positive
 /// semi-definite matrix that depends only on the basis functions.
-class CubicThinPlateHessian {
+class CubicThinPlateHessian : public BezierHessianBase {
 public:
     /// @brief Construct thin plate Hessian with specified quadrature order
     /// @param ngauss Number of Gauss points per direction (default 4 for cubic)
     explicit CubicThinPlateHessian(int ngauss = 4);
 
-    /// @brief Get the precomputed element Hessian matrix (16 x 16)
-    ///
-    /// This is for a single element with unit size [0,1]^2.
-    const MatX &element_hessian() const { return H_; }
+    // BezierHessianBase interface
+    int num_dofs() const override { return CubicBezierBasis2D::NDOF; }
+    const MatX &element_hessian() const override { return H_; }
 
     /// @brief Evaluate thin plate energy for given control point z-values
     /// @param coeffs Vector of 16 control point z-values
@@ -53,7 +53,7 @@ public:
     /// @param dx Element width
     /// @param dy Element height
     /// @return Scaled Hessian matrix (16 x 16)
-    MatX scaled_hessian(Real dx, Real dy) const;
+    MatX scaled_hessian(Real dx, Real dy) const override;
 
     /// @brief Number of Gauss points per direction
     int num_gauss_points() const { return ngauss_; }

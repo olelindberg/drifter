@@ -7,6 +7,7 @@
 /// elements for bathymetry representation with C0 continuity.
 /// Uses analytic Bernstein polynomial evaluation.
 
+#include "bathymetry/bezier_basis_2d_base.hpp"
 #include "core/types.hpp"
 #include <array>
 #include <vector>
@@ -31,7 +32,7 @@ namespace drifter {
 ///      left  right
 ///     (u=0) (u=1)
 /// ```
-class LinearBezierBasis2D {
+class LinearBezierBasis2D : public BezierBasis2DBase {
 public:
     static constexpr int DEGREE = 1; ///< Polynomial degree
     static constexpr int N1D = 2; ///< Control points per direction (degree + 1)
@@ -45,13 +46,13 @@ public:
     // =========================================================================
 
     /// Polynomial degree
-    int degree() const { return DEGREE; }
+    int degree() const override { return DEGREE; }
 
     /// Number of control points in 1D
-    int num_nodes_1d() const { return N1D; }
+    int num_nodes_1d() const override { return N1D; }
 
     /// Total number of DOFs per element
-    int num_dofs() const { return NDOF; }
+    int num_dofs() const override { return NDOF; }
 
     // =========================================================================
     // DOF indexing
@@ -74,7 +75,7 @@ public:
     /// Get control point position for DOF index (at corners of [0,1]^2)
     /// @param dof DOF index (0 to 3)
     /// @return (u, v) in [0, 1]^2
-    Vec2 control_point_position(int dof) const;
+    Vec2 control_point_position(int dof) const override;
 
     // =========================================================================
     // Basis function evaluation (parameter domain [0,1]^2)
@@ -84,7 +85,7 @@ public:
     /// @param u First parameter in [0, 1]
     /// @param v Second parameter in [0, 1]
     /// @return Vector of 4 basis function values
-    VecX evaluate(Real u, Real v) const;
+    VecX evaluate(Real u, Real v) const override;
 
     /// Evaluate 1D Bernstein basis B_{i,n}(t)
     /// @param n Degree
@@ -98,15 +99,15 @@ public:
 
     /// Evaluate du (partial derivative w.r.t u) of all basis functions
     /// @return Vector of 4 values: d phi_k / du
-    VecX evaluate_du(Real u, Real v) const;
+    VecX evaluate_du(Real u, Real v) const override;
 
     /// Evaluate dv (partial derivative w.r.t v) of all basis functions
     /// @return Vector of 4 values: d phi_k / dv
-    VecX evaluate_dv(Real u, Real v) const;
+    VecX evaluate_dv(Real u, Real v) const override;
 
     /// Evaluate gradient of all basis functions at (u, v)
     /// @return Matrix (4 x 2): column 0 = d/du, column 1 = d/dv
-    MatX evaluate_gradient(Real u, Real v) const;
+    MatX evaluate_gradient(Real u, Real v) const override;
 
     // =========================================================================
     // 1D Bernstein derivative helpers
@@ -140,7 +141,7 @@ public:
     /// @param coeffs 4 control point values indexed as i + 2*j
     /// @param u, v Parameters in [0, 1]^2
     /// @return Interpolated scalar value
-    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const;
+    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const override;
 
     // =========================================================================
     // Corner and edge access (for constraint building)
@@ -148,21 +149,21 @@ public:
 
     /// Get DOF index for corner
     /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1) in parameter space
-    int corner_dof(int corner_id) const;
+    int corner_dof(int corner_id) const override;
 
     /// Get corner ID for a DOF index (inverse of corner_dof)
     /// @param dof DOF index (0, 1, 2, or 3)
     /// @return Corner ID (0-3), or -1 if not valid
-    int dof_to_corner(int dof) const;
+    int dof_to_corner(int dof) const override;
 
     /// Get DOF indices along an edge (2 DOFs - both are corners)
     /// @param edge_id 0: u=0 (left), 1: u=1 (right), 2: v=0 (bottom), 3: v=1
     /// (top)
-    std::vector<int> edge_dofs(int edge_id) const;
+    std::vector<int> edge_dofs(int edge_id) const override;
 
     /// Get (u, v) parameter values at corner
     /// @param corner_id 0: (0,0), 1: (1,0), 2: (0,1), 3: (1,1)
-    Vec2 corner_param(int corner_id) const;
+    Vec2 corner_param(int corner_id) const override;
 
     // =========================================================================
     // Non-conforming interface support (Bezier subdivision)
