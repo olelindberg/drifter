@@ -1,7 +1,9 @@
 #include "bathymetry/cg_bezier_smoother_base.hpp"
+#include "bathymetry/bezier_basis_2d_base.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
 #include "bathymetry/bezier_hessian_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
+#include <Eigen/SparseLU>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -120,6 +122,34 @@ Index CGBezierSmootherBase::find_element_with_fallback(Real x, Real y) const {
 }
 
 // =============================================================================
+// Element coefficients and evaluation helpers
+// =============================================================================
+
+VecX CGBezierSmootherBase::element_coefficients(Index elem) const {
+    const auto &global_dofs = element_global_dofs(elem);
+    int ndof = basis().num_dofs();
+    VecX coeffs(ndof);
+    for (int i = 0; i < ndof; ++i) {
+        coeffs(i) = solution_(global_dofs[i]);
+    }
+    return coeffs;
+}
+
+Real CGBezierSmootherBase::evaluate_scalar(const VecX &coeffs, Real u, Real v) const {
+    return basis().evaluate_scalar(coeffs, u, v);
+}
+
+Vec2 CGBezierSmootherBase::evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const {
+    VecX du = basis().evaluate_du(u, v);
+    VecX dv = basis().evaluate_dv(u, v);
+
+    Real dz_du = coeffs.dot(du);
+    Real dz_dv = coeffs.dot(dv);
+
+    return Vec2(dz_du, dz_dv);
+}
+
+// =============================================================================
 // Evaluation
 // =============================================================================
 
@@ -207,6 +237,12 @@ Real CGBezierSmootherBase::regularization_energy() const {
     return solution_.dot(H_global_ * solution_);
 }
 
+Real CGBezierSmootherBase::objective_value() const {
+    if (!solved_)
+        return 0.0;
+    return alpha_ * regularization_energy() + lambda() * data_residual();
+}
+
 // =============================================================================
 // Hessian assembly
 // =============================================================================
@@ -240,6 +276,97 @@ void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hess
 
     H_global_.resize(num_dofs, num_dofs);
     H_global_.setFromTriplets(triplets.begin(), triplets.end());
+}
+
+// =============================================================================
+// Data fitting assembly
+// =============================================================================
+
+void CGBezierSmootherBase::assemble_data_fitting_global(
+    std::function<Real(Real, Real)> bathy_func) {
+
+    Index num_dofs = dof_manager_num_global_dofs();
+    Index num_elements = quadtree_->num_elements();
+    int ngauss = ngauss_data();
+    int ndof = basis().num_dofs();
+
+    std::vector<Real> gauss_pts, gauss_wts;
+    gauss_legendre_01(ngauss, gauss_pts, gauss_wts);
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(num_elements * ngauss * ngauss * ndof * ndof);
+
+    BtWd_global_.setZero(num_dofs);
+    dTWd_global_ = 0.0;
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const auto &bounds = quadtree_->element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+        Real jacobian = dx * dy;
+
+        const auto &global_dofs = element_global_dofs(elem);
+
+        for (int qi = 0; qi < static_cast<int>(gauss_pts.size()); ++qi) {
+            Real u = gauss_pts[qi];
+            for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
+                Real v = gauss_pts[qj];
+                Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian;
+
+                Real x = bounds.xmin + u * dx;
+                Real y = bounds.ymin + v * dy;
+                Real d = bathy_func(x, y);
+
+                dTWd_global_ += weight * d * d;
+
+                VecX B = basis().evaluate(u, v);
+
+                for (int i = 0; i < ndof; ++i) {
+                    Index I = global_dofs[i];
+                    for (int j = 0; j < ndof; ++j) {
+                        Index J = global_dofs[j];
+                        triplets.emplace_back(I, J, weight * B(i) * B(j));
+                    }
+                    BtWd_global_(I) += weight * B(i) * d;
+                }
+            }
+        }
+    }
+
+    BtWB_global_.resize(num_dofs, num_dofs);
+    BtWB_global_.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Compute scale normalization factor (used in solve and objective_value)
+    Real norm_BtWB = BtWB_global_.norm();
+    Real norm_H = H_global_.norm();
+    alpha_ = (norm_H > 1e-14) ? norm_BtWB / norm_H : 0.0;
+}
+
+// =============================================================================
+// Solve unconstrained
+// =============================================================================
+
+void CGBezierSmootherBase::solve_unconstrained() {
+    Index num_dofs = dof_manager_num_global_dofs();
+
+    // Build Q = alpha * H + lambda * (BtWB + epsilon * I)
+    SpMat Q = alpha_ * H_global_ + lambda() * BtWB_global_;
+    for (Index i = 0; i < num_dofs; ++i) {
+        Q.coeffRef(i, i) += lambda() * ridge_epsilon();
+    }
+
+    VecX c = -lambda() * BtWd_global_;
+
+    Eigen::SparseLU<SpMat> solver;
+    solver.compute(Q);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error("CGBezierSmootherBase: SparseLU decomposition failed");
+    }
+
+    solution_ = solver.solve(-c);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error("CGBezierSmootherBase: SparseLU solve failed");
+    }
 }
 
 } // namespace drifter

@@ -129,15 +129,13 @@ public:
     // Diagnostics
     // =========================================================================
 
-    // data_residual, regularization_energy inherited from base
-    Real objective_value() const;
+    // data_residual, regularization_energy, objective_value inherited from base
     Real constraint_violation() const;
 
     // num_global_dofs, num_free_dofs, num_constraints, mesh inherited from base
     const CGCubicBezierDofManager &dof_manager() const { return *dof_manager_; }
 
-    // element_coefficients() declared in base class as public pure virtual
-    VecX element_coefficients(Index elem) const override;
+    // element_coefficients() implemented in base class
 
 protected:
     // =========================================================================
@@ -145,14 +143,16 @@ protected:
     // =========================================================================
 
     void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) override;
-    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const override;
-    Vec2 evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const override;
     Index dof_manager_num_global_dofs() const override { return dof_manager_->num_global_dofs(); }
     Index dof_manager_num_free_dofs() const override { return dof_manager_->num_free_dofs(); }
     Index dof_manager_num_constraints() const override { return dof_manager_->num_constraints(); }
     const std::vector<Index> &element_global_dofs(Index elem) const override {
         return dof_manager_->element_dofs(elem);
     }
+    const BezierBasis2DBase &basis() const override { return *basis_; }
+    int ngauss_data() const override { return config_.ngauss_data; }
+    Real lambda() const override { return config_.lambda; }
+    Real ridge_epsilon() const override { return config_.ridge_epsilon; }
 
 private:
     CGCubicBezierSmootherConfig config_;
@@ -165,8 +165,6 @@ private:
     CGCubicIterationProfile* profile_ = nullptr;
 
     void init_components();
-    void assemble_data_fitting(std::function<Real(Real, Real)> bathy_func);
-    void solve_unconstrained();
     void solve_with_constraints();
 };
 

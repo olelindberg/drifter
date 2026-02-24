@@ -23,6 +23,7 @@ class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
 class BezierHessianBase;
+class BezierBasis2DBase;
 
 /// @brief Abstract base class for CG Bezier bathymetry smoothers
 ///
@@ -92,6 +93,9 @@ public:
     /// @brief Compute regularization energy x'Hx
     Real regularization_energy() const;
 
+    /// @brief Compute total objective value (alpha*regularization + lambda*data_residual)
+    Real objective_value() const;
+
     // =========================================================================
     // Accessors - implemented in base
     // =========================================================================
@@ -107,7 +111,7 @@ public:
     /// @brief Get element control point values
     /// @return Vector of DOF values for this element
     /// @note Public so adaptive smoothers can access coefficients
-    virtual VecX element_coefficients(Index elem) const = 0;
+    VecX element_coefficients(Index elem) const;
 
 protected:
     // =========================================================================
@@ -121,10 +125,11 @@ protected:
     bool solved_ = false;
     bool data_set_ = false;
 
-    SpMat H_global_;      ///< Smoothness hessian (Dirichlet or thin plate)
-    SpMat BtWB_global_;   ///< Data fitting matrix
-    VecX BtWd_global_;    ///< Data fitting RHS
+    SpMat H_global_;       ///< Smoothness hessian (Dirichlet or thin plate)
+    SpMat BtWB_global_;    ///< Data fitting matrix
+    VecX BtWd_global_;     ///< Data fitting RHS
     Real dTWd_global_ = 0; ///< Data norm for residual computation
+    Real alpha_ = 0;       ///< Scale normalization factor (norm_BtWB / norm_H)
 
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes
@@ -138,13 +143,13 @@ protected:
     /// @param coeffs Control point values
     /// @param u, v Parametric coordinates in [0, 1]
     /// @return Surface value
-    virtual Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const = 0;
+    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const;
 
     /// @brief Evaluate gradient in parametric coordinates
     /// @param coeffs Control point values
     /// @param u, v Parametric coordinates in [0, 1]
     /// @return Gradient (dz/du, dz/dv) in parametric space
-    virtual Vec2 evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const = 0;
+    Vec2 evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const;
 
     /// @brief Get number of global DOFs from derived class DOF manager
     virtual Index dof_manager_num_global_dofs() const = 0;
@@ -160,6 +165,19 @@ protected:
     /// @return Reference to vector of global DOF indices
     virtual const std::vector<Index> &element_global_dofs(Index elem) const = 0;
 
+    /// @brief Get reference to the basis object
+    /// @return Reference to BezierBasis2DBase (LinearBezierBasis2D or CubicBezierBasis2D)
+    virtual const BezierBasis2DBase &basis() const = 0;
+
+    /// @brief Get number of Gauss points for data fitting
+    virtual int ngauss_data() const = 0;
+
+    /// @brief Get smoothing weight (lambda) from config
+    virtual Real lambda() const = 0;
+
+    /// @brief Get ridge regularization parameter from config
+    virtual Real ridge_epsilon() const = 0;
+
     // =========================================================================
     // Helper methods - implemented in base
     // =========================================================================
@@ -171,6 +189,19 @@ protected:
     ///
     /// @param hessian The hessian object (DirichletHessian or CubicThinPlateHessian)
     void assemble_hessian_global(const BezierHessianBase &hessian);
+
+    /// @brief Assemble data fitting matrices BtWB_global_, BtWd_global_, dTWd_global_
+    ///
+    /// Uses Gauss quadrature to integrate basis functions against bathymetry data.
+    /// Uses basis() and ngauss_data() from derived class.
+    ///
+    /// @param bathy_func Bathymetry function (x, y) -> depth
+    void assemble_data_fitting_global(std::function<Real(Real, Real)> bathy_func);
+
+    /// @brief Solve unconstrained system using SparseLU
+    ///
+    /// Builds Q = alpha * H + lambda * (BtWB + epsilon * I) and solves Qx = lambda * BtWd
+    void solve_unconstrained();
 
     /// @brief Compute Gauss-Legendre quadrature points and weights on [0, 1]
     /// @param n Number of quadrature points (1-4)

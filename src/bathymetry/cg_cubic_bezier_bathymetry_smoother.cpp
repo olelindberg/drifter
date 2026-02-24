@@ -58,88 +58,8 @@ void CGCubicBezierBathymetrySmoother::set_bathymetry_data_impl(
     }
     {
         OptionalScopedTimer t(profile_ ? &profile_->data_fitting_ms : nullptr);
-        assemble_data_fitting(bathy_func);
+        assemble_data_fitting_global(bathy_func);
     }
-}
-
-VecX CGCubicBezierBathymetrySmoother::element_coefficients(Index elem) const {
-    const auto &global_dofs = dof_manager_->element_dofs(elem);
-    VecX coeffs(CubicBezierBasis2D::NDOF);
-    for (int i = 0; i < CubicBezierBasis2D::NDOF; ++i) {
-        coeffs(i) = solution_(global_dofs[i]);
-    }
-    return coeffs;
-}
-
-Real CGCubicBezierBathymetrySmoother::evaluate_scalar(const VecX &coeffs, Real u, Real v) const {
-    return basis_->evaluate_scalar(coeffs, u, v);
-}
-
-Vec2 CGCubicBezierBathymetrySmoother::evaluate_gradient_uv(const VecX &coeffs, Real u,
-                                                           Real v) const {
-    VecX du = basis_->evaluate_du(u, v);
-    VecX dv = basis_->evaluate_dv(u, v);
-    Real dz_du = coeffs.dot(du);
-    Real dz_dv = coeffs.dot(dv);
-    return Vec2(dz_du, dz_dv);
-}
-
-// =============================================================================
-// Assembly
-// =============================================================================
-
-void CGCubicBezierBathymetrySmoother::assemble_data_fitting(
-    std::function<Real(Real, Real)> bathy_func) {
-
-    Index num_dofs = dof_manager_->num_global_dofs();
-    Index num_elements = quadtree_->num_elements();
-    int ngauss = config_.ngauss_data;
-
-    std::vector<Real> gauss_pts, gauss_wts;
-    gauss_legendre_01(ngauss, gauss_pts, gauss_wts);
-
-    std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(num_elements * ngauss * ngauss * 16 * 16);
-
-    BtWd_global_.setZero(num_dofs);
-    dTWd_global_ = 0.0;
-
-    for (Index elem = 0; elem < num_elements; ++elem) {
-        const auto &bounds = quadtree_->element_bounds(elem);
-        Real dx = bounds.xmax - bounds.xmin;
-        Real dy = bounds.ymax - bounds.ymin;
-        Real jacobian = dx * dy;
-
-        const auto &global_dofs = dof_manager_->element_dofs(elem);
-
-        for (int qi = 0; qi < static_cast<int>(gauss_pts.size()); ++qi) {
-            Real u = gauss_pts[qi];
-            for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
-                Real v = gauss_pts[qj];
-                Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian;
-
-                Real x = bounds.xmin + u * dx;
-                Real y = bounds.ymin + v * dy;
-                Real d = bathy_func(x, y);
-
-                dTWd_global_ += weight * d * d;
-
-                VecX B = basis_->evaluate(u, v);
-
-                for (int i = 0; i < CubicBezierBasis2D::NDOF; ++i) {
-                    Index I = global_dofs[i];
-                    for (int j = 0; j < CubicBezierBasis2D::NDOF; ++j) {
-                        Index J = global_dofs[j];
-                        triplets.emplace_back(I, J, weight * B(i) * B(j));
-                    }
-                    BtWd_global_(I) += weight * B(i) * d;
-                }
-            }
-        }
-    }
-
-    BtWB_global_.resize(num_dofs, num_dofs);
-    BtWB_global_.setFromTriplets(triplets.begin(), triplets.end());
 }
 
 // =============================================================================
@@ -163,48 +83,6 @@ void CGCubicBezierBathymetrySmoother::solve() {
     solved_ = true;
 }
 
-void CGCubicBezierBathymetrySmoother::solve_unconstrained() {
-    Index num_dofs = dof_manager_->num_global_dofs();
-
-    SpMat Q;
-    VecX c;
-    {
-        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->matrix_build_ms : nullptr);
-
-        Real norm_BtWB = BtWB_global_.norm();
-        Real norm_H = H_global_.norm();
-        Real alpha = 0.0;
-        if (norm_H > 1e-14) {
-            alpha = norm_BtWB / norm_H;
-        }
-
-        Q = alpha * H_global_ + config_.lambda * BtWB_global_;
-
-        for (Index i = 0; i < num_dofs; ++i) {
-            Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
-        }
-
-        c = -config_.lambda * BtWd_global_;
-    }
-
-    Eigen::SparseLU<SpMat> solver;
-    {
-        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->sparse_lu_compute_ms : nullptr);
-        solver.compute(Q);
-    }
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("CGCubicBezierBathymetrySmoother: SparseLU decomposition failed");
-    }
-
-    {
-        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->sparse_lu_solve_ms : nullptr);
-        solution_ = solver.solve(-c);
-    }
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("CGCubicBezierBathymetrySmoother: SparseLU solve failed");
-    }
-}
-
 void CGCubicBezierBathymetrySmoother::solve_with_constraints() {
     Index num_dofs = dof_manager_->num_global_dofs();
     Index num_hanging_constraints = dof_manager_->num_constraints();
@@ -216,14 +94,7 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints() {
     {
         OptionalScopedTimer t(solve_profile_ ? &solve_profile_->matrix_build_ms : nullptr);
 
-        Real norm_BtWB = BtWB_global_.norm();
-        Real norm_H = H_global_.norm();
-        Real alpha = 0.0;
-        if (norm_H > 1e-14) {
-            alpha = norm_BtWB / norm_H;
-        }
-
-        Q = alpha * H_global_ + config_.lambda * BtWB_global_;
+        Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
         for (Index i = 0; i < num_dofs; ++i) {
             Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
         }
@@ -395,16 +266,6 @@ void CGCubicBezierBathymetrySmoother::write_control_points_vtk(const std::string
 // =============================================================================
 // Diagnostics
 // =============================================================================
-
-Real CGCubicBezierBathymetrySmoother::objective_value() const {
-    if (!solved_)
-        return 0.0;
-    Real norm_BtWB = BtWB_global_.norm();
-    Real norm_H = H_global_.norm();
-    Real alpha = (norm_H > 1e-14) ? norm_BtWB / norm_H : 1.0;
-
-    return alpha * regularization_energy() + config_.lambda * data_residual();
-}
 
 Real CGCubicBezierBathymetrySmoother::constraint_violation() const {
     Index num_hanging = dof_manager_->num_constraints();
