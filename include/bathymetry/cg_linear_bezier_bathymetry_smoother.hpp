@@ -8,6 +8,7 @@
 /// shared DOFs. Uses Dirichlet/Laplace energy for smoothing instead of thin
 /// plate energy.
 
+#include "bathymetry/cg_bezier_smoother_base.hpp"
 #include "bathymetry/cg_linear_bezier_dof_manager.hpp"
 #include "bathymetry/dirichlet_hessian.hpp"
 #include "bathymetry/linear_bezier_basis_2d.hpp"
@@ -60,7 +61,7 @@ struct CGLinearBezierSmootherConfig {
 /// using Continuous Galerkin assembly. Uses Dirichlet energy (gradient
 /// magnitude) for smoothing, which is the natural choice for piecewise
 /// linear surfaces (thin plate energy would be zero for linear elements).
-class CGLinearBezierBathymetrySmoother {
+class CGLinearBezierBathymetrySmoother : public CGBezierSmootherBase {
 public:
     /// @brief Construct smoother for a quadtree mesh
     explicit CGLinearBezierBathymetrySmoother(const QuadtreeAdapter &mesh,
@@ -71,13 +72,8 @@ public:
                                               const CGLinearBezierSmootherConfig &config = {});
 
     // =========================================================================
-    // Data input
+    // Data input - inherited from base: set_bathymetry_data, set_scattered_points
     // =========================================================================
-
-    void set_bathymetry_data(const BathymetrySource &source);
-    void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
-    void set_scattered_points(const std::vector<Vec3> &points);
-    void set_scattered_points(const std::vector<BathymetryPoint> &points);
 
     // =========================================================================
     // Configuration
@@ -106,25 +102,16 @@ public:
     // =========================================================================
 
     void solve();
-    bool is_solved() const { return solved_; }
 
     // =========================================================================
-    // Solution evaluation
+    // Solution evaluation - inherited from base: evaluate, evaluate_gradient, solution
     // =========================================================================
-
-    Real evaluate(Real x, Real y) const;
-    Vec2 evaluate_gradient(Real x, Real y) const;
-    const VecX &solution() const { return solution_; }
-
-    /// @brief Get element control point values
-    /// @return 4 control point z-values for this element
-    VecX element_coefficients(Index elem) const;
 
     // =========================================================================
     // Transfer and output
     // =========================================================================
 
-    void transfer_to_seabed(SeabedSurface &seabed) const;
+    // transfer_to_seabed inherited from base
     void write_vtk(const std::string &filename, int resolution = 6) const;
     void write_control_points_vtk(const std::string &filename) const;
 
@@ -132,22 +119,29 @@ public:
     // Diagnostics
     // =========================================================================
 
-    Real data_residual() const;
-    Real regularization_energy() const;
+    // data_residual, regularization_energy inherited from base
     Real objective_value() const;
     Real constraint_violation() const;
 
-    Index num_global_dofs() const { return dof_manager_->num_global_dofs(); }
-    Index num_free_dofs() const { return dof_manager_->num_free_dofs(); }
-    Index num_constraints() const { return dof_manager_->num_constraints(); }
-
-    const QuadtreeAdapter &mesh() const { return *quadtree_; }
+    // num_global_dofs, num_free_dofs, num_constraints, mesh inherited from base
     const CGLinearBezierDofManager &dof_manager() const { return *dof_manager_; }
 
-private:
-    std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter* quadtree_ = nullptr;
+    // element_coefficients() declared in base class as public pure virtual
+    VecX element_coefficients(Index elem) const override;
 
+protected:
+    // =========================================================================
+    // CGBezierSmootherBase virtual method implementations
+    // =========================================================================
+
+    void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) override;
+    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const override;
+    Vec2 evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const override;
+    Index dof_manager_num_global_dofs() const override { return dof_manager_->num_global_dofs(); }
+    Index dof_manager_num_free_dofs() const override { return dof_manager_->num_free_dofs(); }
+    Index dof_manager_num_constraints() const override { return dof_manager_->num_constraints(); }
+
+private:
     CGLinearBezierSmootherConfig config_;
 
     std::unique_ptr<LinearBezierBasis2D> basis_;
@@ -156,25 +150,13 @@ private:
 
     CGLinearIterationProfile* profile_ = nullptr;
 
-    VecX solution_;
-    bool solved_ = false;
-    bool data_set_ = false;
-
-    SpMat H_global_;
-    SpMat BtWB_global_;
-    VecX BtWd_global_;
-    Real dTWd_global_ = 0;
-    Real alpha_ = 0; // Cached scale normalization factor
+    Real alpha_ = 0; ///< Cached scale normalization factor
 
     void init_components();
     void assemble_dirichlet_hessian();
     void assemble_data_fitting(std::function<Real(Real, Real)> bathy_func);
     void solve_unconstrained();
     void solve_with_constraints();
-    Index find_element(Real x, Real y) const;
-    Index find_element_with_fallback(Real x, Real y) const;
-    Real evaluate_in_element(Index elem, Real x, Real y) const;
-    Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
 };
 
 } // namespace drifter

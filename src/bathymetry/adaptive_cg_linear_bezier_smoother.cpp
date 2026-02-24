@@ -90,82 +90,25 @@ AdaptiveCGLinearBezierSmoother::AdaptiveCGLinearBezierSmoother(
     // Create quadtree from bottom face
     quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
 
-    // Initialize Gauss quadrature
-    init_gauss_quadrature();
+    // Initialize Gauss quadrature (base class method)
+    init_gauss_quadrature(config_.ngauss_error);
 }
 
 AdaptiveCGLinearBezierSmoother::AdaptiveCGLinearBezierSmoother(
     OctreeAdapter &octree, const AdaptiveCGLinearBezierConfig &config)
-    : config_(config), octree_(&octree) {
+    : config_(config) {
+    octree_ = &octree;
+
     // Create quadtree from bottom face of provided octree
     quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
 
-    // Initialize Gauss quadrature
-    init_gauss_quadrature();
+    // Initialize Gauss quadrature (base class method)
+    init_gauss_quadrature(config_.ngauss_error);
 }
 
 // =============================================================================
-// Gauss quadrature initialization
+// Data input (unique to linear smoother)
 // =============================================================================
-
-void AdaptiveCGLinearBezierSmoother::init_gauss_quadrature() {
-    int ngauss = config_.ngauss_error;
-    gauss_nodes_.resize(ngauss);
-    gauss_weights_.resize(ngauss);
-
-    // Gauss-Legendre nodes and weights on [0, 1]
-    // Precomputed values for common orders
-    if (ngauss == 1) {
-        gauss_nodes_ << 0.5;
-        gauss_weights_ << 1.0;
-    } else if (ngauss == 2) {
-        Real a = 0.5 / std::sqrt(3.0);
-        gauss_nodes_ << 0.5 - a, 0.5 + a;
-        gauss_weights_ << 0.5, 0.5;
-    } else if (ngauss == 3) {
-        Real a = 0.5 * std::sqrt(0.6);
-        gauss_nodes_ << 0.5 - a, 0.5, 0.5 + a;
-        gauss_weights_ << 5.0 / 18.0, 8.0 / 18.0, 5.0 / 18.0;
-    } else if (ngauss == 4) {
-        // Nodes and weights for 4-point GL on [0,1]
-        gauss_nodes_ << 0.0694318442029737, 0.3300094782075719, 0.6699905217924281,
-            0.9305681557970262;
-        gauss_weights_ << 0.1739274225687269, 0.3260725774312731, 0.3260725774312731,
-            0.1739274225687269;
-    } else if (ngauss == 5) {
-        gauss_nodes_ << 0.0469100770306680, 0.2307653449471585, 0.5, 0.7692346550528415,
-            0.9530899229693319;
-        gauss_weights_ << 0.1184634425280945, 0.2393143352496832, 0.2844444444444444,
-            0.2393143352496832, 0.1184634425280945;
-    } else if (ngauss == 6) {
-        gauss_nodes_ << 0.0337652428984240, 0.1693953067668677, 0.3806904069584015,
-            0.6193095930415985, 0.8306046932331323, 0.9662347571015760;
-        gauss_weights_ << 0.0856622461895852, 0.1803807865240693, 0.2339569672863455,
-            0.2339569672863455, 0.1803807865240693, 0.0856622461895852;
-    } else {
-        throw std::invalid_argument("AdaptiveCGLinearBezierSmoother: "
-                                    "ngauss_error must be between 1 and 6");
-    }
-}
-
-// =============================================================================
-// Data input
-// =============================================================================
-
-void AdaptiveCGLinearBezierSmoother::set_bathymetry_data(const BathymetrySource &source) {
-    // Wrap BathymetrySource in a lambda that captures by reference
-    // Note: The source must outlive this smoother
-    bathy_func_ = [&source](Real x, Real y) -> Real { return source.evaluate(x, y); };
-}
-
-void AdaptiveCGLinearBezierSmoother::set_bathymetry_data(
-    std::function<Real(Real, Real)> bathy_func) {
-    bathy_func_ = std::move(bathy_func);
-}
-
-void AdaptiveCGLinearBezierSmoother::set_land_mask(std::function<bool(Real, Real)> is_land_func) {
-    land_mask_func_ = std::move(is_land_func);
-}
 
 void AdaptiveCGLinearBezierSmoother::set_bathymetry_surface(const BathymetrySurface &surface) {
     // Set depth function
@@ -836,12 +779,7 @@ const CGLinearBezierBathymetrySmoother &AdaptiveCGLinearBezierSmoother::smoother
     return *smoother_;
 }
 
-Real AdaptiveCGLinearBezierSmoother::evaluate(Real x, Real y) const {
-    if (!smoother_ || !smoother_->is_solved()) {
-        throw std::runtime_error("AdaptiveCGLinearBezierSmoother: must solve before evaluating");
-    }
-    return smoother_->evaluate(x, y);
-}
+// evaluate() is inherited from AdaptiveCGBezierSmootherBase
 
 void AdaptiveCGLinearBezierSmoother::write_vtk(const std::string &filename, int resolution) const {
     if (!smoother_ || !smoother_->is_solved()) {

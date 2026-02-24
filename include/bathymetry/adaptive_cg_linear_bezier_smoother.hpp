@@ -15,6 +15,8 @@
 /// energy functional. Linear elements (degree 1) have 4 DOFs per element and
 /// support C0 continuity.
 
+#include "bathymetry/adaptive_cg_bezier_smoother_base.hpp"
+#include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/linear_bezier_basis_2d.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
@@ -63,24 +65,6 @@ struct CGLinearIterationProfile {
     double total_ms() const {
         return rebuild_ms + solve_ms + error_estimation_ms + marking_ms + refinement_ms;
     }
-};
-
-/// @brief Error metric type for adaptive refinement decisions
-enum class ErrorMetricType {
-    NormalizedError, ///< RMS: ||z_data - z_bezier||_L2 / sqrt(area) [meters]
-
-    // Coarsening error indicators (solution change due to refinement)
-    MeanDifference, ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA — mean abs diff [m]
-    VolumeChange    ///< ∫∫|z_fine - z_coarse|dA — total volume change [m³]
-};
-
-/// @brief Reason for adaptive convergence
-enum class ConvergenceReason {
-    NotConverged, ///< Still iterating
-    ErrorThreshold, ///< max_error <= error_threshold
-    MaxElements, ///< num_elements >= max_elements
-    MaxRefinementLevel, ///< All marked elements at max level
-    MaxIterations ///< Reached max_iterations
 };
 
 /// @brief Per-element error estimate for CG linear adaptive smoother
@@ -176,7 +160,7 @@ struct CGLinearAdaptationResult {
 ///
 /// smoother.write_vtk("/tmp/adaptive_cg_linear_bathymetry", 10);
 /// @endcode
-class AdaptiveCGLinearBezierSmoother {
+class AdaptiveCGLinearBezierSmoother : public AdaptiveCGBezierSmootherBase {
 public:
     /// @brief Construct from domain bounds with initial uniform mesh
     /// @param xmin, xmax X domain bounds
@@ -194,21 +178,8 @@ public:
                                             const AdaptiveCGLinearBezierConfig &config = {});
 
     // =========================================================================
-    // Data input (persistent across refinement iterations)
+    // Data input - inherited from base: set_bathymetry_data, set_land_mask
     // =========================================================================
-
-    /// @brief Set bathymetry from BathymetrySource (e.g., GeoTIFF)
-    /// @param source Bathymetry data source
-    void set_bathymetry_data(const BathymetrySource &source);
-
-    /// @brief Set bathymetry from function
-    /// @param bathy_func Function (x, y) -> depth
-    void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
-
-    /// @brief Set optional land mask function
-    /// @param is_land_func Returns true if (x,y) is on land
-    /// Elements entirely on land will not be refined
-    void set_land_mask(std::function<bool(Real, Real)> is_land_func);
 
     /// @brief Set bathymetry from BathymetrySurface (sets depth and land mask)
     /// @param surface BathymetrySurface providing depth and land mask
@@ -266,37 +237,31 @@ public:
     /// @throws std::runtime_error if not solved
     const CGLinearBezierBathymetrySmoother &smoother() const;
 
-    /// @brief Get current mesh
-    const QuadtreeAdapter &mesh() const { return *quadtree_; }
-
-    /// @brief Get current octree (underlying 3D mesh)
-    const OctreeAdapter &octree() const { return *octree_; }
-
-    /// @brief Evaluate smoothed bathymetry at point
-    /// @param x, y Physical coordinates
-    /// @return Smoothed depth at (x, y)
-    /// @throws std::runtime_error if not solved or point outside domain
-    Real evaluate(Real x, Real y) const;
+    // mesh() and octree() accessors inherited from base
+    // evaluate() inherited from base
 
     /// @brief Write VTK output
     /// @param filename Output filename (without extension)
     /// @param resolution Subdivisions per element edge for visualization
     void write_vtk(const std::string &filename, int resolution = 6) const;
 
+protected:
+    // =========================================================================
+    // AdaptiveCGBezierSmootherBase virtual method implementations
+    // =========================================================================
+
+    bool is_solved_impl() const override { return smoother_ && smoother_->is_solved(); }
+    Real smoother_evaluate(Real x, Real y) const override { return smoother_->evaluate(x, y); }
+    void rebuild_smoother() override;
+    void apply_bathymetry_to_smoother() override;
+
 private:
     // Configuration
     AdaptiveCGLinearBezierConfig config_;
 
-    // Mesh (owned or external reference)
-    std::unique_ptr<OctreeAdapter> octree_owned_; ///< Owned octree (if constructed from bounds)
-    OctreeAdapter* octree_; ///< Pointer to active octree
-    std::unique_ptr<QuadtreeAdapter> quadtree_; ///< 2D mesh extracted from octree
-
-    // Persistent bathymetry source
-    std::function<Real(Real, Real)> bathy_func_;
-
-    // Optional land mask
-    std::function<bool(Real, Real)> land_mask_func_;
+    // Mesh members (octree_owned_, octree_, quadtree_) inherited from base
+    // Data members (bathy_func_, land_mask_func_) inherited from base
+    // Quadrature members (gauss_nodes_, gauss_weights_) inherited from base
 
     // Current smoother (recreated after each refinement)
     std::unique_ptr<CGLinearBezierBathymetrySmoother> smoother_;
@@ -307,10 +272,6 @@ private:
     // Profiling
     std::vector<CGLinearIterationProfile> profiles_;
     CGLinearIterationProfile* current_profile_ = nullptr;
-
-    // Gauss quadrature nodes and weights on [0, 1]
-    VecX gauss_nodes_;
-    VecX gauss_weights_;
 
     // Previous solutions keyed by (Morton code, level_x, level_y)
     // Morton alone doesn't uniquely identify an element - same Morton can exist
@@ -323,15 +284,6 @@ private:
     // =========================================================================
     // Internal methods
     // =========================================================================
-
-    /// @brief Initialize Gauss-Legendre quadrature nodes and weights
-    void init_gauss_quadrature();
-
-    /// @brief Create/recreate smoother for current mesh
-    void rebuild_smoother();
-
-    /// @brief Set bathymetry data on current smoother
-    void apply_bathymetry_to_smoother();
 
     /// @brief Select elements for refinement using configured marking strategy
     /// @param errors Per-element error estimates

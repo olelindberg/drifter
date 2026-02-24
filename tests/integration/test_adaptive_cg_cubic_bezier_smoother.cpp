@@ -407,9 +407,20 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   }
 
   // Kattegat test area
-  Real center_x = 4095238.0;  // EPSG:3034
-  Real center_y = 3344695.0;  // EPSG:3034
-  Real domain_size = 30000.0; // 30 km
+  Real center_x = 4095238.0; // EPSG:3034
+  Real center_y = 3344695.0; // EPSG:3034
+  Real domain_size = 100000.0;
+
+  AdaptiveCGCubicBezierConfig config;
+  config.error_threshold = 1.0;
+  config.error_metric_type = ErrorMetricType::VolumeChange;
+  config.max_iterations = 5;
+  config.max_elements = 2500;
+  config.smoother_config.lambda = 10.0;
+  config.max_refinement_level = 12;
+  config.verbose = true;
+  config.ngauss_error = 6;
+  config.error_output_dir = "/tmp/adaptive_cg_cubic_errors";
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -422,17 +433,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
             << ymax << "]" << std::endl;
 
-  AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0; // 5 meter threshold
-  config.max_iterations = 8;
-  config.max_elements = 1000;
-  config.smoother_config.lambda = 10.0;
-  config.smoother_config.edge_ngauss = 4;
-  config.verbose = true;
-
   AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(depth_func);
-  smoother.enable_profiling(true);
+
+  // Set land mask to skip refinement on land-only elements
+  smoother.set_land_mask(create_land_mask());
 
   auto start = std::chrono::high_resolution_clock::now();
   auto result = smoother.solve_adaptive();
@@ -449,56 +454,25 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
             << std::endl;
   std::cout << "  Time: " << time_ms << " ms" << std::endl;
 
-  // Print profiling breakdown
-  const auto &profiles = smoother.get_iteration_profiles();
-  if (!profiles.empty()) {
-    std::cout << "\n=== Profiling Breakdown ===" << std::endl;
-    double total_rebuild = 0, total_solve = 0, total_error = 0;
-    double total_marking = 0, total_refine = 0;
-    double total_lu_compute = 0, total_lu_solve = 0, total_projection = 0;
-
-    for (size_t i = 0; i < profiles.size(); ++i) {
-      const auto &p = profiles[i];
-      std::cout << "Iter " << i << ": " << p.num_elements << " elems, "
-                << p.num_dofs << " dofs, " << p.num_constraints << " constraints"
-                << std::endl;
-      std::cout << "  Phases: rebuild=" << p.rebuild_ms << "ms, solve="
-                << p.solve_ms << "ms, error=" << p.error_estimation_ms
-                << "ms, marking=" << p.marking_ms << "ms, refine="
-                << p.refinement_ms << "ms" << std::endl;
-      std::cout << "  Solve: matrix=" << p.matrix_build_ms << "ms, constraint="
-                << p.constraint_build_ms << "ms, kkt=" << p.kkt_assembly_ms
-                << "ms, lu_compute=" << p.sparse_lu_compute_ms
-                << "ms, lu_solve=" << p.sparse_lu_solve_ms
-                << "ms, projection=" << p.constraint_projection_ms << "ms"
-                << std::endl;
-
-      total_rebuild += p.rebuild_ms;
-      total_solve += p.solve_ms;
-      total_error += p.error_estimation_ms;
-      total_marking += p.marking_ms;
-      total_refine += p.refinement_ms;
-      total_lu_compute += p.sparse_lu_compute_ms;
-      total_lu_solve += p.sparse_lu_solve_ms;
-      total_projection += p.constraint_projection_ms;
-    }
-
-    std::cout << "\nTotals across " << profiles.size() << " iterations:"
-              << std::endl;
-    std::cout << "  rebuild=" << total_rebuild << "ms, solve=" << total_solve
-              << "ms, error=" << total_error << "ms, marking=" << total_marking
-              << "ms, refine=" << total_refine << "ms" << std::endl;
-    std::cout << "  Solve breakdown: lu_compute=" << total_lu_compute
-              << "ms, lu_solve=" << total_lu_solve
-              << "ms, projection=" << total_projection << "ms" << std::endl;
-  }
-
   EXPECT_TRUE(smoother.is_solved());
 
-  // Write output for visualization
+  // Compute final refinement statistics
+  Real max_level = 0.0;
+  for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
+    max_level = std::max(
+        max_level,
+        static_cast<Real>(smoother.mesh().element_level(i).max_level()));
+  }
+  auto element_size_min = domain_size / std::pow(2.0, max_level);
+
+  std::cout << "Number of levels         : " << max_level << std::endl;
+  std::cout << "Size of smallest element : " << element_size_min << std::endl;
+
+  // Write final result
   std::string output_file = "/tmp/adaptive_cg_cubic_bezier_kattegat";
-  smoother.write_vtk(output_file, 10);
-  std::cout << "Output written to: " << output_file << ".vtu" << std::endl;
+  smoother.write_vtk(output_file, 8);
+  std::cout << "Output written to        : " << output_file << ".vtu"
+            << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }
@@ -519,7 +493,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveWithC1Constraints) {
 
   auto depth_func = create_depth_function();
 
-  std::cout << "\n=== Adaptive CG Cubic Bezier with C¹ Constraints ===" << std::endl;
+  std::cout << "\n=== Adaptive CG Cubic Bezier with C¹ Constraints ==="
+            << std::endl;
 
   AdaptiveCGCubicBezierConfig config;
   config.error_threshold = 5.0;
@@ -535,11 +510,13 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveWithC1Constraints) {
   auto result = smoother.solve_adaptive();
   auto end = std::chrono::high_resolution_clock::now();
 
-  double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+  double time_ms =
+      std::chrono::duration<double, std::milli>(end - start).count();
 
   std::cout << "Elements: " << result.num_elements << std::endl;
   std::cout << "DOFs: " << smoother.smoother().num_global_dofs() << std::endl;
-  std::cout << "Constraints: " << smoother.smoother().num_constraints() << std::endl;
+  std::cout << "Constraints: " << smoother.smoother().num_constraints()
+            << std::endl;
   std::cout << "Max error: " << result.max_error << " m" << std::endl;
   std::cout << "Time: " << time_ms << " ms" << std::endl;
 

@@ -1,0 +1,176 @@
+#pragma once
+
+/// @file cg_bezier_smoother_base.hpp
+/// @brief Abstract base class for CG Bezier bathymetry smoothers
+///
+/// Provides common functionality shared between CGLinearBezierBathymetrySmoother
+/// and CGCubicBezierBathymetrySmoother. Uses standard inheritance with virtual
+/// methods for customization points. Virtual dispatch overhead is acceptable
+/// since these methods are not in performance-critical inner loops.
+
+#include "bathymetry/quadtree_adapter.hpp"
+#include "core/types.hpp"
+#include "mesh/seabed_surface.hpp"
+#include <functional>
+#include <limits>
+#include <memory>
+#include <vector>
+
+namespace drifter {
+
+// Forward declarations
+class OctreeAdapter;
+class BathymetrySource;
+struct BathymetryPoint;
+
+/// @brief Abstract base class for CG Bezier bathymetry smoothers
+///
+/// Implements common functionality for both linear and cubic Bezier smoothers:
+/// - Data input (set_bathymetry_data, set_scattered_points)
+/// - Element lookup and evaluation
+/// - Seabed transfer
+/// - Diagnostic methods (data_residual, regularization_energy)
+///
+/// Derived classes must implement:
+/// - set_bathymetry_data_impl() - assembles hessian and data fitting matrices
+/// - element_coefficients() - extracts DOF values for an element
+/// - evaluate_scalar() - evaluates Bezier surface at parametric coords
+/// - evaluate_gradient_uv() - evaluates gradient at parametric coords
+/// - dof_manager accessors
+class CGBezierSmootherBase {
+public:
+    virtual ~CGBezierSmootherBase() = default;
+
+    // =========================================================================
+    // Data input - implemented in base
+    // =========================================================================
+
+    /// @brief Set bathymetry from BathymetrySource (e.g., GeoTIFF)
+    void set_bathymetry_data(const BathymetrySource &source);
+
+    /// @brief Set bathymetry from function
+    /// @note Calls derived class set_bathymetry_data_impl()
+    void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
+
+    /// @brief Set bathymetry from scattered points (Vec3)
+    void set_scattered_points(const std::vector<Vec3> &points);
+
+    /// @brief Set bathymetry from scattered BathymetryPoints
+    void set_scattered_points(const std::vector<BathymetryPoint> &points);
+
+    // =========================================================================
+    // Solution evaluation - implemented in base
+    // =========================================================================
+
+    /// @brief Evaluate smoothed bathymetry at point
+    /// @throws std::runtime_error if not solved
+    Real evaluate(Real x, Real y) const;
+
+    /// @brief Evaluate gradient at point
+    /// @throws std::runtime_error if not solved
+    Vec2 evaluate_gradient(Real x, Real y) const;
+
+    /// @brief Get solution vector
+    const VecX &solution() const { return solution_; }
+
+    // =========================================================================
+    // Transfer and output - implemented in base
+    // =========================================================================
+
+    /// @brief Transfer solution to SeabedSurface
+    /// @throws std::runtime_error if not solved
+    void transfer_to_seabed(SeabedSurface &seabed) const;
+
+    // =========================================================================
+    // Diagnostics - implemented in base
+    // =========================================================================
+
+    /// @brief Compute data fitting residual ||Bx - d||²_W
+    Real data_residual() const;
+
+    /// @brief Compute regularization energy x'Hx
+    Real regularization_energy() const;
+
+    // =========================================================================
+    // Accessors - implemented in base
+    // =========================================================================
+
+    bool is_solved() const { return solved_; }
+    const QuadtreeAdapter &mesh() const { return *quadtree_; }
+
+    // DOF manager accessors - delegate to derived class
+    Index num_global_dofs() const { return dof_manager_num_global_dofs(); }
+    Index num_free_dofs() const { return dof_manager_num_free_dofs(); }
+    Index num_constraints() const { return dof_manager_num_constraints(); }
+
+    /// @brief Get element control point values
+    /// @return Vector of DOF values for this element
+    /// @note Public so adaptive smoothers can access coefficients
+    virtual VecX element_coefficients(Index elem) const = 0;
+
+protected:
+    // =========================================================================
+    // Shared state
+    // =========================================================================
+
+    std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
+    const QuadtreeAdapter *quadtree_ = nullptr;
+
+    VecX solution_;
+    bool solved_ = false;
+    bool data_set_ = false;
+
+    SpMat H_global_;      ///< Smoothness hessian (Dirichlet or thin plate)
+    SpMat BtWB_global_;   ///< Data fitting matrix
+    VecX BtWd_global_;    ///< Data fitting RHS
+    Real dTWd_global_ = 0; ///< Data norm for residual computation
+
+    // =========================================================================
+    // Pure virtual methods - must be implemented by derived classes
+    // =========================================================================
+
+    /// @brief Assemble hessian and data fitting matrices
+    /// @param bathy_func Bathymetry function (x, y) -> depth
+    virtual void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) = 0;
+
+    /// @brief Evaluate Bezier surface at parametric coordinates
+    /// @param coeffs Control point values
+    /// @param u, v Parametric coordinates in [0, 1]
+    /// @return Surface value
+    virtual Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const = 0;
+
+    /// @brief Evaluate gradient in parametric coordinates
+    /// @param coeffs Control point values
+    /// @param u, v Parametric coordinates in [0, 1]
+    /// @return Gradient (dz/du, dz/dv) in parametric space
+    virtual Vec2 evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const = 0;
+
+    /// @brief Get number of global DOFs from derived class DOF manager
+    virtual Index dof_manager_num_global_dofs() const = 0;
+
+    /// @brief Get number of free DOFs from derived class DOF manager
+    virtual Index dof_manager_num_free_dofs() const = 0;
+
+    /// @brief Get number of constraints from derived class DOF manager
+    virtual Index dof_manager_num_constraints() const = 0;
+
+    // =========================================================================
+    // Helper methods - implemented in base
+    // =========================================================================
+
+    /// @brief Find element containing point
+    /// @return Element index, or -1 if not found
+    Index find_element(Real x, Real y) const;
+
+    /// @brief Find element containing point, with fallback to closest element
+    /// @return Element index (always valid for points near the domain)
+    Index find_element_with_fallback(Real x, Real y) const;
+
+    /// @brief Evaluate in a specific element
+    Real evaluate_in_element(Index elem, Real x, Real y) const;
+
+    /// @brief Evaluate gradient in a specific element
+    Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
+};
+
+} // namespace drifter

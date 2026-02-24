@@ -6,6 +6,7 @@
 /// Uses Continuous Galerkin assembly where DOFs at element boundaries are
 /// shared. Cubic Bezier (degree 3, 4×4 = 16 DOFs) with C¹ constraints.
 
+#include "bathymetry/cg_bezier_smoother_base.hpp"
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "bathymetry/cubic_thin_plate_hessian.hpp"
@@ -22,6 +23,7 @@ namespace drifter {
 class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
+struct CGCubicIterationProfile;
 
 /// @brief Timing profile for solve phase (all times in milliseconds)
 struct CGCubicSolveProfile {
@@ -68,7 +70,7 @@ struct CGCubicBezierSmootherConfig {
 ///
 /// Fits cubic Bezier surfaces (16 DOFs per element) to bathymetry data
 /// using Continuous Galerkin assembly with optional C¹ constraints.
-class CGCubicBezierBathymetrySmoother {
+class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
 public:
     /// @brief Construct smoother for a quadtree mesh
     explicit CGCubicBezierBathymetrySmoother(const QuadtreeAdapter &mesh,
@@ -79,13 +81,8 @@ public:
                                              const CGCubicBezierSmootherConfig &config = {});
 
     // =========================================================================
-    // Data input
+    // Data input - inherited from base: set_bathymetry_data, set_scattered_points
     // =========================================================================
-
-    void set_bathymetry_data(const BathymetrySource &source);
-    void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
-    void set_scattered_points(const std::vector<Vec3> &points);
-    void set_scattered_points(const std::vector<BathymetryPoint> &points);
 
     // =========================================================================
     // Configuration
@@ -110,29 +107,24 @@ public:
     // =========================================================================
 
     void solve();
-    bool is_solved() const { return solved_; }
 
     /// @brief Set profile for timing solve phase
     /// @param profile Pointer to profile struct (null to disable profiling)
     void set_solve_profile(CGCubicSolveProfile* profile) { solve_profile_ = profile; }
 
-    // =========================================================================
-    // Solution evaluation
-    // =========================================================================
+    /// @brief Set profile for timing assembly operations (hessian, data fitting)
+    /// @param profile Pointer to iteration profile struct (null to disable)
+    void set_profile(CGCubicIterationProfile* profile) { profile_ = profile; }
 
-    Real evaluate(Real x, Real y) const;
-    Vec2 evaluate_gradient(Real x, Real y) const;
-    const VecX &solution() const { return solution_; }
-
-    /// @brief Get element control point values
-    /// @return 16 control point z-values for this element
-    VecX element_coefficients(Index elem) const;
+    // =========================================================================
+    // Solution evaluation - inherited from base: evaluate, evaluate_gradient, solution
+    // =========================================================================
 
     // =========================================================================
     // Transfer and output
     // =========================================================================
 
-    void transfer_to_seabed(SeabedSurface &seabed) const;
+    // transfer_to_seabed inherited from base
     void write_vtk(const std::string &filename, int resolution = 8) const;
     void write_control_points_vtk(const std::string &filename) const;
 
@@ -140,47 +132,43 @@ public:
     // Diagnostics
     // =========================================================================
 
-    Real data_residual() const;
-    Real regularization_energy() const;
+    // data_residual, regularization_energy inherited from base
     Real objective_value() const;
     Real constraint_violation() const;
 
-    Index num_global_dofs() const { return dof_manager_->num_global_dofs(); }
-    Index num_free_dofs() const { return dof_manager_->num_free_dofs(); }
-    Index num_constraints() const { return dof_manager_->num_constraints(); }
-
-    const QuadtreeAdapter &mesh() const { return *quadtree_; }
+    // num_global_dofs, num_free_dofs, num_constraints, mesh inherited from base
     const CGCubicBezierDofManager &dof_manager() const { return *dof_manager_; }
 
-private:
-    std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter* quadtree_ = nullptr;
+    // element_coefficients() declared in base class as public pure virtual
+    VecX element_coefficients(Index elem) const override;
 
+protected:
+    // =========================================================================
+    // CGBezierSmootherBase virtual method implementations
+    // =========================================================================
+
+    void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) override;
+    Real evaluate_scalar(const VecX &coeffs, Real u, Real v) const override;
+    Vec2 evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const override;
+    Index dof_manager_num_global_dofs() const override { return dof_manager_->num_global_dofs(); }
+    Index dof_manager_num_free_dofs() const override { return dof_manager_->num_free_dofs(); }
+    Index dof_manager_num_constraints() const override { return dof_manager_->num_constraints(); }
+
+private:
     CGCubicBezierSmootherConfig config_;
 
     std::unique_ptr<CubicBezierBasis2D> basis_;
     std::unique_ptr<CubicThinPlateHessian> thin_plate_hessian_;
     std::unique_ptr<CGCubicBezierDofManager> dof_manager_;
 
-    VecX solution_;
-    bool solved_ = false;
-    bool data_set_ = false;
-
     CGCubicSolveProfile* solve_profile_ = nullptr;
-
-    SpMat H_global_;
-    SpMat BtWB_global_;
-    VecX BtWd_global_;
-    Real dTWd_global_ = 0;
+    CGCubicIterationProfile* profile_ = nullptr;
 
     void init_components();
     void assemble_thin_plate_hessian();
     void assemble_data_fitting(std::function<Real(Real, Real)> bathy_func);
     void solve_unconstrained();
     void solve_with_constraints();
-    Index find_element(Real x, Real y) const;
-    Real evaluate_in_element(Index elem, Real x, Real y) const;
-    Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
 };
 
 } // namespace drifter

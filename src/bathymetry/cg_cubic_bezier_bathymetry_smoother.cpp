@@ -1,4 +1,5 @@
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
 #include "core/scoped_timer.hpp"
 #include "dg/basis_hexahedron.hpp"
@@ -59,7 +60,8 @@ void gauss_legendre_01_cubic(int n, std::vector<Real> &pts, std::vector<Real> &w
 
 CGCubicBezierBathymetrySmoother::CGCubicBezierBathymetrySmoother(
     const QuadtreeAdapter &mesh, const CGCubicBezierSmootherConfig &config)
-    : quadtree_(&mesh), config_(config) {
+    : config_(config) {
+    quadtree_ = &mesh;
     init_components();
 }
 
@@ -82,49 +84,41 @@ void CGCubicBezierBathymetrySmoother::init_components() {
 }
 
 // =============================================================================
-// Data input
+// CGBezierSmootherBase virtual method implementations
 // =============================================================================
 
-void CGCubicBezierBathymetrySmoother::set_bathymetry_data(const BathymetrySource &source) {
-    set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
-}
-
-void CGCubicBezierBathymetrySmoother::set_bathymetry_data(
+void CGCubicBezierBathymetrySmoother::set_bathymetry_data_impl(
     std::function<Real(Real, Real)> bathy_func) {
-    assemble_thin_plate_hessian();
-    assemble_data_fitting(bathy_func);
-    data_set_ = true;
-}
-
-void CGCubicBezierBathymetrySmoother::set_scattered_points(const std::vector<Vec3> &points) {
-    std::vector<BathymetryPoint> bathy_points;
-    bathy_points.reserve(points.size());
-    for (const auto &p : points) {
-        bathy_points.emplace_back(p(0), p(1), p(2), 1.0);
+    {
+        OptionalScopedTimer t(profile_ ? &profile_->hessian_assembly_ms : nullptr);
+        assemble_thin_plate_hessian();
     }
-    set_scattered_points(bathy_points);
+    {
+        OptionalScopedTimer t(profile_ ? &profile_->data_fitting_ms : nullptr);
+        assemble_data_fitting(bathy_func);
+    }
 }
 
-void CGCubicBezierBathymetrySmoother::set_scattered_points(
-    const std::vector<BathymetryPoint> &points) {
-    std::vector<BathymetryPoint> pts = points;
+VecX CGCubicBezierBathymetrySmoother::element_coefficients(Index elem) const {
+    const auto &global_dofs = dof_manager_->element_dofs(elem);
+    VecX coeffs(CubicBezierBasis2D::NDOF);
+    for (int i = 0; i < CubicBezierBasis2D::NDOF; ++i) {
+        coeffs(i) = solution_(global_dofs[i]);
+    }
+    return coeffs;
+}
 
-    auto bathy_func = [pts](Real x, Real y) -> Real {
-        Real min_dist = std::numeric_limits<Real>::max();
-        Real value = 0.0;
-        for (const auto &p : pts) {
-            Real dx = x - p.x;
-            Real dy = y - p.y;
-            Real dist = dx * dx + dy * dy;
-            if (dist < min_dist) {
-                min_dist = dist;
-                value = p.z;
-            }
-        }
-        return value;
-    };
+Real CGCubicBezierBathymetrySmoother::evaluate_scalar(const VecX &coeffs, Real u, Real v) const {
+    return basis_->evaluate_scalar(coeffs, u, v);
+}
 
-    set_bathymetry_data(bathy_func);
+Vec2 CGCubicBezierBathymetrySmoother::evaluate_gradient_uv(const VecX &coeffs, Real u,
+                                                           Real v) const {
+    VecX du = basis_->evaluate_du(u, v);
+    VecX dv = basis_->evaluate_dv(u, v);
+    Real dz_du = coeffs.dot(du);
+    Real dz_dv = coeffs.dot(dv);
+    return Vec2(dz_du, dz_dv);
 }
 
 // =============================================================================
@@ -431,131 +425,10 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints() {
     }
 }
 
-// =============================================================================
-// Evaluation
-// =============================================================================
-
-Index CGCubicBezierBathymetrySmoother::find_element(Real x, Real y) const {
-    for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
-        const auto &bounds = quadtree_->element_bounds(elem);
-        if (x >= bounds.xmin && x <= bounds.xmax && y >= bounds.ymin && y <= bounds.ymax) {
-            return elem;
-        }
-    }
-    return -1;
-}
-
-Real CGCubicBezierBathymetrySmoother::evaluate_in_element(Index elem, Real x, Real y) const {
-    const auto &bounds = quadtree_->element_bounds(elem);
-
-    Real u = (x - bounds.xmin) / (bounds.xmax - bounds.xmin);
-    Real v = (y - bounds.ymin) / (bounds.ymax - bounds.ymin);
-
-    u = std::clamp(u, 0.0, 1.0);
-    v = std::clamp(v, 0.0, 1.0);
-
-    VecX coeffs = element_coefficients(elem);
-    return basis_->evaluate_scalar(coeffs, u, v);
-}
-
-Real CGCubicBezierBathymetrySmoother::evaluate(Real x, Real y) const {
-    if (!solved_) {
-        throw std::runtime_error("CGCubicBezierBathymetrySmoother: must call "
-                                 "solve() before evaluate()");
-    }
-
-    Index elem = find_element(x, y);
-    if (elem < 0) {
-        Real min_dist = std::numeric_limits<Real>::max();
-        Index closest = 0;
-        for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-            const auto &b = quadtree_->element_bounds(e);
-            Real cx = 0.5 * (b.xmin + b.xmax);
-            Real cy = 0.5 * (b.ymin + b.ymax);
-            Real dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
-            if (dist < min_dist) {
-                min_dist = dist;
-                closest = e;
-            }
-        }
-        return evaluate_in_element(closest, x, y);
-    }
-
-    return evaluate_in_element(elem, x, y);
-}
-
-Vec2 CGCubicBezierBathymetrySmoother::evaluate_gradient_in_element(Index elem, Real x,
-                                                                   Real y) const {
-    const auto &bounds = quadtree_->element_bounds(elem);
-    Real dx = bounds.xmax - bounds.xmin;
-    Real dy = bounds.ymax - bounds.ymin;
-
-    Real u = (x - bounds.xmin) / dx;
-    Real v = (y - bounds.ymin) / dy;
-    u = std::clamp(u, 0.0, 1.0);
-    v = std::clamp(v, 0.0, 1.0);
-
-    VecX coeffs = element_coefficients(elem);
-
-    VecX du = basis_->evaluate_du(u, v);
-    VecX dv = basis_->evaluate_dv(u, v);
-
-    Real dz_du = coeffs.dot(du);
-    Real dz_dv = coeffs.dot(dv);
-
-    return Vec2(dz_du / dx, dz_dv / dy);
-}
-
-Vec2 CGCubicBezierBathymetrySmoother::evaluate_gradient(Real x, Real y) const {
-    if (!solved_) {
-        throw std::runtime_error("CGCubicBezierBathymetrySmoother: must call "
-                                 "solve() before evaluate_gradient()");
-    }
-
-    Index elem = find_element(x, y);
-    if (elem < 0) {
-        Real min_dist = std::numeric_limits<Real>::max();
-        Index closest = 0;
-        for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-            const auto &b = quadtree_->element_bounds(e);
-            Real cx = 0.5 * (b.xmin + b.xmax);
-            Real cy = 0.5 * (b.ymin + b.ymax);
-            Real dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
-            if (dist < min_dist) {
-                min_dist = dist;
-                closest = e;
-            }
-        }
-        return evaluate_gradient_in_element(closest, x, y);
-    }
-
-    return evaluate_gradient_in_element(elem, x, y);
-}
-
-VecX CGCubicBezierBathymetrySmoother::element_coefficients(Index elem) const {
-    const auto &global_dofs = dof_manager_->element_dofs(elem);
-    VecX coeffs(CubicBezierBasis2D::NDOF);
-    for (int i = 0; i < CubicBezierBasis2D::NDOF; ++i) {
-        coeffs(i) = solution_(global_dofs[i]);
-    }
-    return coeffs;
-}
 
 // =============================================================================
-// Transfer and output
+// Output
 // =============================================================================
-
-void CGCubicBezierBathymetrySmoother::transfer_to_seabed(SeabedSurface &seabed) const {
-    if (!solved_) {
-        throw std::runtime_error("CGCubicBezierBathymetrySmoother: must call "
-                                 "solve() before transfer_to_seabed()");
-    }
-
-    for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
-        VecX coeffs = element_coefficients(elem);
-        seabed.set_element_coefficients(elem, coeffs);
-    }
-}
 
 void CGCubicBezierBathymetrySmoother::write_vtk(const std::string &filename, int resolution) const {
     if (!solved_) {
@@ -589,19 +462,6 @@ void CGCubicBezierBathymetrySmoother::write_control_points_vtk(const std::string
 // =============================================================================
 // Diagnostics
 // =============================================================================
-
-Real CGCubicBezierBathymetrySmoother::data_residual() const {
-    if (!solved_)
-        return 0.0;
-    return solution_.dot(BtWB_global_ * solution_) - 2.0 * solution_.dot(BtWd_global_) +
-           dTWd_global_;
-}
-
-Real CGCubicBezierBathymetrySmoother::regularization_energy() const {
-    if (!solved_)
-        return 0.0;
-    return solution_.dot(H_global_ * solution_);
-}
 
 Real CGCubicBezierBathymetrySmoother::objective_value() const {
     if (!solved_)
