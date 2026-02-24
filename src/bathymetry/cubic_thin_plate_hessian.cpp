@@ -4,9 +4,8 @@
 
 namespace drifter {
 
-CubicThinPlateHessian::CubicThinPlateHessian(int ngauss, Real gradient_weight)
-    : ngauss_(ngauss), gradient_weight_(gradient_weight),
-      basis_(std::make_unique<CubicBezierBasis2D>()) {
+CubicThinPlateHessian::CubicThinPlateHessian(int ngauss)
+    : ngauss_(ngauss), basis_(std::make_unique<CubicBezierBasis2D>()) {
     if (ngauss < 2) {
         throw std::invalid_argument("CubicThinPlateHessian: need at least 2 Gauss points");
     }
@@ -73,8 +72,6 @@ void CubicThinPlateHessian::build_derivative_matrices() {
     int nquad = ngauss_ * ngauss_;
     int ndof = CubicBezierBasis2D::NDOF;
 
-    D1U_.resize(nquad, ndof);
-    D1V_.resize(nquad, ndof);
     D2U_.resize(nquad, ndof);
     D2V_.resize(nquad, ndof);
     D2UV_.resize(nquad, ndof);
@@ -85,17 +82,11 @@ void CubicThinPlateHessian::build_derivative_matrices() {
             Real u = gauss_nodes_(qi);
             Real v = gauss_nodes_(qj);
 
-            // First derivatives
-            VecX du = basis_->evaluate_du(u, v);
-            VecX dv = basis_->evaluate_dv(u, v);
-
             // Second derivatives
             VecX d2u, d2v, d2uv;
             basis_->evaluate_second_derivatives(u, v, d2u, d2v, d2uv);
 
             for (int k = 0; k < ndof; ++k) {
-                D1U_(qidx, k) = du(k);
-                D1V_(qidx, k) = dv(k);
                 D2U_(qidx, k) = d2u(k);
                 D2V_(qidx, k) = d2v(k);
                 D2UV_(qidx, k) = d2uv(k);
@@ -105,15 +96,12 @@ void CubicThinPlateHessian::build_derivative_matrices() {
 }
 
 void CubicThinPlateHessian::build_hessian() {
-    // Combined thin plate + gradient energy on [0,1]^2:
-    //   E = integral [(z_uu + z_vv)^2 + 2*z_uv^2] du dv   (thin plate)
-    //     + alpha * integral [z_u^2 + z_v^2] du dv        (gradient penalty)
+    // Thin plate energy on [0,1]^2:
+    //   E = integral [(z_uu + z_vv)^2 + 2*z_uv^2] du dv
     //
     // Thin plate Hessian:
     //   Let S = D2U + D2V (Laplacian)
-    //   H_tp = S^T * W * S + 2 * D2UV^T * W * D2UV
-
-    int ndof = CubicBezierBasis2D::NDOF;
+    //   H = S^T * W * S + 2 * D2UV^T * W * D2UV
 
     // Thin plate energy
     MatX S = D2U_ + D2V_;
@@ -121,16 +109,8 @@ void CubicThinPlateHessian::build_hessian() {
     MatX WDUV = gauss_weights_.asDiagonal() * D2UV_;
     H_ = S.transpose() * WS + 2.0 * D2UV_.transpose() * WDUV;
 
-    // Gradient energy components (precompute for scaled_hessian)
-    MatX WD1U = gauss_weights_.asDiagonal() * D1U_;
-    MatX WD1V = gauss_weights_.asDiagonal() * D1V_;
-    H_u_u_ = D1U_.transpose() * WD1U;
-    H_v_v_ = D1V_.transpose() * WD1V;
-
     // Symmetrize (numerical precision)
     H_ = 0.5 * (H_ + H_.transpose());
-    H_u_u_ = 0.5 * (H_u_u_ + H_u_u_.transpose());
-    H_v_v_ = 0.5 * (H_v_v_ + H_v_v_.transpose());
 }
 
 Real CubicThinPlateHessian::energy(const VecX &coeffs) const {
@@ -180,13 +160,6 @@ MatX CubicThinPlateHessian::scaled_hessian(Real dx, Real dy) const {
 
     MatX H_scaled = scale_uu_uu * H_uu_uu + scale_vv_vv * H_vv_vv +
                     scale_uu_vv * (H_uu_vv + H_uu_vv.transpose()) + scale_uv_uv * H_uv_uv;
-
-    // Add gradient penalty with proper physical scaling
-    if (gradient_weight_ > 0.0) {
-        Real scale_u_u = gradient_weight_ * dy / dx;
-        Real scale_v_v = gradient_weight_ * dx / dy;
-        H_scaled += scale_u_u * H_u_u_ + scale_v_v * H_v_v_;
-    }
 
     // Symmetrize
     return 0.5 * (H_scaled + H_scaled.transpose());

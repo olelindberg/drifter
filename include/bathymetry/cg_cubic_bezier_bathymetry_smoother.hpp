@@ -40,9 +40,6 @@ struct CGCubicBezierSmootherConfig {
     /// Data fitting weight relative to smoothness
     Real lambda = 0.01;
 
-    /// Weight for gradient penalty
-    Real gradient_weight = 0.0;
-
     /// Gauss points per direction for data sampling
     int ngauss_data = 4;
 

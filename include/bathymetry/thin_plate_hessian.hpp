@@ -3,11 +3,11 @@
 /// @file thin_plate_hessian.hpp
 /// @brief Thin plate spline energy functional for Bezier surface regularization
 ///
-/// Computes the combined thin plate + gradient energy:
-///   E = integral[(z_uu + z_vv)^2 + 2*z_uv^2] + α*integral[z_u^2 + z_v^2]
+/// Computes the thin plate energy:
+///   E = integral[(z_uu + z_vv)^2 + 2*z_uv^2]
 ///
-/// The thin plate term penalizes curvature, the gradient term penalizes slope.
-/// Together they provide smooth bathymetry representation without oscillations.
+/// The thin plate term penalizes curvature, providing smooth bathymetry
+/// representation without oscillations.
 ///
 /// The energy is quadratic in the control point values: E(z) = z^T * H * z
 /// where H is the precomputed Hessian matrix (36x36 for quintic Bezier).
@@ -39,8 +39,7 @@ public:
     /// @brief Construct thin plate Hessian with specified quadrature order
     /// @param ngauss Number of Gauss points per direction (default 6 for
     /// quintic)
-    /// @param gradient_weight Weight for gradient penalty term (default 1.0)
-    explicit ThinPlateHessian(int ngauss = 6, Real gradient_weight = 1.0);
+    explicit ThinPlateHessian(int ngauss = 6);
 
     /// @brief Get the precomputed element Hessian matrix (36 x 36)
     ///
@@ -82,23 +81,13 @@ public:
     const MatX &d2u_matrix() const { return D2U_; }
     const MatX &d2v_matrix() const { return D2V_; }
     const MatX &d2uv_matrix() const { return D2UV_; }
-    const MatX &d1u_matrix() const { return D1U_; }
-    const MatX &d1v_matrix() const { return D1V_; }
-
-    /// @brief Get gradient weight
-    Real gradient_weight() const { return gradient_weight_; }
 
 private:
     int ngauss_; ///< Number of Gauss points per direction
-    Real gradient_weight_; ///< Weight for gradient penalty term
     MatX H_; ///< Precomputed Hessian (36 x 36)
     MatX D2U_; ///< d^2/du^2 at Gauss points (ngauss^2 x 36)
     MatX D2V_; ///< d^2/dv^2 at Gauss points (ngauss^2 x 36)
     MatX D2UV_; ///< d^2/dudv at Gauss points (ngauss^2 x 36)
-    MatX D1U_; ///< d/du at Gauss points (ngauss^2 x 36)
-    MatX D1V_; ///< d/dv at Gauss points (ngauss^2 x 36)
-    MatX H_u_u_; ///< Gradient Hessian component D1U^T * W * D1U
-    MatX H_v_v_; ///< Gradient Hessian component D1V^T * W * D1V
     VecX gauss_weights_; ///< Quadrature weights (ngauss^2)
     VecX gauss_nodes_; ///< 1D Gauss nodes in [0,1]
 

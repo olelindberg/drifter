@@ -158,6 +158,12 @@ protected:
     // Helper methods - implemented in base
     // =========================================================================
 
+    /// @brief Compute Gauss-Legendre quadrature points and weights on [0, 1]
+    /// @param n Number of quadrature points (1-4)
+    /// @param pts Output quadrature points
+    /// @param wts Output quadrature weights
+    static void gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts);
+
     /// @brief Find element containing point
     /// @return Element index, or -1 if not found
     Index find_element(Real x, Real y) const;

@@ -14,43 +14,6 @@
 
 namespace drifter {
 
-namespace {
-
-void gauss_legendre_01_linear(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
-    pts.resize(n);
-    wts.resize(n);
-
-    if (n == 1) {
-        pts[0] = 0.5;
-        wts[0] = 1.0;
-    } else if (n == 2) {
-        pts[0] = 0.5 - 0.5 / std::sqrt(3.0);
-        pts[1] = 0.5 + 0.5 / std::sqrt(3.0);
-        wts[0] = wts[1] = 0.5;
-    } else if (n == 3) {
-        pts[0] = 0.5 - 0.5 * std::sqrt(0.6);
-        pts[1] = 0.5;
-        pts[2] = 0.5 + 0.5 * std::sqrt(0.6);
-        wts[0] = wts[2] = 5.0 / 18.0;
-        wts[1] = 8.0 / 18.0;
-    } else if (n >= 4) {
-        Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
-        Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
-        pts.resize(4);
-        wts.resize(4);
-        pts[0] = 0.5 * (1.0 - b);
-        pts[1] = 0.5 * (1.0 - a);
-        pts[2] = 0.5 * (1.0 + a);
-        pts[3] = 0.5 * (1.0 + b);
-        Real wa = (18.0 + std::sqrt(30.0)) / 72.0;
-        Real wb = (18.0 - std::sqrt(30.0)) / 72.0;
-        wts[0] = wts[3] = 0.5 * wb;
-        wts[1] = wts[2] = 0.5 * wa;
-    }
-}
-
-} // anonymous namespace
-
 // =============================================================================
 // Construction
 // =============================================================================
@@ -136,7 +99,7 @@ void CGLinearBezierBathymetrySmoother::assemble_data_fitting(
     int ngauss = config_.ngauss_data;
 
     std::vector<Real> gauss_pts, gauss_wts;
-    gauss_legendre_01_linear(ngauss, gauss_pts, gauss_wts);
+    gauss_legendre_01(ngauss, gauss_pts, gauss_wts);
 
     std::vector<Eigen::Triplet<Real>> triplets;
     triplets.reserve(num_elements * ngauss * ngauss * 4 * 4);
