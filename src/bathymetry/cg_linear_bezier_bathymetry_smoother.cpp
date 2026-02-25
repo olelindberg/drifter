@@ -1,6 +1,7 @@
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/adaptive_cg_linear_bezier_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
+#include "bathymetry/constraint_condenser.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
@@ -132,39 +133,7 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     VecX c_reduced;
     {
         OptionalScopedTimer t(profile_ ? &profile_->constraint_condense_ms : nullptr);
-        // Build reduced system by condensing slave DOFs
-        std::vector<Eigen::Triplet<Real>> triplets;
-        triplets.reserve(Q.nonZeros());
-        c_reduced = VecX::Zero(num_free);
-
-        // Condense Q matrix
-        for (int k = 0; k < Q.outerSize(); ++k) {
-            for (SpMat::InnerIterator it(Q, k); it; ++it) {
-                Index I = it.row();
-                Index J = it.col();
-                Real val = it.value();
-
-                auto I_expanded = expand_dof(I);
-                auto J_expanded = expand_dof(J);
-
-                for (const auto &[If, Iw] : I_expanded) {
-                    for (const auto &[Jf, Jw] : J_expanded) {
-                        triplets.emplace_back(If, Jf, val * Iw * Jw);
-                    }
-                }
-            }
-        }
-
-        // Condense RHS vector
-        for (Index g = 0; g < num_dofs; ++g) {
-            auto g_expanded = expand_dof(g);
-            for (const auto &[gf, gw] : g_expanded) {
-                c_reduced(gf) += c(g) * gw;
-            }
-        }
-
-        Q_reduced.resize(num_free, num_free);
-        Q_reduced.setFromTriplets(triplets.begin(), triplets.end());
+        condense_matrix_and_rhs(Q, c, expand_dof, num_free, Q_reduced, c_reduced);
     }
 
     // Solve reduced system
@@ -191,13 +160,7 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     for (Index f = 0; f < num_free; ++f) {
         solution_(dof_manager_->free_to_global(f)) = x_free(f);
     }
-    for (const auto &hc : constraints) {
-        Real val = 0.0;
-        for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
-            val += hc.weights[i] * solution_(hc.master_dofs[i]);
-        }
-        solution_(hc.slave_dof) = val;
-    }
+    back_substitute_slaves(solution_, constraints);
 }
 
 // =============================================================================

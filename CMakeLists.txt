@@ -120,6 +120,7 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/bezier_basis_2d.cpp
     src/bathymetry/thin_plate_hessian.cpp
     src/bathymetry/bezier_data_fitting.cpp
+    src/bathymetry/constraint_condenser.cpp
     # CG Bezier DOF manager (shared by cubic smoother)
     src/bathymetry/cg_bezier_dof_manager.cpp
     # Base classes for CG Bezier bathymetry smoothers
