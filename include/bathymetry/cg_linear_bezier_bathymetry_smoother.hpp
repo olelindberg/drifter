@@ -127,6 +127,10 @@ public:
 
     // element_coefficients() implemented in base class
 
+    /// @brief Get reference to the Bezier basis
+    /// @return Reference to the LinearBezierBasis2D
+    const BezierBasis2DBase &get_basis() const { return *basis_; }
+
 protected:
     // =========================================================================
     // CGBezierSmootherBase virtual method implementations

@@ -1,4 +1,5 @@
 #include "bathymetry/adaptive_cg_linear_bezier_smoother.hpp"
+#include "bathymetry/bezier_basis_2d_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
@@ -311,152 +312,11 @@ Real AdaptiveCGLinearBezierSmoother::mean_error() const {
 }
 
 // =============================================================================
-// Coarsening error computation
+// Base class virtual implementations
 // =============================================================================
 
-void AdaptiveCGLinearBezierSmoother::store_current_solution() {
-    if (!smoother_ || !smoother_->is_solved()) {
-        return;
-    }
-
-    // Store coefficients for each element, keyed by (Morton, level_x, level_y)
-    // Morton alone doesn't uniquely identify an element - same Morton can exist
-    // at different levels with different positions/sizes.
-    //
-    // Note: We don't clear prev_solutions_ because refined (parent) elements
-    // no longer exist in the mesh, but their coefficients are needed for
-    // children to walk up and find their parent's previous solution.
-    for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-        const QuadtreeNode* node = quadtree_->elements()[e];
-        auto key = std::make_tuple(node->morton, node->level.x, node->level.y);
-        prev_solutions_[key] = smoother_->element_coefficients(e);
-    }
-}
-
-Real AdaptiveCGLinearBezierSmoother::evaluate_prev_solution(Real x, Real y) const {
-    // Find element containing point in current mesh
-    Index elem = quadtree_->find_element(Vec2(x, y));
-    if (elem < 0) {
-        return 0.0; // Outside domain
-    }
-
-    QuadtreeNode* node = quadtree_->elements()[elem];
-    uint64_t morton = node->morton;
-    QuadLevel level = node->level;
-
-    // Start from PARENT level - coarsening error compares to parent, not self.
-    // This ensures we find the parent's coefficients, not the same element's
-    // previous iteration coefficients which would give near-zero differences.
-    if (level.x > 0 && level.y > 0) {
-        morton = MortonUtil::parent_x(MortonUtil::parent_y(morton));
-        level.x--;
-        level.y--;
-    } else if (level.x > 0) {
-        morton = MortonUtil::parent_x(morton);
-        level.x--;
-    } else if (level.y > 0) {
-        morton = MortonUtil::parent_y(morton);
-        level.y--;
-    } else {
-        return 0.0; // At root level, no parent to compare to
-    }
-
-    // Walk up hierarchy looking for stored solution
-    // Key is (morton, level_x, level_y) to uniquely identify elements
-    while (true) {
-        auto key = std::make_tuple(morton, level.x, level.y);
-        auto it = prev_solutions_.find(key);
-        if (it != prev_solutions_.end()) {
-            // Found stored solution - evaluate at (x, y)
-            const VecX &c = it->second;
-
-            // Compute element bounds from Morton and level
-            const QuadBounds &domain = quadtree_->domain_bounds();
-            Real elem_dx = (domain.xmax - domain.xmin) / (1 << level.x);
-            Real elem_dy = (domain.ymax - domain.ymin) / (1 << level.y);
-
-            // Decode Morton to get grid indices
-            uint32_t ix, iy, iz;
-            Morton3D::decode(morton, ix, iy, iz);
-
-            Real elem_xmin = domain.xmin + ix * elem_dx;
-            Real elem_ymin = domain.ymin + iy * elem_dy;
-
-            // Map to parameter space [0,1]²
-            Real u = std::clamp((x - elem_xmin) / elem_dx, 0.0, 1.0);
-            Real v = std::clamp((y - elem_ymin) / elem_dy, 0.0, 1.0);
-
-            // Use basis to evaluate (avoids coefficient ordering bugs)
-            return basis_.evaluate_scalar(c, u, v);
-        }
-
-        // Check if at root level
-        if (level.x == 0 && level.y == 0) {
-            break;
-        }
-
-        // Move to parent Morton and level
-        if (level.x > 0 && level.y > 0) {
-            morton = MortonUtil::parent_x(MortonUtil::parent_y(morton));
-            level.x--;
-            level.y--;
-        } else if (level.x > 0) {
-            morton = MortonUtil::parent_x(morton);
-            level.x--;
-        } else {
-            morton = MortonUtil::parent_y(morton);
-            level.y--;
-        }
-    }
-
-    return 0.0; // No stored solution found
-}
-
-void AdaptiveCGLinearBezierSmoother::compute_coarsening_metrics(Index elem, Real &mean_difference,
-                                                                Real &volume_change) const {
-    // Default to zero
-    mean_difference = 0.0;
-    volume_change = 0.0;
-
-    if (prev_solutions_.empty()) {
-        return; // First iteration, no previous solution
-    }
-
-    if (!smoother_ || !smoother_->is_solved()) {
-        return;
-    }
-
-    const QuadBounds &bounds = quadtree_->element_bounds(elem);
-    Real dx = bounds.xmax - bounds.xmin;
-    Real dy = bounds.ymax - bounds.ymin;
-    Real area = dx * dy;
-    int ngauss = config_.ngauss_error;
-
-    Real sum_abs_diff = 0.0; // For L1 norm
-
-    for (int j = 0; j < ngauss; ++j) {
-        for (int i = 0; i < ngauss; ++i) {
-            Real u = gauss_nodes_(i);
-            Real v = gauss_nodes_(j);
-            Real w = gauss_weights_(i) * gauss_weights_(j);
-
-            Real x = bounds.xmin + u * dx;
-            Real y = bounds.ymin + v * dy;
-
-            Real z_fine = smoother_->evaluate(x, y);
-            Real z_coarse = evaluate_prev_solution(x, y);
-
-            Real diff = z_fine - z_coarse;
-            sum_abs_diff += w * std::abs(diff);
-        }
-    }
-
-    // Mean difference: ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
-    // Gauss weights sum to 1 on [0,1]², so sum_abs_diff is already the mean
-    mean_difference = sum_abs_diff;
-
-    // Volume change: ∫∫|z_fine - z_coarse|dA [m³]
-    volume_change = sum_abs_diff * area;
+const BezierBasis2DBase &AdaptiveCGLinearBezierSmoother::get_basis_impl() const {
+    return smoother_->get_basis();
 }
 
 // =============================================================================

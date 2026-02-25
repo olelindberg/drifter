@@ -18,16 +18,13 @@
 #include "bathymetry/adaptive_cg_bezier_smoother_base.hpp"
 #include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
-#include "bathymetry/linear_bezier_basis_2d.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/geotiff_reader.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <functional>
-#include <map>
 #include <memory>
 #include <string>
-#include <tuple>
 #include <vector>
 
 namespace drifter {
@@ -273,13 +270,7 @@ private:
     std::vector<CGLinearIterationProfile> profiles_;
     CGLinearIterationProfile* current_profile_ = nullptr;
 
-    // Previous solutions keyed by (Morton code, level_x, level_y)
-    // Morton alone doesn't uniquely identify an element - same Morton can exist
-    // at different levels with different positions/sizes.
-    std::map<std::tuple<uint64_t, int, int>, VecX> prev_solutions_;
-
-    // Basis for evaluating previous solutions (avoids duplicate formula)
-    LinearBezierBasis2D basis_;
+    // prev_solutions_ inherited from base class
 
     // =========================================================================
     // Internal methods
@@ -322,19 +313,20 @@ private:
     /// @brief Print profiling report to stdout
     void print_profile_report() const;
 
-    /// @brief Compute coarsening error metrics
-    /// @param elem Element index
-    /// @param[out] mean_difference ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
-    /// @param[out] volume_change ∫∫|z_fine - z_coarse|dA [m³]
-    void compute_coarsening_metrics(Index elem, Real &mean_difference, Real &volume_change) const;
+    // Coarsening metrics methods inherited from base:
+    // - store_current_solution()
+    // - evaluate_prev_solution()
+    // - compute_coarsening_metrics()
 
-    /// @brief Store current solution coefficients keyed by Morton code
-    void store_current_solution();
+    // =========================================================================
+    // Base class virtual implementations
+    // =========================================================================
 
-    /// @brief Evaluate previous solution at a point using stored coefficients
-    /// @param x, y Physical coordinates
-    /// @return Previous solution depth at (x, y), or 0 if not found
-    Real evaluate_prev_solution(Real x, Real y) const;
+    VecX get_element_coefficients_impl(Index elem) const override {
+        return smoother_->element_coefficients(elem);
+    }
+
+    const BezierBasis2DBase &get_basis_impl() const override;
 };
 
 } // namespace drifter

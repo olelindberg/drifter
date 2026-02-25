@@ -1,4 +1,5 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
+#include "bathymetry/bezier_basis_2d_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
@@ -85,6 +86,10 @@ void AdaptiveCGCubicBezierSmoother::apply_bathymetry_to_smoother() {
     smoother_->set_bathymetry_data(bathy_func_);
 }
 
+const BezierBasis2DBase &AdaptiveCGCubicBezierSmoother::get_basis_impl() const {
+    return smoother_->get_basis();
+}
+
 // =============================================================================
 // Error estimation
 // =============================================================================
@@ -143,12 +148,12 @@ AdaptiveCGCubicBezierSmoother::estimate_element_error(Index elem) const {
     result.l2_error = compute_element_l2_error(elem);
     // Normalize by sqrt(area) to get average error magnitude
     result.normalized_error = result.l2_error / std::sqrt(area);
-    result.should_refine = (result.normalized_error > config_.error_threshold);
 
-    // Initialize coarsening metrics (requires previous solution tracking to compute properly)
-    // For now, use normalized_error as a proxy
-    result.mean_difference = result.normalized_error;
-    result.volume_change = result.normalized_error * area;
+    // Compute coarsening metrics (solution change from refinement)
+    compute_coarsening_metrics(elem, result.mean_difference, result.volume_change);
+
+    // Refinement decision based on selected metric
+    result.should_refine = (error_metric(result) > config_.error_threshold);
 
     return result;
 }
@@ -292,6 +297,8 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::adapt_once() {
         // Can't refine further due to level limit
         result.converged = true;
     } else {
+        // Store current solution before refinement for coarsening error computation
+        store_current_solution();
         refine_elements(valid_refine);
         result.converged = false;
     }
@@ -382,17 +389,36 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
                           return error_metric(a) > error_metric(b);
                       });
 
-            Index num_to_refine = static_cast<Index>(
-                std::ceil(config_.dorfler_theta * static_cast<Real>(errors.size())));
-            num_to_refine = std::max(Index(1), num_to_refine);
+            // Bootstrap: check if using coarsening metric with no previous solution
+            bool is_coarsening_metric =
+                (config_.error_metric_type == ErrorMetricType::MeanDifference ||
+                 config_.error_metric_type == ErrorMetricType::VolumeChange);
+            bool is_bootstrap = (is_coarsening_metric && prev_solutions_.empty());
 
-            for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size()); ++i) {
-                Index elem = errors[i].element;
-                QuadLevel level = quadtree_->element_level(elem);
-                // Skip elements at max level or entirely on land
-                if (level.max_level() < config_.max_refinement_level &&
-                    !is_element_on_land(elem)) {
-                    valid_refine.push_back(elem);
+            if (is_bootstrap) {
+                // Bootstrap: refine ALL elements to establish a baseline for comparison
+                for (Index e = 0; e < quadtree_->num_elements(); ++e) {
+                    QuadLevel level = quadtree_->element_level(e);
+                    if (level.max_level() < config_.max_refinement_level &&
+                        !is_element_on_land(e)) {
+                        valid_refine.push_back(e);
+                    }
+                }
+            } else {
+                // Normal Dorfler marking
+                Index num_to_refine = static_cast<Index>(
+                    std::ceil(config_.dorfler_theta * static_cast<Real>(errors.size())));
+                num_to_refine = std::max(Index(1), num_to_refine);
+
+                for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size());
+                     ++i) {
+                    Index elem = errors[i].element;
+                    QuadLevel level = quadtree_->element_level(elem);
+                    // Skip elements at max level or entirely on land
+                    if (level.max_level() < config_.max_refinement_level &&
+                        !is_element_on_land(elem)) {
+                        valid_refine.push_back(elem);
+                    }
                 }
             }
         }
@@ -440,6 +466,16 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
         bool error_converged = (max_err <= config_.error_threshold);
         bool max_elements_reached = (static_cast<int>(result.num_elements) >= config_.max_elements);
 
+        // Bootstrap: don't claim convergence on first iteration with coarsening
+        // metrics (since all coarsening metrics = 0 when no previous solution exists)
+        bool is_coarsening_metric =
+            (config_.error_metric_type == ErrorMetricType::MeanDifference ||
+             config_.error_metric_type == ErrorMetricType::VolumeChange);
+        bool is_bootstrap = (is_coarsening_metric && prev_solutions_.empty());
+        if (is_bootstrap) {
+            error_converged = false;
+        }
+
         if (error_converged) {
             result.converged = true;
             result.elements_refined = 0;
@@ -453,6 +489,8 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
             result.elements_refined = 0;
             result.convergence_reason = ConvergenceReason::MaxRefinementLevel;
         } else {
+            // Store current solution before refinement for coarsening error computation
+            store_current_solution();
             // Refine elements (timing happens inside refine_elements)
             refine_elements(valid_refine);
             result.elements_refined = static_cast<Index>(valid_refine.size());

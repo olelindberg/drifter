@@ -12,14 +12,17 @@
 #include "mesh/octree_adapter.hpp"
 #include "mesh/refine_mask.hpp"
 #include <functional>
+#include <map>
 #include <memory>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 namespace drifter {
 
 // Forward declarations
 class BathymetrySource;
+class BezierBasis2DBase;
 
 /// @brief Abstract base class for adaptive CG Bezier bathymetry smoothers
 ///
@@ -104,6 +107,11 @@ protected:
     /// Gauss-Legendre quadrature weights on [0, 1]
     VecX gauss_weights_;
 
+    /// Previous solutions keyed by (Morton code, level_x, level_y)
+    /// Morton alone doesn't uniquely identify an element - same Morton can exist
+    /// at different levels with different positions/sizes.
+    std::map<std::tuple<uint64_t, int, int>, VecX> prev_solutions_;
+
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes
     // =========================================================================
@@ -133,6 +141,35 @@ protected:
     /// @brief Apply bathymetry data to current smoother
     /// @throws std::runtime_error if smoother not initialized or no bathymetry data
     virtual void apply_bathymetry_to_smoother() = 0;
+
+    /// @brief Get element coefficients from the current smoother
+    /// @param elem Element index
+    /// @return Vector of control point values for this element
+    virtual VecX get_element_coefficients_impl(Index elem) const = 0;
+
+    /// @brief Get reference to the basis object for evaluating stored solutions
+    /// @return Reference to BezierBasis2DBase (LinearBezierBasis2D or CubicBezierBasis2D)
+    virtual const BezierBasis2DBase &get_basis_impl() const = 0;
+
+    // =========================================================================
+    // Coarsening metrics - implemented in base
+    // =========================================================================
+
+    /// @brief Store current solution coefficients keyed by Morton code
+    /// Must be called before refinement to enable coarsening metrics computation
+    void store_current_solution();
+
+    /// @brief Evaluate previous solution at a point using stored coefficients
+    /// @param x, y Physical coordinates
+    /// @return Previous solution depth at (x, y), or 0 if not found
+    Real evaluate_prev_solution(Real x, Real y) const;
+
+    /// @brief Compute coarsening error metrics for an element
+    /// @param elem Element index
+    /// @param[out] mean_difference mean |z_fine - z_coarse| over element [m]
+    /// @param[out] volume_change integral |z_fine - z_coarse| dA [m^3]
+    void compute_coarsening_metrics(Index elem, Real &mean_difference,
+                                    Real &volume_change) const;
 };
 
 } // namespace drifter

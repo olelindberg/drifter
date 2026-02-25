@@ -266,6 +266,12 @@ protected:
   void rebuild_smoother() override;
   void apply_bathymetry_to_smoother() override;
 
+  VecX get_element_coefficients_impl(Index elem) const override {
+    return smoother_->element_coefficients(elem);
+  }
+
+  const BezierBasis2DBase &get_basis_impl() const override;
+
   // =========================================================================
   // Profiling
   // =========================================================================
