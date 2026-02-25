@@ -78,8 +78,10 @@ void CGCubicBezierBathymetrySmoother::solve() {
 
     if (total_constraints == 0) {
         solve_unconstrained();
-    } else {
+    } else if (config_.use_condensation) {
         solve_with_constraints();
+    } else {
+        solve_with_constraints_full_kkt();
     }
 
     solved_ = true;
@@ -289,11 +291,163 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints() {
             if (projector.info() == Eigen::Success) {
                 VecX correction = A_full.transpose() * lambda;
                 solution_ -= correction;
+
+                // Re-run back-substitution to restore hanging node constraints
+                // (projection may have modified slave DOFs directly)
+                back_substitute_slaves(solution_, constraints);
             }
         }
     }
 }
 
+void CGCubicBezierBathymetrySmoother::solve_with_constraints_full_kkt() {
+    // Original implementation: full KKT system with all constraints
+    // (hanging node + edge constraints) without condensation
+
+    Index num_dofs = dof_manager_->num_global_dofs();
+    Index num_hanging_constraints = dof_manager_->num_constraints();
+    Index num_edge_constraints = dof_manager_->num_edge_derivative_constraints();
+    Index num_constraints = num_hanging_constraints + num_edge_constraints;
+
+    SpMat Q;
+    VecX c;
+    {
+        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->matrix_build_ms : nullptr);
+
+        Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
+        for (Index i = 0; i < num_dofs; ++i) {
+            Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
+        }
+
+        c = -config_.lambda * BtWd_global_;
+    }
+
+    SpMat A;
+    {
+        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->constraint_build_ms : nullptr);
+
+        std::vector<Eigen::Triplet<Real>> A_triplets;
+        A_triplets.reserve(num_constraints * 20);
+
+        Index row = 0;
+
+        // Hanging node constraints
+        for (const auto &hc : dof_manager_->constraints()) {
+            A_triplets.emplace_back(row, hc.slave_dof, 1.0);
+            for (size_t i = 0; i < hc.master_dofs.size(); ++i) {
+                A_triplets.emplace_back(row, hc.master_dofs[i], -hc.weights[i]);
+            }
+            ++row;
+        }
+
+        // C¹ edge derivative constraints
+        for (const auto &ec : dof_manager_->edge_derivative_constraints()) {
+            const auto &global_dofs1 = dof_manager_->element_dofs(ec.elem1);
+            const auto &global_dofs2 = dof_manager_->element_dofs(ec.elem2);
+
+            for (int k = 0; k < CubicBezierBasis2D::NDOF; ++k) {
+                Real coeff = ec.coeffs1(k) / ec.scale1;
+                if (std::abs(coeff) > 1e-14) {
+                    A_triplets.emplace_back(row, global_dofs1[k], coeff);
+                }
+            }
+
+            for (int k = 0; k < CubicBezierBasis2D::NDOF; ++k) {
+                Real coeff = ec.coeffs2(k) / ec.scale2;
+                if (std::abs(coeff) > 1e-14) {
+                    A_triplets.emplace_back(row, global_dofs2[k], -coeff);
+                }
+            }
+
+            ++row;
+        }
+
+        A.resize(num_constraints, num_dofs);
+        A.setFromTriplets(A_triplets.begin(), A_triplets.end());
+    }
+
+    SpMat KKT;
+    VecX rhs;
+    {
+        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->kkt_assembly_ms : nullptr);
+
+        // Build KKT system
+        Index kkt_size = num_dofs + num_constraints;
+        std::vector<Eigen::Triplet<Real>> triplets;
+        triplets.reserve(Q.nonZeros() + 2 * A.nonZeros());
+
+        // Copy Q block
+        for (int k = 0; k < Q.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(Q, k); it; ++it) {
+                triplets.emplace_back(it.row(), it.col(), it.value());
+            }
+        }
+
+        // Single pass over A: add both A (lower-left) and A^T (upper-right) blocks
+        for (int k = 0; k < A.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(A, k); it; ++it) {
+                triplets.emplace_back(num_dofs + it.row(), it.col(), it.value());
+                triplets.emplace_back(it.col(), num_dofs + it.row(), it.value());
+            }
+        }
+
+        KKT.resize(kkt_size, kkt_size);
+        KKT.setFromTriplets(triplets.begin(), triplets.end());
+
+        Real constraint_reg = 1e-10;
+        for (Index i = num_dofs; i < kkt_size; ++i) {
+            KKT.coeffRef(i, i) -= constraint_reg;
+        }
+
+        rhs.resize(kkt_size);
+        rhs.head(num_dofs) = -c;
+        rhs.tail(num_constraints).setZero();
+    }
+
+    Eigen::SparseLU<SpMat> solver;
+    {
+        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->sparse_lu_compute_ms : nullptr);
+        solver.compute(KKT);
+    }
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error("CGCubicBezierBathymetrySmoother: KKT "
+                                 "SparseLU decomposition failed");
+    }
+
+    VecX sol;
+    {
+        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->sparse_lu_solve_ms : nullptr);
+        sol = solver.solve(rhs);
+    }
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error("CGCubicBezierBathymetrySmoother: KKT SparseLU solve failed");
+    }
+
+    solution_ = sol.head(num_dofs);
+
+    // Project onto constraint manifold (for numerical accuracy)
+    if (num_constraints > 0) {
+        OptionalScopedTimer t(solve_profile_ ? &solve_profile_->constraint_projection_ms : nullptr);
+
+        VecX Ax = A * solution_;
+        SpMat AAt = A * A.transpose();
+
+        for (Index i = 0; i < num_constraints; ++i) {
+            AAt.coeffRef(i, i) += 1e-14;
+        }
+
+        Eigen::SparseLU<SpMat> projector;
+        projector.compute(AAt);
+
+        if (projector.info() == Eigen::Success) {
+            VecX lambda = projector.solve(Ax);
+            if (projector.info() == Eigen::Success) {
+                VecX correction = A.transpose() * lambda;
+                solution_ -= correction;
+            }
+        }
+    }
+}
 
 // =============================================================================
 // Output

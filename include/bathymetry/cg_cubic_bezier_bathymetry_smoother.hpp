@@ -61,6 +61,10 @@ struct CGCubicBezierSmootherConfig {
 
     /// Number of Gauss points per edge for C¹ edge constraints
     int edge_ngauss = 4;
+
+    /// Use constraint condensation for hanging nodes (smaller KKT system)
+    /// If false, uses original full KKT system with all constraints
+    bool use_condensation = true;
 };
 
 /// @brief CG cubic Bezier bathymetry smoother with C¹ continuity
@@ -137,6 +141,10 @@ public:
 
     // element_coefficients() implemented in base class
 
+    /// @brief Get reference to the Bezier basis
+    /// @return Reference to the CubicBezierBasis2D
+    const BezierBasis2DBase &get_basis() const { return *basis_; }
+
 protected:
     // =========================================================================
     // CGBezierSmootherBase virtual method implementations
@@ -166,6 +174,7 @@ private:
 
     void init_components();
     void solve_with_constraints();
+    void solve_with_constraints_full_kkt();  // Original implementation for comparison
 };
 
 } // namespace drifter

@@ -69,7 +69,8 @@ public:
     }
 
     /// Build C¹ edge derivative constraints
-    /// Enforces: z_n matching at Gauss points along conforming edges
+    /// Enforces: z_n matching at Gauss points along shared edges
+    /// (both conforming and non-conforming 2:1 interfaces)
     /// @param ngauss Number of Gauss points per edge (default: 4)
     void build_edge_derivative_constraints(int ngauss = 4);
 
@@ -104,6 +105,7 @@ private:
 
     // Constraint handling
     void build_hanging_node_constraints();
+    void build_nonconforming_edge_derivative_constraints(const std::vector<Real> &gauss_pts);
 
     // Helper
     Vec2 get_dof_position(Index elem, int local_dof) const;

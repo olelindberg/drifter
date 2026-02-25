@@ -427,6 +427,69 @@ void CGCubicBezierDofManager::build_edge_derivative_constraints(int ngauss) {
             edge_derivative_constraints_.push_back(c);
         }
     }
+
+    // Part 2: Non-conforming edge constraints
+    build_nonconforming_edge_derivative_constraints(gauss_pts);
+}
+
+void CGCubicBezierDofManager::build_nonconforming_edge_derivative_constraints(
+    const std::vector<Real> &gauss_pts) {
+
+    for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
+        for (int edge = 0; edge < 4; ++edge) {
+            EdgeNeighborInfo info = mesh_.get_neighbor(elem, edge);
+
+            if (info.type != EdgeNeighborInfo::Type::FineToCoarse) {
+                continue;
+            }
+
+            Index fine_elem = elem;
+            int fine_edge = edge;
+            Index coarse_elem = info.neighbor_elements[0];
+            int coarse_edge = info.neighbor_edges[0];
+
+            // Get bounds for scaling
+            const auto &fine_bounds = mesh_.element_bounds(fine_elem);
+            const auto &coarse_bounds = mesh_.element_bounds(coarse_elem);
+
+            Real dx_fine = fine_bounds.xmax - fine_bounds.xmin;
+            Real dy_fine = fine_bounds.ymax - fine_bounds.ymin;
+            Real dx_coarse = coarse_bounds.xmax - coarse_bounds.xmin;
+            Real dy_coarse = coarse_bounds.ymax - coarse_bounds.ymin;
+
+            // Parameter mapping: fine edge maps to [t_start, t_start + 0.5] of coarse
+            Real t_coarse_start = (info.subedge_index == 0) ? 0.0 : 0.5;
+            Real t_coarse_scale = 0.5;
+
+            // Derivative direction based on edge orientation
+            bool is_horizontal = (fine_edge == 2 || fine_edge == 3);
+            int nu = is_horizontal ? 0 : 1;
+            int nv = is_horizontal ? 1 : 0;
+
+            for (const Real &t_fine : gauss_pts) {
+                Real t_coarse = t_coarse_start + t_fine * t_coarse_scale;
+
+                Vec2 param_fine = get_edge_param_cubic(fine_edge, t_fine);
+                Vec2 param_coarse = get_edge_param_cubic(coarse_edge, t_coarse);
+
+                CubicEdgeDerivativeConstraint c;
+                c.elem1 = fine_elem;
+                c.elem2 = coarse_elem;
+                c.edge1 = fine_edge;
+                c.edge2 = coarse_edge;
+                c.t = t_fine;
+                c.deriv_order = 1;
+
+                c.coeffs1 = basis_.evaluate_derivative(param_fine(0), param_fine(1), nu, nv);
+                c.coeffs2 = basis_.evaluate_derivative(param_coarse(0), param_coarse(1), nu, nv);
+
+                c.scale1 = std::pow(dx_fine, nu) * std::pow(dy_fine, nv);
+                c.scale2 = std::pow(dx_coarse, nu) * std::pow(dy_coarse, nv);
+
+                edge_derivative_constraints_.push_back(c);
+            }
+        }
+    }
 }
 
 } // namespace drifter

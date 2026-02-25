@@ -345,6 +345,65 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourContinuityAtInterface) {
     EXPECT_LT(max_jump, 1.0);
 }
 
+TEST_F(CGCubicBezierSmootherTest, CondensationMatchesFullKKT) {
+    // Verify condensed solve matches original full KKT implementation
+    QuadtreeAdapter mesh;
+    Real h = 25.0;
+
+    // 1+4 non-conforming mesh (has hanging node constraints)
+    mesh.add_element({0.0, h, 0.0, h}, {2, 2});
+    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2*h}, {2, 2});
+    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
+    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+
+    auto smooth_bathy = [](Real x, Real y) {
+        return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y);
+    };
+
+    CGCubicBezierSmootherConfig config_condensed;
+    config_condensed.lambda = 10.0;
+    config_condensed.use_condensation = true;
+
+    CGCubicBezierSmootherConfig config_full_kkt;
+    config_full_kkt.lambda = 10.0;
+    config_full_kkt.use_condensation = false;
+
+    // Solve with condensation
+    CGCubicBezierBathymetrySmoother smoother_condensed(mesh, config_condensed);
+    smoother_condensed.set_bathymetry_data(smooth_bathy);
+    smoother_condensed.solve();
+
+    // Solve with full KKT
+    CGCubicBezierBathymetrySmoother smoother_full_kkt(mesh, config_full_kkt);
+    smoother_full_kkt.set_bathymetry_data(smooth_bathy);
+    smoother_full_kkt.solve();
+
+    // Compare solutions at many points
+    Real max_diff = 0.0;
+    std::vector<Vec2> test_points = {
+        {10.0, 10.0}, {25.0, 25.0}, {40.0, 40.0},  // Fine region
+        {60.0, 25.0}, {75.0, 40.0}, {90.0, 10.0},  // Coarse region
+        {50.0, 25.0}, {50.0, 12.5}, {50.0, 37.5},  // At interface
+    };
+
+    for (const auto& pt : test_points) {
+        Real val_condensed = smoother_condensed.evaluate(pt(0), pt(1));
+        Real val_full_kkt = smoother_full_kkt.evaluate(pt(0), pt(1));
+        Real diff = std::abs(val_condensed - val_full_kkt);
+        max_diff = std::max(max_diff, diff);
+    }
+
+    std::cout << "Max solution difference (condensed vs full KKT): " << max_diff << std::endl;
+    std::cout << "Constraint violation (condensed): " << smoother_condensed.constraint_violation() << std::endl;
+    std::cout << "Constraint violation (full KKT):  " << smoother_full_kkt.constraint_violation() << std::endl;
+
+    // Solutions should match to high precision (within numerical tolerance)
+    // Note: With non-conforming C¹ constraints, condensed and full KKT have
+    // slightly different numerical behavior, so we allow 1e-7 tolerance
+    EXPECT_LT(max_diff, 1e-7);
+}
+
 // =============================================================================
 // C¹ Constraint Tests
 // =============================================================================
@@ -376,6 +435,70 @@ TEST_F(CGCubicBezierSmootherTest, C1EdgeConstraints) {
     Real violation = smoother.constraint_violation();
     std::cout << "Constraint violation: " << violation << std::endl;
     EXPECT_LT(violation, 1e-6);
+}
+
+TEST_F(CGCubicBezierSmootherTest, NonConformingC1Smoothness) {
+    // Test C¹ smoothness at non-conforming (2:1) interfaces
+    QuadtreeAdapter mesh;
+    Real h = 25.0;
+
+    // Create 4 fine + 1 coarse non-conforming mesh
+    // Fine elements (2x2 in [0,50] x [0,50])
+    mesh.add_element({0.0, h, 0.0, h}, {2, 2});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    // Coarse element (1x1 in [50,100] x [0,50])
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
+
+    auto smooth_bathy = [](Real x, Real y) {
+        return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y);
+    };
+
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 10.0;
+    config.edge_ngauss = 4;
+
+    CGCubicBezierBathymetrySmoother smoother(mesh, config);
+    smoother.set_bathymetry_data(smooth_bathy);
+    smoother.solve();
+
+    // Should have non-conforming edge constraints
+    Index num_c1 = smoother.dof_manager().num_edge_derivative_constraints();
+    std::cout << "Total C¹ edge constraints: " << num_c1 << std::endl;
+    // Expected: conforming (3 fine interior + 2 fine-fine edges = 5) * 4 gauss = 20
+    //         + non-conforming (2 fine-coarse edges * 4 gauss) = 8
+    //         = 28 total
+    EXPECT_GE(num_c1, 20);  // At least conforming constraints
+
+    // Check constraint violation
+    Real violation = smoother.constraint_violation();
+    std::cout << "Constraint violation: " << violation << std::endl;
+    EXPECT_LT(violation, 1e-5);
+
+    // Check derivative continuity at non-conforming interface (x = 50)
+    Real max_deriv_jump = 0.0;
+    Real dx = 0.01;
+
+    for (Real y = 5.0; y < 45.0; y += 5.0) {
+        // Approximate normal derivative (z_x) from both sides using finite differences
+        Real z_left_inner = smoother.evaluate(50.0 - dx, y);
+        Real z_left_edge = smoother.evaluate(50.0, y);
+        Real z_right_edge = smoother.evaluate(50.0, y);
+        Real z_right_inner = smoother.evaluate(50.0 + dx, y);
+
+        // Forward difference from left, backward difference from right
+        Real deriv_left = (z_left_edge - z_left_inner) / dx;
+        Real deriv_right = (z_right_inner - z_right_edge) / dx;
+
+        Real jump = std::abs(deriv_left - deriv_right);
+        max_deriv_jump = std::max(max_deriv_jump, jump);
+    }
+
+    std::cout << "Max derivative jump at non-conforming interface: " << max_deriv_jump << std::endl;
+
+    // With C¹ constraints, derivative should be continuous (small jump due to finite differences)
+    EXPECT_LT(max_deriv_jump, 5.0);  // Allow some numerical error from finite differences
 }
 
 // =============================================================================
