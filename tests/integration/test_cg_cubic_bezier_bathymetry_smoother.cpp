@@ -1334,3 +1334,393 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     std::ifstream check(output_path);
     EXPECT_TRUE(check.good()) << "Output file was not created";
 }
+
+// =============================================================================
+// CG Tolerance Sweep: Iterations vs Tolerance
+// =============================================================================
+
+TEST_F(CGCubicBezierSmootherTest, DISABLED_CGToleranceSweep) {
+    // Test how CG iterations scale with tolerance
+    QuadtreeAdapter mesh;
+    mesh.build_uniform(0.0, 100.0, 0.0, 100.0, 32, 32);
+
+    auto bathy = [](Real x, Real y) {
+        return 100.0 + 20.0 * std::sin(0.05 * x) * std::cos(0.05 * y);
+    };
+
+    std::cout << "\nTolerance vs CG iterations (32x32 uniform mesh):\n";
+    std::cout << "Tolerance    | Iterations | Time (ms)\n";
+    std::cout << "-------------|------------|----------\n";
+
+    for (Real tol : {1e-4, 1e-6, 1e-8, 1e-10, 1e-12, 1e-14}) {
+        CGCubicBezierSmootherConfig config;
+        config.lambda = 10.0;
+        config.use_iterative_solver = true;
+        config.schur_cg_tolerance = tol;
+
+        CGCubicSolveProfile profile;
+        CGCubicBezierBathymetrySmoother smoother(mesh, config);
+        smoother.set_solve_profile(&profile);
+        smoother.set_bathymetry_data(bathy);
+
+        auto start = std::chrono::high_resolution_clock::now();
+        smoother.solve();
+        auto end = std::chrono::high_resolution_clock::now();
+        double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+        std::cout << std::scientific << std::setprecision(0) << tol
+                  << "    | " << std::setw(10) << profile.outer_cg_iterations
+                  << " | " << std::fixed << std::setprecision(1) << time_ms << "\n";
+    }
+}
+
+// =============================================================================
+// Solver Performance Benchmark: Direct vs Iterative
+// =============================================================================
+
+TEST_F(CGCubicBezierSmootherTest, DISABLED_SolverPerformanceBenchmark) {
+    // Benchmark comparing direct SparseLU vs iterative Schur complement CG solver
+
+    struct BenchmarkResult {
+        std::string mesh_type;
+        int mesh_param;           // Grid size or element count
+        Index num_elements;
+        Index num_dofs;
+        Index num_edge_constraints;
+
+        // Direct solver timings
+        double direct_total_ms;
+        double direct_matrix_build_ms;
+        double direct_constraint_build_ms;
+        double direct_kkt_assembly_ms;
+        double direct_lu_compute_ms;
+        double direct_lu_solve_ms;
+        double direct_projection_ms;
+
+        // Iterative solver timings
+        double iterative_total_ms;
+        double iterative_matrix_build_ms;
+        double iterative_constraint_build_ms;
+        double iterative_q_factor_ms;
+        double iterative_cg_total_ms;
+        int iterative_cg_iterations;
+        int iterative_inner_solves;
+        double iterative_projection_ms;
+
+        // Quality
+        Real solution_max_diff;
+        Real direct_constraint_violation;
+        Real iterative_constraint_violation;
+
+        double speedup() const {
+            return (iterative_total_ms > 0) ? direct_total_ms / iterative_total_ms : 0.0;
+        }
+    };
+
+    // Bathymetry function
+    auto bathy_func = [](Real x, Real y) {
+        return 100.0 + 20.0 * std::sin(0.05 * x) * std::cos(0.05 * y) +
+               10.0 * std::cos(0.08 * x) * std::sin(0.08 * y);
+    };
+
+    // Helper to run benchmark for a single mesh configuration
+    auto run_benchmark = [&](QuadtreeAdapter& mesh, const std::string& mesh_type,
+                             int mesh_param, Real lambda) -> BenchmarkResult {
+        BenchmarkResult result;
+        result.mesh_type = mesh_type;
+        result.mesh_param = mesh_param;
+        result.num_elements = mesh.num_elements();
+
+        // === Direct Solver ===
+        CGCubicBezierSmootherConfig config_direct;
+        config_direct.lambda = lambda;
+        config_direct.edge_ngauss = 4;
+        config_direct.use_iterative_solver = false;
+
+        CGCubicSolveProfile profile_direct;
+        CGCubicBezierBathymetrySmoother smoother_direct(mesh, config_direct);
+        smoother_direct.set_solve_profile(&profile_direct);
+        smoother_direct.set_bathymetry_data(bathy_func);
+
+        result.num_dofs = smoother_direct.num_global_dofs();
+        result.num_edge_constraints = smoother_direct.num_constraints();
+
+        auto start_direct = std::chrono::high_resolution_clock::now();
+        smoother_direct.solve();
+        auto end_direct = std::chrono::high_resolution_clock::now();
+
+        result.direct_total_ms = std::chrono::duration<double, std::milli>(end_direct - start_direct).count();
+        result.direct_matrix_build_ms = profile_direct.matrix_build_ms;
+        result.direct_constraint_build_ms = profile_direct.constraint_build_ms;
+        result.direct_kkt_assembly_ms = profile_direct.kkt_assembly_ms;
+        result.direct_lu_compute_ms = profile_direct.sparse_lu_compute_ms;
+        result.direct_lu_solve_ms = profile_direct.sparse_lu_solve_ms;
+        result.direct_projection_ms = profile_direct.constraint_projection_ms;
+        result.direct_constraint_violation = smoother_direct.constraint_violation();
+
+        // === Iterative Solver ===
+        CGCubicBezierSmootherConfig config_iter;
+        config_iter.lambda = lambda;
+        config_iter.edge_ngauss = 4;
+        config_iter.use_iterative_solver = true;
+        config_iter.schur_cg_tolerance = 1e-10;
+
+        CGCubicSolveProfile profile_iter;
+        CGCubicBezierBathymetrySmoother smoother_iter(mesh, config_iter);
+        smoother_iter.set_solve_profile(&profile_iter);
+        smoother_iter.set_bathymetry_data(bathy_func);
+
+        auto start_iter = std::chrono::high_resolution_clock::now();
+        smoother_iter.solve();
+        auto end_iter = std::chrono::high_resolution_clock::now();
+
+        result.iterative_total_ms = std::chrono::duration<double, std::milli>(end_iter - start_iter).count();
+        result.iterative_matrix_build_ms = profile_iter.matrix_build_ms;
+        result.iterative_constraint_build_ms = profile_iter.constraint_build_ms;
+        result.iterative_q_factor_ms = profile_iter.inner_cg_setup_ms;
+        result.iterative_cg_total_ms = profile_iter.outer_cg_total_ms;
+        result.iterative_cg_iterations = profile_iter.outer_cg_iterations;
+        result.iterative_inner_solves = profile_iter.inner_cg_total_calls;
+        result.iterative_projection_ms = profile_iter.constraint_projection_ms;
+        result.iterative_constraint_violation = smoother_iter.constraint_violation();
+
+        // === Compare solutions ===
+        Real max_diff = 0.0;
+        for (Index elem = 0; elem < mesh.num_elements(); ++elem) {
+            auto bounds = mesh.element_bounds(elem);
+            Real cx = (bounds.xmin + bounds.xmax) / 2.0;
+            Real cy = (bounds.ymin + bounds.ymax) / 2.0;
+            Real val_direct = smoother_direct.evaluate(cx, cy);
+            Real val_iter = smoother_iter.evaluate(cx, cy);
+            max_diff = std::max(max_diff, std::abs(val_direct - val_iter));
+        }
+        result.solution_max_diff = max_diff;
+
+        return result;
+    };
+
+    std::vector<BenchmarkResult> results;
+    Real lambda = 10.0;
+
+    // === Scenario 1: Uniform conforming meshes ===
+    std::cout << "\n=== Uniform Conforming Meshes ===\n";
+    std::vector<int> uniform_sizes = {4, 8, 16, 24, 32, 48};
+
+    for (int n : uniform_sizes) {
+        QuadtreeAdapter mesh;
+        mesh.build_uniform(0.0, 100.0, 0.0, 100.0, n, n);
+
+        auto result = run_benchmark(mesh, "uniform", n, lambda);
+        results.push_back(result);
+
+        std::cout << std::fixed << std::setprecision(1);
+        std::cout << n << "x" << n << ": direct=" << result.direct_total_ms
+                  << "ms, iter=" << result.iterative_total_ms
+                  << "ms, speedup=" << std::setprecision(2) << result.speedup()
+                  << "x, CG iters=" << result.iterative_cg_iterations
+                  << ", max_diff=" << std::scientific << std::setprecision(2)
+                  << result.solution_max_diff << "\n";
+    }
+
+    // === Scenario 2: Non-conforming meshes (2:1 interfaces) ===
+    std::cout << "\n=== Non-conforming Meshes (2:1 interfaces) ===\n";
+
+    // 1+4 configuration: 4 fine elements + 1 coarse
+    {
+        QuadtreeAdapter mesh;
+        Real h = 25.0;
+        mesh.add_element({0.0, h, 0.0, h}, {2, 2});
+        mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
+        mesh.add_element({0.0, h, h, 2*h}, {2, 2});
+        mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
+        mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+
+        auto result = run_benchmark(mesh, "1+4", 5, lambda);
+        results.push_back(result);
+
+        std::cout << "1+4 mesh (5 elem): direct=" << std::fixed << std::setprecision(1)
+                  << result.direct_total_ms << "ms, iter=" << result.iterative_total_ms
+                  << "ms, speedup=" << std::setprecision(2) << result.speedup()
+                  << "x, CG=" << result.iterative_cg_iterations << "\n";
+    }
+
+    // Graded mesh: multiple refinement levels
+    {
+        QuadtreeAdapter mesh;
+        // Base coarse elements
+        mesh.add_element({0.0, 50.0, 0.0, 50.0}, {1, 1});
+        mesh.add_element({50.0, 100.0, 0.0, 50.0}, {1, 1});
+        mesh.add_element({0.0, 50.0, 50.0, 100.0}, {1, 1});
+        // Fine region in upper-right
+        mesh.add_element({50.0, 75.0, 50.0, 75.0}, {2, 2});
+        mesh.add_element({75.0, 100.0, 50.0, 75.0}, {2, 2});
+        mesh.add_element({50.0, 75.0, 75.0, 100.0}, {2, 2});
+        mesh.add_element({75.0, 100.0, 75.0, 100.0}, {2, 2});
+
+        auto result = run_benchmark(mesh, "graded", 7, lambda);
+        results.push_back(result);
+
+        std::cout << "Graded mesh (7 elem): direct=" << std::fixed << std::setprecision(1)
+                  << result.direct_total_ms << "ms, iter=" << result.iterative_total_ms
+                  << "ms, speedup=" << std::setprecision(2) << result.speedup()
+                  << "x, CG=" << result.iterative_cg_iterations << "\n";
+    }
+
+    // Larger non-conforming: 16 fine + 12 medium + 3 coarse = 31 elements
+    {
+        QuadtreeAdapter mesh;
+        Real h = 12.5;  // Fine element size
+        // 4x4 fine region (0-50, 0-50)
+        for (int j = 0; j < 4; ++j) {
+            for (int i = 0; i < 4; ++i) {
+                mesh.add_element({i*h, (i+1)*h, j*h, (j+1)*h}, {3, 3});
+            }
+        }
+        // Medium elements (50-100, 0-50)
+        Real m = 25.0;  // Medium size
+        for (int j = 0; j < 2; ++j) {
+            for (int i = 0; i < 2; ++i) {
+                mesh.add_element({50.0 + i*m, 50.0 + (i+1)*m, j*m, (j+1)*m}, {2, 2});
+            }
+        }
+        // Medium elements (0-50, 50-100)
+        for (int j = 0; j < 2; ++j) {
+            for (int i = 0; i < 2; ++i) {
+                mesh.add_element({i*m, (i+1)*m, 50.0 + j*m, 50.0 + (j+1)*m}, {2, 2});
+            }
+        }
+        // Medium elements (50-100, 50-100)
+        for (int j = 0; j < 2; ++j) {
+            for (int i = 0; i < 2; ++i) {
+                mesh.add_element({50.0 + i*m, 50.0 + (i+1)*m, 50.0 + j*m, 50.0 + (j+1)*m}, {2, 2});
+            }
+        }
+
+        auto result = run_benchmark(mesh, "multi-level", static_cast<int>(mesh.num_elements()), lambda);
+        results.push_back(result);
+
+        std::cout << "Multi-level (" << mesh.num_elements() << " elem): direct="
+                  << std::fixed << std::setprecision(1) << result.direct_total_ms
+                  << "ms, iter=" << result.iterative_total_ms
+                  << "ms, speedup=" << std::setprecision(2) << result.speedup()
+                  << "x, CG=" << result.iterative_cg_iterations << "\n";
+    }
+
+    // === Write markdown report ===
+    std::string output_path = "/tmp/solver_performance.md";
+    std::ofstream ofs(output_path);
+
+    ofs << "# CG Cubic Bezier Solver Performance: Direct vs Iterative\n\n";
+    ofs << "Benchmark comparing SparseLU (direct) vs Schur complement CG (iterative) solvers.\n\n";
+    ofs << "- Lambda: " << lambda << "\n";
+    ofs << "- Edge Gauss points: 4\n";
+    ofs << "- Iterative tolerance: 1e-10\n\n";
+
+    // Main results table
+    ofs << "## Summary Results\n\n";
+    ofs << "| Mesh | Elements | DOFs | Edge Cstr | Direct (ms) | Iterative (ms) | Speedup | CG Iters | Max Diff |\n";
+    ofs << "|------|----------|------|-----------|-------------|----------------|---------|----------|----------|\n";
+
+    for (const auto& r : results) {
+        ofs << "| " << r.mesh_type << " " << r.mesh_param
+            << " | " << r.num_elements
+            << " | " << r.num_dofs
+            << " | " << r.num_edge_constraints
+            << " | " << std::fixed << std::setprecision(1) << r.direct_total_ms
+            << " | " << r.iterative_total_ms
+            << " | " << std::setprecision(2) << r.speedup() << "x"
+            << " | " << r.iterative_cg_iterations
+            << " | " << std::scientific << std::setprecision(1) << r.solution_max_diff
+            << " |\n";
+    }
+
+    // Detailed breakdown: Direct solver
+    ofs << "\n## Direct Solver Time Breakdown (ms)\n\n";
+    ofs << "| Mesh | Matrix | Constraint | KKT Asm | LU Compute | LU Solve | Projection |\n";
+    ofs << "|------|--------|------------|---------|------------|----------|------------|\n";
+
+    for (const auto& r : results) {
+        ofs << "| " << r.mesh_type << " " << r.mesh_param
+            << " | " << std::fixed << std::setprecision(2) << r.direct_matrix_build_ms
+            << " | " << r.direct_constraint_build_ms
+            << " | " << r.direct_kkt_assembly_ms
+            << " | " << r.direct_lu_compute_ms
+            << " | " << r.direct_lu_solve_ms
+            << " | " << r.direct_projection_ms
+            << " |\n";
+    }
+
+    // Detailed breakdown: Iterative solver
+    ofs << "\n## Iterative Solver Time Breakdown (ms)\n\n";
+    ofs << "| Mesh | Matrix | Constraint | Q Factor | CG Loop | Inner Solves | Projection |\n";
+    ofs << "|------|--------|------------|----------|---------|--------------|------------|\n";
+
+    for (const auto& r : results) {
+        ofs << "| " << r.mesh_type << " " << r.mesh_param
+            << " | " << std::fixed << std::setprecision(2) << r.iterative_matrix_build_ms
+            << " | " << r.iterative_constraint_build_ms
+            << " | " << r.iterative_q_factor_ms
+            << " | " << r.iterative_cg_total_ms
+            << " | " << r.iterative_inner_solves
+            << " | " << r.iterative_projection_ms
+            << " |\n";
+    }
+
+    // Constraint violations
+    ofs << "\n## Constraint Violations\n\n";
+    ofs << "| Mesh | Direct Violation | Iterative Violation |\n";
+    ofs << "|------|------------------|---------------------|\n";
+
+    for (const auto& r : results) {
+        ofs << "| " << r.mesh_type << " " << r.mesh_param
+            << " | " << std::scientific << std::setprecision(2) << r.direct_constraint_violation
+            << " | " << r.iterative_constraint_violation
+            << " |\n";
+    }
+
+    // Analysis
+    ofs << "\n## Analysis\n\n";
+
+    // Find crossover point
+    Real crossover_dofs = 0;
+    for (size_t i = 1; i < results.size(); ++i) {
+        if (results[i].mesh_type == "uniform" && results[i].speedup() > 1.0 &&
+            results[i-1].mesh_type == "uniform" && results[i-1].speedup() <= 1.0) {
+            crossover_dofs = static_cast<Real>(results[i-1].num_dofs + results[i].num_dofs) / 2.0;
+        }
+    }
+
+    if (crossover_dofs > 0) {
+        ofs << "1. **Crossover point**: Iterative becomes faster around " << static_cast<int>(crossover_dofs) << " DOFs\n";
+    }
+
+    // Find max speedup
+    double max_speedup = 0;
+    std::string max_speedup_mesh;
+    for (const auto& r : results) {
+        if (r.speedup() > max_speedup) {
+            max_speedup = r.speedup();
+            max_speedup_mesh = r.mesh_type + " " + std::to_string(r.mesh_param);
+        }
+    }
+    ofs << "2. **Maximum speedup**: " << std::fixed << std::setprecision(2) << max_speedup
+        << "x on " << max_speedup_mesh << "\n";
+
+    // Accuracy check
+    Real max_diff_overall = 0;
+    for (const auto& r : results) {
+        max_diff_overall = std::max(max_diff_overall, r.solution_max_diff);
+    }
+    ofs << "3. **Solution accuracy**: Maximum difference between solvers: "
+        << std::scientific << std::setprecision(2) << max_diff_overall << "\n";
+
+    ofs.close();
+
+    std::cout << "\n=== Report written to: " << output_path << " ===\n";
+
+    // Verify solutions match
+    for (const auto& r : results) {
+        EXPECT_LT(r.solution_max_diff, 1e-5)
+            << "Solution mismatch for " << r.mesh_type << " " << r.mesh_param;
+    }
+}
