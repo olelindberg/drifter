@@ -32,8 +32,8 @@ protected:
     }
 
     QuadtreeAdapter create_quadtree(int nx, int ny,
-                                     Real xmin = 0.0, Real xmax = 100.0,
-                                     Real ymin = 0.0, Real ymax = 100.0) {
+                                    Real xmin = 0.0, Real xmax = 100.0,
+                                    Real ymin = 0.0, Real ymax = 100.0) {
         QuadtreeAdapter mesh;
         mesh.build_uniform(xmin, xmax, ymin, ymax, nx, ny);
         return mesh;
@@ -222,12 +222,12 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourMeshConstruction) {
 
     // Fine elements (level 2)
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});       // elem 0
-    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});       // elem 1
-    mesh.add_element({0.0, h, h, 2*h}, {2, 2});       // elem 2
-    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});       // elem 3
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});       // elem 1
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});       // elem 2
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});       // elem 3
 
     // Coarse element (level 1)
-    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});   // elem 4
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});   // elem 4
 
     EXPECT_EQ(mesh.num_elements(), 5);
 
@@ -246,10 +246,10 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourConstantBathymetry) {
     Real h = 25.0;
 
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});
-    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
-    mesh.add_element({0.0, h, h, 2*h}, {2, 2});
-    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
-    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
 
     CGCubicBezierSmootherConfig config;
     config.lambda = 100.0;
@@ -272,10 +272,10 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourLinearBathymetry) {
     Real h = 25.0;
 
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});
-    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
-    mesh.add_element({0.0, h, h, 2*h}, {2, 2});
-    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
-    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
 
     auto linear = [](Real x, Real y) { return 50.0 + x + 2.0 * y; };
 
@@ -294,12 +294,16 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourLinearBathymetry) {
 
     // Should reproduce linear across both fine and coarse elements
     std::vector<Vec2> test_points = {
-        {10.0, 10.0}, {25.0, 25.0}, {40.0, 40.0},  // Fine region
-        {60.0, 25.0}, {75.0, 40.0}, {90.0, 10.0},  // Coarse region
+        {10.0, 10.0},
+        {25.0, 25.0},
+        {40.0, 40.0},  // Fine region
+        {60.0, 25.0},
+        {75.0, 40.0},
+        {90.0, 10.0},  // Coarse region
         {50.0, 25.0},  // At interface
     };
 
-    for (const auto& pt : test_points) {
+    for (const auto &pt : test_points) {
         Real expected = linear(pt(0), pt(1));
         Real computed = smoother.evaluate(pt(0), pt(1));
         EXPECT_NEAR(computed, expected, LOOSE_TOLERANCE)
@@ -313,10 +317,10 @@ TEST_F(CGCubicBezierSmootherTest, OnePlusFourContinuityAtInterface) {
     Real h = 25.0;
 
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});
-    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
-    mesh.add_element({0.0, h, h, 2*h}, {2, 2});
-    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
-    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
 
     // Use smooth function to test continuity
     auto smooth_bathy = [](Real x, Real y) {
@@ -352,10 +356,10 @@ TEST_F(CGCubicBezierSmootherTest, CondensationMatchesFullKKT) {
 
     // 1+4 non-conforming mesh (has hanging node constraints)
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});
-    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
-    mesh.add_element({0.0, h, h, 2*h}, {2, 2});
-    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
-    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
 
     auto smooth_bathy = [](Real x, Real y) {
         return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y);
@@ -382,12 +386,18 @@ TEST_F(CGCubicBezierSmootherTest, CondensationMatchesFullKKT) {
     // Compare solutions at many points
     Real max_diff = 0.0;
     std::vector<Vec2> test_points = {
-        {10.0, 10.0}, {25.0, 25.0}, {40.0, 40.0},  // Fine region
-        {60.0, 25.0}, {75.0, 40.0}, {90.0, 10.0},  // Coarse region
-        {50.0, 25.0}, {50.0, 12.5}, {50.0, 37.5},  // At interface
+        {10.0, 10.0},
+        {25.0, 25.0},
+        {40.0, 40.0},  // Fine region
+        {60.0, 25.0},
+        {75.0, 40.0},
+        {90.0, 10.0},  // Coarse region
+        {50.0, 25.0},
+        {50.0, 12.5},
+        {50.0, 37.5},  // At interface
     };
 
-    for (const auto& pt : test_points) {
+    for (const auto &pt : test_points) {
         Real val_condensed = smoother_condensed.evaluate(pt(0), pt(1));
         Real val_full_kkt = smoother_full_kkt.evaluate(pt(0), pt(1));
         Real diff = std::abs(val_condensed - val_full_kkt);
@@ -402,6 +412,93 @@ TEST_F(CGCubicBezierSmootherTest, CondensationMatchesFullKKT) {
     // Note: With non-conforming C¹ constraints, condensed and full KKT have
     // slightly different numerical behavior, so we allow 1e-7 tolerance
     EXPECT_LT(max_diff, 1e-7);
+}
+
+TEST_F(CGCubicBezierSmootherTest, IterativeMatchesDirect) {
+    // Verify iterative Schur complement CG solver matches direct SparseLU
+    QuadtreeAdapter mesh;
+    Real h = 25.0;
+
+    // 1+4 non-conforming mesh (has hanging node + edge constraints)
+    mesh.add_element({0.0, h, 0.0, h}, {2, 2});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
+
+    auto smooth_bathy = [](Real x, Real y) {
+        return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y);
+    };
+
+    CGCubicBezierSmootherConfig config_direct;
+    config_direct.lambda = 10.0;
+    config_direct.use_iterative_solver = false;
+
+    CGCubicBezierSmootherConfig config_iterative;
+    config_iterative.lambda = 10.0;
+    config_iterative.use_iterative_solver = true;
+    config_iterative.schur_cg_tolerance = 1e-12;
+    config_iterative.inner_cg_tolerance = 1e-12;
+
+    // Solve with direct solver
+    CGCubicBezierBathymetrySmoother smoother_direct(mesh, config_direct);
+    smoother_direct.set_bathymetry_data(smooth_bathy);
+    smoother_direct.solve();
+
+    // Solve with iterative solver
+    CGCubicBezierBathymetrySmoother smoother_iterative(mesh, config_iterative);
+    smoother_iterative.set_bathymetry_data(smooth_bathy);
+    smoother_iterative.solve();
+
+    // Compare solutions at many points
+    Real max_diff = 0.0;
+    std::vector<Vec2> test_points = {
+        {10.0, 10.0},
+        {25.0, 25.0},
+        {40.0, 40.0},  // Fine region
+        {60.0, 25.0},
+        {75.0, 40.0},
+        {90.0, 10.0},  // Coarse region
+        {50.0, 25.0},
+        {50.0, 12.5},
+        {50.0, 37.5},  // At interface
+    };
+
+    for (const auto &pt : test_points) {
+        Real val_direct = smoother_direct.evaluate(pt(0), pt(1));
+        Real val_iterative = smoother_iterative.evaluate(pt(0), pt(1));
+        Real diff = std::abs(val_direct - val_iterative);
+        max_diff = std::max(max_diff, diff);
+    }
+
+    std::cout << "Max solution difference (direct vs iterative): " << max_diff << std::endl;
+    std::cout << "Constraint violation (direct):    " << smoother_direct.constraint_violation() << std::endl;
+    std::cout << "Constraint violation (iterative): " << smoother_iterative.constraint_violation() << std::endl;
+
+    // Solutions should match to high precision
+    EXPECT_LT(max_diff, 1e-6);
+}
+
+TEST_F(CGCubicBezierSmootherTest, IterativeNoConstraints) {
+    // Test iterative solver on uniform mesh (no edge constraints)
+    auto mesh = create_quadtree(2, 2);
+
+    auto bathy = [](Real x, Real y) {
+        return 100.0 + 10.0 * x + 5.0 * y;
+    };
+
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 10.0;
+    config.use_iterative_solver = true;
+
+    CGCubicBezierBathymetrySmoother smoother(mesh, config);
+    smoother.set_bathymetry_data(bathy);
+    smoother.solve();
+
+    EXPECT_TRUE(smoother.is_solved());
+
+    // Should reproduce linear bathymetry well
+    EXPECT_NEAR(smoother.evaluate(25.0, 25.0), bathy(25.0, 25.0), 5.0);
 }
 
 // =============================================================================
@@ -712,10 +809,10 @@ TEST_F(CGCubicBezierSmootherTest, ConstraintViolationNearZero) {
     Real h = 25.0;
 
     mesh.add_element({0.0, h, 0.0, h}, {2, 2});
-    mesh.add_element({h, 2*h, 0.0, h}, {2, 2});
-    mesh.add_element({0.0, h, h, 2*h}, {2, 2});
-    mesh.add_element({h, 2*h, h, 2*h}, {2, 2});
-    mesh.add_element({2*h, 4*h, 0.0, 2*h}, {1, 1});
+    mesh.add_element({h, 2 * h, 0.0, h}, {2, 2});
+    mesh.add_element({0.0, h, h, 2 * h}, {2, 2});
+    mesh.add_element({h, 2 * h, h, 2 * h}, {2, 2});
+    mesh.add_element({2 * h, 4 * h, 0.0, 2 * h}, {1, 1});
 
     CGCubicBezierSmootherConfig config;
     config.lambda = 10.0;
@@ -763,7 +860,7 @@ TEST_F(CGCubicBezierSmootherTest, EightByEightDofCount) {
 // =============================================================================
 
 class CGCubicBezierSmootherGeoTiffTest : public BathymetryTestFixture {
-  protected:
+protected:
     static constexpr Real TOLERANCE = 1e-10;
     static constexpr Real LOOSE_TOLERANCE = 1e-6;
 };
@@ -831,7 +928,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, KattegatIntegration) {
     int count = 0;
 
     for (Index e = 0; e < mesh.num_elements(); ++e) {
-        const auto& bounds = mesh.element_bounds(e);
+        const auto &bounds = mesh.element_bounds(e);
         Real cx = 0.5 * (bounds.xmin + bounds.xmax);
         Real cy = 0.5 * (bounds.ymin + bounds.ymax);
 
@@ -903,7 +1000,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_KattegatWithC1Constraints) {
     int count = 0;
 
     for (Index e = 0; e < mesh.num_elements(); ++e) {
-        const auto& bounds = mesh.element_bounds(e);
+        const auto &bounds = mesh.element_bounds(e);
         Real cx = 0.5 * (bounds.xmin + bounds.xmax);
         Real cy = 0.5 * (bounds.ymin + bounds.ymax);
 
@@ -947,17 +1044,15 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     std::array<Real, ngauss> gauss_nodes = {
         0.0337652428984240, 0.1693953067668677,
         0.3806904069584015, 0.6193095930415985,
-        0.8306046932331323, 0.9662347571015760
-    };
+        0.8306046932331323, 0.9662347571015760};
     std::array<Real, ngauss> gauss_weights = {
         0.0856622461895852, 0.1803807865240693,
         0.2339569672863455, 0.2339569672863455,
-        0.1803807865240693, 0.0856622461895852
-    };
+        0.1803807865240693, 0.0856622461895852};
 
     // Helper to compute L2 error for an element
-    auto compute_element_l2_error = [&](const CGCubicBezierBathymetrySmoother& smoother,
-                                         const QuadBounds& bounds) -> Real {
+    auto compute_element_l2_error = [&](const CGCubicBezierBathymetrySmoother &smoother,
+                                        const QuadBounds &bounds) -> Real {
         Real dx = bounds.xmax - bounds.xmin;
         Real dy = bounds.ymax - bounds.ymin;
         Real error_sq = 0.0;
@@ -1034,7 +1129,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
             Index num_elems = mesh.num_elements();
 
             for (Index e = 0; e < num_elems; ++e) {
-                const auto& bounds = mesh.element_bounds(e);
+                const auto &bounds = mesh.element_bounds(e);
                 Real dx = bounds.xmax - bounds.xmin;
                 Real dy = bounds.ymax - bounds.ymin;
                 Real area = dx * dy;
@@ -1091,7 +1186,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     ofs << "| Mesh | Lambda | Elements | DOFs | Max Err (m) | Mean Err (m) | Data Res | Constr Viol | Reg Energy | Time (ms) |\n";
     ofs << "|------|--------|----------|------|-------------|--------------|----------|-------------|------------|----------|\n";
 
-    for (const auto& r : results) {
+    for (const auto &r : results) {
         // Format lambda appropriately
         std::ostringstream lambda_ss;
         if (r.lambda >= 1.0) {
@@ -1135,7 +1230,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     for (int mesh_n : mesh_sizes) {
         // Find best result for this mesh size (lowest max_error)
         const EvalResult* best = nullptr;
-        for (const auto& r : results) {
+        for (const auto &r : results) {
             if (r.mesh_size == mesh_n) {
                 if (!best || r.max_error < best->max_error) {
                     best = &r;
@@ -1174,7 +1269,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     std::map<Real, int> lambda_wins;
     for (int mesh_n : mesh_sizes) {
         const EvalResult* best = nullptr;
-        for (const auto& r : results) {
+        for (const auto &r : results) {
             if (r.mesh_size == mesh_n) {
                 if (!best || r.max_error < best->max_error) {
                     best = &r;
@@ -1187,7 +1282,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
     }
     Real most_common_lambda = 10.0;
     int max_wins = 0;
-    for (const auto& [lam, wins] : lambda_wins) {
+    for (const auto &[lam, wins] : lambda_wins) {
         if (wins > max_wins) {
             max_wins = wins;
             most_common_lambda = lam;
@@ -1199,10 +1294,12 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
 
     // Error reduction with refinement
     Real error_4x4 = 0, error_32x32 = 0;
-    for (const auto& r : results) {
-        if (r.mesh_size == 4 && r.max_error > error_4x4) error_4x4 = r.max_error;
+    for (const auto &r : results) {
+        if (r.mesh_size == 4 && r.max_error > error_4x4)
+            error_4x4 = r.max_error;
         if (r.mesh_size == 32) {
-            if (error_32x32 == 0 || r.max_error < error_32x32) error_32x32 = r.max_error;
+            if (error_32x32 == 0 || r.max_error < error_32x32)
+                error_32x32 = r.max_error;
         }
     }
     ofs << "2. **Mesh refinement helps**: Error decreases from ~" << std::fixed << std::setprecision(0)
@@ -1210,7 +1307,7 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_UniformGridEvaluation) {
 
     // Over-smoothing warning
     Real max_error_low_lambda = 0;
-    for (const auto& r : results) {
+    for (const auto &r : results) {
         if (r.lambda <= 0.01 && r.max_error > max_error_low_lambda) {
             max_error_low_lambda = r.max_error;
         }

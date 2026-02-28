@@ -421,7 +421,9 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.verbose = true;
   config.ngauss_error = 6;
   config.error_output_dir = "/tmp/adaptive_cg_cubic_errors";
-  config.smoother_config.edge_ngauss = 8;
+  config.smoother_config.edge_ngauss = 4;
+  config.smoother_config.use_iterative_solver = true;
+  // Test iterative Schur complement CG solver with LU inner solves
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
