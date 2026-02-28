@@ -1,6 +1,79 @@
 #include "bathymetry/constraint_condenser.hpp"
+#include <Eigen/SparseLU>
+#ifdef DRIFTER_USE_METIS
+#include <iostream> // Required before Eigen/MetisSupport (Eigen bug)
+#include <Eigen/MetisSupport>
+#endif
 
 namespace drifter {
+
+#ifdef DRIFTER_USE_METIS
+using SparseSolver = Eigen::SparseLU<SpMat, Eigen::MetisOrdering<int>>;
+#else
+using SparseSolver = Eigen::SparseLU<SpMat>;
+#endif
+
+std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
+                                    Real constraint_reg) {
+    Index num_primal = Q.rows();
+    Index num_constraints = A.rows();
+    Index kkt_size = num_primal + num_constraints;
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(Q.nonZeros() + 2 * A.nonZeros());
+
+    // Q block (upper-left)
+    for (int k = 0; k < Q.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(Q, k); it; ++it) {
+            triplets.emplace_back(it.row(), it.col(), it.value());
+        }
+    }
+
+    // A and A^T blocks
+    for (int k = 0; k < A.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(A, k); it; ++it) {
+            triplets.emplace_back(num_primal + it.row(), it.col(), it.value());
+            triplets.emplace_back(it.col(), num_primal + it.row(), it.value());
+        }
+    }
+
+    SpMat KKT(kkt_size, kkt_size);
+    KKT.setFromTriplets(triplets.begin(), triplets.end());
+
+    // -εI on constraint block
+    for (Index i = num_primal; i < kkt_size; ++i) {
+        KKT.coeffRef(i, i) -= constraint_reg;
+    }
+
+    VecX rhs(kkt_size);
+    rhs.head(num_primal) = b;
+    rhs.tail(num_constraints).setZero();
+
+    return {std::move(KKT), std::move(rhs)};
+}
+
+void project_onto_constraints(VecX &solution, const SpMat &A, Real regularization) {
+    if (A.rows() == 0) {
+        return;
+    }
+
+    VecX Ax = A * solution;
+    SpMat AAt = A * A.transpose();
+
+    for (Index i = 0; i < A.rows(); ++i) {
+        AAt.coeffRef(i, i) += regularization;
+    }
+
+    SparseSolver projector;
+    projector.compute(AAt);
+
+    if (projector.info() == Eigen::Success) {
+        VecX lambda = projector.solve(Ax);
+        if (projector.info() == Eigen::Success) {
+            solution -= A.transpose() * lambda;
+        }
+    }
+}
 
 void condense_matrix_and_rhs(
     const SpMat &Q, const VecX &c,

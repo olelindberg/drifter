@@ -90,7 +90,7 @@ protected:
     std::unique_ptr<OctreeAdapter> octree_owned_;
 
     /// Pointer to active octree (owned or external reference)
-    OctreeAdapter *octree_ = nullptr;
+    OctreeAdapter* octree_ = nullptr;
 
     /// 2D mesh extracted from octree
     std::unique_ptr<QuadtreeAdapter> quadtree_;

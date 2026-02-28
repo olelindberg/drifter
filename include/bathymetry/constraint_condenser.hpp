@@ -9,9 +9,34 @@
 
 #include "core/types.hpp"
 #include <functional>
+#include <utility>
 #include <vector>
 
 namespace drifter {
+
+/// @brief Assemble KKT system [[Q, A^T], [A, -εI]]
+///
+/// Builds the saddle-point system for constrained optimization:
+/// [[Q,   A^T ]   [x]     [b]
+///  [A,  -εI ]] * [λ]  =  [0]
+///
+/// @param Q System matrix (n × n)
+/// @param A Constraint matrix (m × n)
+/// @param b RHS vector (n)
+/// @param constraint_reg Small regularization for constraint block (default 1e-10)
+/// @return Pair of (KKT matrix, rhs vector)
+std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
+                                    Real constraint_reg = 1e-10);
+
+/// @brief Project solution onto constraint manifold Ax = 0
+///
+/// Applies the correction: x -= A^T (AA^T)^{-1} Ax
+/// to project the solution onto the null space of A.
+///
+/// @param solution Solution vector to modify in-place
+/// @param A Constraint matrix
+/// @param regularization Small regularization for AA^T (default 1e-14)
+void project_onto_constraints(VecX &solution, const SpMat &A, Real regularization = 1e-14);
 
 /// @brief Condense sparse matrix and RHS by eliminating slave DOFs
 ///

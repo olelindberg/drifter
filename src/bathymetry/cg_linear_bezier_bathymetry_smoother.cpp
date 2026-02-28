@@ -6,6 +6,10 @@
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseLU>
+#ifdef DRIFTER_USE_METIS
+#include <iostream>  // Required before Eigen/MetisSupport (Eigen bug)
+#include <Eigen/MetisSupport>
+#endif
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -14,6 +18,12 @@
 #include <unordered_map>
 
 namespace drifter {
+
+#ifdef DRIFTER_USE_METIS
+using SparseSolver = Eigen::SparseLU<SpMat, Eigen::MetisOrdering<int>>;
+#else
+using SparseSolver = Eigen::SparseLU<SpMat>;
+#endif
 
 // =============================================================================
 // Construction
@@ -94,15 +104,11 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     }
 
     SpMat Q;
-    VecX c;
+    VecX b;
     {
         OptionalScopedTimer t(profile_ ? &profile_->matrix_build_ms : nullptr);
-        // Build Q and c for all DOFs
-        Q = alpha_ * H_global_ + config_.lambda * BtWB_global_;
-        for (Index i = 0; i < num_dofs; ++i) {
-            Q.coeffRef(i, i) += config_.lambda * config_.ridge_epsilon;
-        }
-        c = -config_.lambda * BtWd_global_;
+        Q = assemble_Q();
+        b = assemble_b();
     }
 
     // Helper: expand a global DOF to (free_index, weight) pairs
@@ -130,14 +136,14 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     };
 
     SpMat Q_reduced;
-    VecX c_reduced;
+    VecX b_reduced;
     {
         OptionalScopedTimer t(profile_ ? &profile_->constraint_condense_ms : nullptr);
-        condense_matrix_and_rhs(Q, c, expand_dof, num_free, Q_reduced, c_reduced);
+        condense_matrix_and_rhs(Q, b, expand_dof, num_free, Q_reduced, b_reduced);
     }
 
     // Solve reduced system
-    Eigen::SparseLU<SpMat> solver;
+    SparseSolver solver;
     {
         OptionalScopedTimer t(profile_ ? &profile_->sparse_lu_compute_ms : nullptr);
         solver.compute(Q_reduced);
@@ -149,7 +155,7 @@ void CGLinearBezierBathymetrySmoother::solve_with_constraints() {
     VecX x_free;
     {
         OptionalScopedTimer t(profile_ ? &profile_->sparse_lu_solve_ms : nullptr);
-        x_free = solver.solve(-c_reduced);
+        x_free = solver.solve(b_reduced);
     }
     if (solver.info() != Eigen::Success) {
         throw std::runtime_error("CGLinearBezierBathymetrySmoother: SparseLU solve failed");

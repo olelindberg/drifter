@@ -33,110 +33,110 @@ class BathymetrySource;
 
 /// @brief Per-element error estimate for CG cubic adaptive smoother
 struct CGCubicElementErrorEstimate {
-  Index element;         ///< Element index
-  Real l2_error;         ///< L2 error ||z_data - z_bezier||_L2
-  Real normalized_error; ///< Error normalized by sqrt(element area) (RMS)
-  bool should_refine;    ///< Marked for refinement
+    Index element;         ///< Element index
+    Real l2_error;         ///< L2 error ||z_data - z_bezier||_L2
+    Real normalized_error; ///< Error normalized by sqrt(element area) (RMS)
+    bool should_refine;    ///< Marked for refinement
 
   // Coarsening error indicators (solution change due to refinement)
-  Real mean_difference; ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
-  Real volume_change;   ///< ∫∫|z_fine - z_coarse|dA [m³]
+    Real mean_difference; ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA [m]
+    Real volume_change;   ///< ∫∫|z_fine - z_coarse|dA [m³]
 };
 
 /// @brief Timing profile for one adaptive iteration (all times in milliseconds)
 struct CGCubicIterationProfile {
   // Top-level phases
-  double rebuild_ms = 0.0;          ///< Total rebuild_smoother() time
-  double solve_ms = 0.0;            ///< Total smoother_->solve() time
-  double error_estimation_ms = 0.0; ///< Total estimate_errors() time
-  double marking_ms = 0.0;          ///< select_elements_for_refinement() time
-  double refinement_ms = 0.0;       ///< refine_elements() time
+    double rebuild_ms = 0.0;          ///< Total rebuild_smoother() time
+    double solve_ms = 0.0;            ///< Total smoother_->solve() time
+    double error_estimation_ms = 0.0; ///< Total estimate_errors() time
+    double marking_ms = 0.0;          ///< select_elements_for_refinement() time
+    double refinement_ms = 0.0;       ///< refine_elements() time
 
   // Rebuild breakdown
-  double quadtree_build_ms = 0.0;   ///< QuadtreeAdapter construction
-  double smoother_init_ms = 0.0;    ///< CGCubicBezierBathymetrySmoother init
-  double hessian_assembly_ms = 0.0; ///< assemble_thin_plate_hessian()
-  double data_fitting_ms = 0.0;     ///< assemble_data_fitting()
+    double quadtree_build_ms = 0.0;   ///< QuadtreeAdapter construction
+    double smoother_init_ms = 0.0;    ///< CGCubicBezierBathymetrySmoother init
+    double hessian_assembly_ms = 0.0; ///< assemble_thin_plate_hessian()
+    double data_fitting_ms = 0.0;     ///< assemble_data_fitting()
 
   // Solve breakdown
-  double matrix_build_ms = 0.0;          ///< Q matrix construction
-  double constraint_build_ms = 0.0;      ///< C¹ edge constraint assembly
-  double kkt_assembly_ms = 0.0;          ///< KKT system build
-  double sparse_lu_compute_ms = 0.0;     ///< SparseLU factorization
-  double sparse_lu_solve_ms = 0.0;       ///< SparseLU back-substitution
-  double constraint_projection_ms = 0.0; ///< Constraint projection solve
+    double matrix_build_ms = 0.0;          ///< Q matrix construction
+    double constraint_build_ms = 0.0;      ///< C¹ edge constraint assembly
+    double kkt_assembly_ms = 0.0;          ///< KKT system build
+    double sparse_lu_compute_ms = 0.0;     ///< SparseLU factorization
+    double sparse_lu_solve_ms = 0.0;       ///< SparseLU back-substitution
+    double constraint_projection_ms = 0.0; ///< Constraint projection solve
 
   // Context
-  Index num_elements = 0;
-  Index num_dofs = 0;
-  Index num_free_dofs = 0;
-  Index num_constraints = 0;
+    Index num_elements = 0;
+    Index num_dofs = 0;
+    Index num_free_dofs = 0;
+    Index num_constraints = 0;
 
-  double total_ms() const {
-    return rebuild_ms + solve_ms + error_estimation_ms + marking_ms +
-           refinement_ms;
-  }
+    double total_ms() const {
+        return rebuild_ms + solve_ms + error_estimation_ms + marking_ms +
+               refinement_ms;
+    }
 };
 
 /// @brief Preprocess timing profile (one-time initialization before iteration
 /// loop)
 struct CGCubicPreprocessProfile {
-  double quadtree_build_ms = 0.0; ///< Initial QuadtreeAdapter construction
-  double smoother_init_ms =
-      0.0; ///< Initial CGCubicBezierBathymetrySmoother init
-  double hessian_assembly_ms = 0.0; ///< Initial assemble_thin_plate_hessian()
-  double data_fitting_ms =
-      0.0; ///< Initial assemble_data_fitting() (GeoTIFF caching)
+    double quadtree_build_ms = 0.0; ///< Initial QuadtreeAdapter construction
+    double smoother_init_ms =
+        0.0; ///< Initial CGCubicBezierBathymetrySmoother init
+    double hessian_assembly_ms = 0.0; ///< Initial assemble_thin_plate_hessian()
+    double data_fitting_ms =
+        0.0; ///< Initial assemble_data_fitting() (GeoTIFF caching)
 
-  double total_ms() const {
-    return quadtree_build_ms + smoother_init_ms + hessian_assembly_ms +
-           data_fitting_ms;
-  }
+    double total_ms() const {
+        return quadtree_build_ms + smoother_init_ms + hessian_assembly_ms +
+               data_fitting_ms;
+    }
 };
 
 /// @brief Configuration for adaptive CG cubic Bezier smoother
 struct AdaptiveCGCubicBezierConfig {
   // Stopping criteria
-  Real error_threshold = 0.1;    ///< Stop when max error < threshold (meters)
-  int max_iterations = 10;       ///< Maximum adaptation iterations
-  int max_elements = 10000;      ///< Maximum number of elements
-  int max_refinement_level = 10; ///< Maximum refinement level per axis
+    Real error_threshold = 0.1;    ///< Stop when max error < threshold (meters)
+    int max_iterations = 10;       ///< Maximum adaptation iterations
+    int max_elements = 10000;      ///< Maximum number of elements
+    int max_refinement_level = 10; ///< Maximum refinement level per axis
 
   /// @brief Which error metric to use for refinement decisions
-  ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
+    ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
 
   // Dorfler marking parameters
-  Real dorfler_theta = 0.5; ///< Fraction of total squared error to capture
-  Real symmetry_tolerance = 1e-12; ///< Tolerance for grouping equal errors
+    Real dorfler_theta = 0.5; ///< Fraction of total squared error to capture
+    Real symmetry_tolerance = 1e-12; ///< Tolerance for grouping equal errors
 
   // Error estimation
-  int ngauss_error = 4; ///< Gauss points per direction for error integration
+    int ngauss_error = 4; ///< Gauss points per direction for error integration
 
   // Smoother configuration (passed to CGCubicBezierBathymetrySmoother)
-  CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierSmootherConfig smoother_config;
 
   // Progress reporting
-  bool verbose = false;
+    bool verbose = false;
 
   // Diagnostic output: if non-empty, write per-element error CSVs to this
   // directory
-  std::string error_output_dir = "";
+    std::string error_output_dir = "";
 
   // VTK output: if non-empty, write VTK after each iteration to
   // {vtk_output_prefix}_iter_{N}.vtu
-  std::string vtk_output_prefix = "";
+    std::string vtk_output_prefix = "";
 };
 
 /// @brief Result of a single adaptation iteration for CG cubic smoother
 struct CGCubicAdaptationResult {
-  int iteration;          ///< Iteration number (0-indexed)
-  Index num_elements;     ///< Number of elements after this iteration
-  Real max_error;         ///< Maximum normalized error across all elements
-  Real mean_error;        ///< Mean normalized error across all elements
-  Index elements_refined; ///< Number of elements refined in this iteration
-  bool converged;         ///< True if stopping criteria met
-  ConvergenceReason convergence_reason =
-      ConvergenceReason::NotConverged; ///< Why convergence occurred
+    int iteration;          ///< Iteration number (0-indexed)
+    Index num_elements;     ///< Number of elements after this iteration
+    Real max_error;         ///< Maximum normalized error across all elements
+    Real mean_error;        ///< Mean normalized error across all elements
+    Index elements_refined; ///< Number of elements refined in this iteration
+    bool converged;         ///< True if stopping criteria met
+    ConvergenceReason convergence_reason =
+        ConvergenceReason::NotConverged; ///< Why convergence occurred
 };
 
 /// @brief Adaptive CG cubic Bezier bathymetry smoother with error-driven
@@ -182,16 +182,16 @@ public:
   /// @param ymin, ymax Y domain bounds
   /// @param nx, ny Initial mesh size (nx x ny elements)
   /// @param config Configuration parameters
-  AdaptiveCGCubicBezierSmoother(Real xmin, Real xmax, Real ymin, Real ymax,
-                                int nx, int ny,
-                                const AdaptiveCGCubicBezierConfig &config = {});
+    AdaptiveCGCubicBezierSmoother(Real xmin, Real xmax, Real ymin, Real ymax,
+                                  int nx, int ny,
+                                  const AdaptiveCGCubicBezierConfig &config = {});
 
   /// @brief Construct from existing OctreeAdapter
   /// @param octree Initial mesh (will be refined in-place)
   /// @param config Configuration parameters
   /// @note The octree is modified during adaptive refinement
-  explicit AdaptiveCGCubicBezierSmoother(
-      OctreeAdapter &octree, const AdaptiveCGCubicBezierConfig &config = {});
+    explicit AdaptiveCGCubicBezierSmoother(
+        OctreeAdapter &octree, const AdaptiveCGCubicBezierConfig &config = {});
 
   // =========================================================================
   // Data input - inherited from base: set_bathymetry_data, set_land_mask
@@ -203,16 +203,16 @@ public:
 
   /// @brief Run adaptive refinement loop until convergence
   /// @return Final adaptation result
-  CGCubicAdaptationResult solve_adaptive();
+    CGCubicAdaptationResult solve_adaptive();
 
   /// @brief Perform single adaptation iteration
   /// @return Result of this iteration
-  CGCubicAdaptationResult adapt_once();
+    CGCubicAdaptationResult adapt_once();
 
   /// @brief Get adaptation history (all iterations)
-  const std::vector<CGCubicAdaptationResult> &history() const {
-    return history_;
-  }
+    const std::vector<CGCubicAdaptationResult> &history() const {
+        return history_;
+    }
 
   // =========================================================================
   // Error estimation
@@ -221,32 +221,32 @@ public:
   /// @brief Estimate error for all elements
   /// @return Per-element error estimates
   /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  std::vector<CGCubicElementErrorEstimate> estimate_errors() const;
+    std::vector<CGCubicElementErrorEstimate> estimate_errors() const;
 
   /// @brief Estimate error for single element
   /// @param elem Element index
   /// @return Error estimate for this element
   /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  CGCubicElementErrorEstimate estimate_element_error(Index elem) const;
+    CGCubicElementErrorEstimate estimate_element_error(Index elem) const;
 
   /// @brief Get maximum normalized error across all elements
   /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  Real max_error() const;
+    Real max_error() const;
 
   /// @brief Get mean normalized error across all elements
   /// @pre Must have called solve_adaptive() or adapt_once() at least once
-  Real mean_error() const;
+    Real mean_error() const;
 
   // =========================================================================
   // Access to current state
   // =========================================================================
 
   /// @brief Check if solved (at least one iteration complete)
-  bool is_solved() const { return smoother_ && smoother_->is_solved(); }
+    bool is_solved() const { return smoother_ && smoother_->is_solved(); }
 
   /// @brief Get current smoother (valid after solve)
   /// @throws std::runtime_error if not solved
-  const CGCubicBezierBathymetrySmoother &smoother() const;
+    const CGCubicBezierBathymetrySmoother &smoother() const;
 
   // mesh() and octree() accessors inherited from base
   // evaluate() inherited from base
@@ -254,23 +254,23 @@ public:
   /// @brief Write VTK output
   /// @param filename Output filename (without extension)
   /// @param resolution Subdivisions per element edge for visualization
-  void write_vtk(const std::string &filename, int resolution = 10) const;
+    void write_vtk(const std::string &filename, int resolution = 10) const;
 
 protected:
   // =========================================================================
   // AdaptiveCGBezierSmootherBase virtual method implementations
   // =========================================================================
 
-  bool is_solved_impl() const override { return smoother_ && smoother_->is_solved(); }
-  Real smoother_evaluate(Real x, Real y) const override { return smoother_->evaluate(x, y); }
-  void rebuild_smoother() override;
-  void apply_bathymetry_to_smoother() override;
+    bool is_solved_impl() const override { return smoother_ && smoother_->is_solved(); }
+    Real smoother_evaluate(Real x, Real y) const override { return smoother_->evaluate(x, y); }
+    void rebuild_smoother() override;
+    void apply_bathymetry_to_smoother() override;
 
-  VecX get_element_coefficients_impl(Index elem) const override {
-    return smoother_->element_coefficients(elem);
-  }
+    VecX get_element_coefficients_impl(Index elem) const override {
+        return smoother_->element_coefficients(elem);
+    }
 
-  const BezierBasis2DBase &get_basis_impl() const override;
+    const BezierBasis2DBase &get_basis_impl() const override;
 
   // =========================================================================
   // Profiling
@@ -278,78 +278,78 @@ protected:
 
   /// @brief Get iteration profiles (populated when config.verbose = true)
   /// @return Vector of profiles, one per completed iteration
-  const std::vector<CGCubicIterationProfile> &get_iteration_profiles() const {
-    return iteration_profiles_;
-  }
+    const std::vector<CGCubicIterationProfile> &get_iteration_profiles() const {
+        return iteration_profiles_;
+    }
 
 private:
   // Configuration
-  AdaptiveCGCubicBezierConfig config_;
+    AdaptiveCGCubicBezierConfig config_;
 
   // Mesh members (octree_owned_, octree_, quadtree_) inherited from base
   // Data members (bathy_func_, land_mask_func_) inherited from base
   // Quadrature members (gauss_nodes_, gauss_weights_) inherited from base
 
   // Current smoother (recreated after each refinement)
-  std::unique_ptr<CGCubicBezierBathymetrySmoother> smoother_;
+    std::unique_ptr<CGCubicBezierBathymetrySmoother> smoother_;
 
   // Adaptation history
-  std::vector<CGCubicAdaptationResult> history_;
+    std::vector<CGCubicAdaptationResult> history_;
 
   // Profiling (enabled when config_.verbose = true)
-  CGCubicPreprocessProfile
-      preprocess_profile_; ///< One-time initialization timing
-  std::vector<CGCubicIterationProfile> iteration_profiles_;
-  CGCubicIterationProfile *current_profile_ =
-      nullptr;                  ///< Profile for current iteration
-  double postprocess_ms_ = 0.0; ///< Final solve timing (if needed)
+    CGCubicPreprocessProfile
+        preprocess_profile_; ///< One-time initialization timing
+    std::vector<CGCubicIterationProfile> iteration_profiles_;
+    CGCubicIterationProfile* current_profile_ =
+        nullptr;                  ///< Profile for current iteration
+    double postprocess_ms_ = 0.0; ///< Final solve timing (if needed)
 
   // Error caching (mutable for const accessors)
-  mutable std::vector<CGCubicElementErrorEstimate> cached_errors_;
-  mutable bool errors_valid_ = false;
-  mutable Real cached_max_error_ = 0.0;
-  mutable Real cached_mean_error_ = 0.0;
+    mutable std::vector<CGCubicElementErrorEstimate> cached_errors_;
+    mutable bool errors_valid_ = false;
+    mutable Real cached_max_error_ = 0.0;
+    mutable Real cached_mean_error_ = 0.0;
 
   // =========================================================================
   // Internal methods
   // =========================================================================
 
   /// @brief Ensure error cache is computed, recomputing if invalid
-  void ensure_errors_computed() const;
+    void ensure_errors_computed() const;
 
   /// @brief Invalidate error cache (call after solve, refine, or rebuild)
-  void invalidate_error_cache();
+    void invalidate_error_cache();
 
   /// @brief Refine marked elements and update mesh
   /// @param elements_to_refine Element indices to refine
-  void refine_elements(const std::vector<Index> &elements_to_refine);
+    void refine_elements(const std::vector<Index> &elements_to_refine);
 
   /// @brief Compute L2 error for element via Gauss quadrature
   /// @param elem Element index
   /// @return L2 error ||z_data - z_bezier||_L2 over element
-  Real compute_element_l2_error(Index elem) const;
+    Real compute_element_l2_error(Index elem) const;
 
   /// @brief Get the error metric value based on config
   /// @param err Error estimate for an element
   /// @return The selected metric value
-  Real error_metric(const CGCubicElementErrorEstimate &err) const {
-    switch (config_.error_metric_type) {
-    case ErrorMetricType::MeanDifference:
-      return err.mean_difference;
-    case ErrorMetricType::VolumeChange:
-      return err.volume_change;
-    default:
-      return err.normalized_error;
+    Real error_metric(const CGCubicElementErrorEstimate &err) const {
+        switch (config_.error_metric_type) {
+        case ErrorMetricType::MeanDifference:
+            return err.mean_difference;
+        case ErrorMetricType::VolumeChange:
+            return err.volume_change;
+        default:
+            return err.normalized_error;
+        }
     }
-  }
 
   /// @brief Check if element is entirely on land
   /// @param elem Element index
   /// @return true if all sample points are on land
-  bool is_element_on_land(Index elem) const;
+    bool is_element_on_land(Index elem) const;
 
   /// @brief Print profiling report to stdout
-  void print_profile_report() const;
+    void print_profile_report() const;
 };
 
 } // namespace drifter

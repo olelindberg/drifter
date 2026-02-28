@@ -119,7 +119,7 @@ void AdaptiveCGBezierSmootherBase::store_current_solution() {
     // no longer exist in the mesh, but their coefficients are needed for
     // children to walk up and find their parent's previous solution.
     for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-        const QuadtreeNode *node = quadtree_->elements()[e];
+        const QuadtreeNode* node = quadtree_->elements()[e];
         auto key = std::make_tuple(node->morton, node->level.x, node->level.y);
         prev_solutions_[key] = get_element_coefficients_impl(e);
     }
@@ -132,7 +132,7 @@ Real AdaptiveCGBezierSmootherBase::evaluate_prev_solution(Real x, Real y) const 
         return 0.0; // Outside domain
     }
 
-    QuadtreeNode *node = quadtree_->elements()[elem];
+    QuadtreeNode* node = quadtree_->elements()[elem];
     uint64_t morton = node->morton;
     QuadLevel level = node->level;
 

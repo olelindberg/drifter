@@ -4,12 +4,22 @@
 #include "bathymetry/bezier_hessian_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include <Eigen/SparseLU>
+#ifdef DRIFTER_USE_METIS
+#include <iostream>  // Required before Eigen/MetisSupport (Eigen bug)
+#include <Eigen/MetisSupport>
+#endif
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 
 namespace drifter {
+
+#ifdef DRIFTER_USE_METIS
+using SparseSolver = Eigen::SparseLU<SpMat, Eigen::MetisOrdering<int>>;
+#else
+using SparseSolver = Eigen::SparseLU<SpMat>;
+#endif
 
 // =============================================================================
 // Gauss-Legendre quadrature
@@ -343,27 +353,35 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
 }
 
 // =============================================================================
-// Solve unconstrained
+// KKT system assembly
 // =============================================================================
 
-void CGBezierSmootherBase::solve_unconstrained() {
+SpMat CGBezierSmootherBase::assemble_Q() const {
     Index num_dofs = dof_manager_num_global_dofs();
-
-    // Build Q = alpha * H + lambda * (BtWB + epsilon * I)
     SpMat Q = alpha_ * H_global_ + lambda() * BtWB_global_;
     for (Index i = 0; i < num_dofs; ++i) {
         Q.coeffRef(i, i) += lambda() * ridge_epsilon();
     }
+    return Q;
+}
 
-    VecX c = -lambda() * BtWd_global_;
+VecX CGBezierSmootherBase::assemble_b() const { return lambda() * BtWd_global_; }
 
-    Eigen::SparseLU<SpMat> solver;
+// =============================================================================
+// Solve unconstrained
+// =============================================================================
+
+void CGBezierSmootherBase::solve_unconstrained() {
+    SpMat Q = assemble_Q();
+    VecX b = assemble_b();
+
+    SparseSolver solver;
     solver.compute(Q);
     if (solver.info() != Eigen::Success) {
         throw std::runtime_error("CGBezierSmootherBase: SparseLU decomposition failed");
     }
 
-    solution_ = solver.solve(-c);
+    solution_ = solver.solve(b);
     if (solver.info() != Eigen::Success) {
         throw std::runtime_error("CGBezierSmootherBase: SparseLU solve failed");
     }

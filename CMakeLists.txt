@@ -21,6 +21,7 @@ option(DRIFTER_USE_ZARR "Enable Zarr v3 output via zarrs_ffi" ON)
 option(DRIFTER_USE_VTK "Enable VTK output" ON)
 option(DRIFTER_BUILD_TESTS "Build unit tests" ON)
 option(DRIFTER_BUILD_DOCS "Build documentation" OFF)
+option(DRIFTER_USE_METIS "Enable METIS ordering for sparse solvers" ON)
 
 # Find required packages
 find_package(Eigen3 3.4 REQUIRED)
@@ -33,6 +34,25 @@ endif()
 
 if(DRIFTER_USE_OPENMP)
     find_package(OpenMP REQUIRED)
+endif()
+
+if(DRIFTER_USE_METIS)
+    # Try CMake config first, then manual detection for Ubuntu's libmetis-dev
+    find_package(METIS QUIET CONFIG)
+    if(NOT METIS_FOUND)
+        find_library(METIS_LIBRARY NAMES metis)
+        find_path(METIS_INCLUDE_DIR NAMES metis.h PATH_SUFFIXES metis)
+        if(METIS_LIBRARY AND METIS_INCLUDE_DIR)
+            set(METIS_FOUND TRUE)
+            include_directories(${METIS_INCLUDE_DIR})
+        endif()
+    endif()
+    if(METIS_FOUND)
+        add_definitions(-DDRIFTER_USE_METIS)
+        message(STATUS "METIS found: ${METIS_LIBRARY}")
+    else()
+        message(WARNING "METIS not found, using default COLAMD ordering")
+    endif()
 endif()
 
 # Required: GDAL for geospatial data (bathymetry, coastlines)
@@ -226,6 +246,7 @@ target_link_libraries(drifter_lib PUBLIC
     ${GDAL_LIBRARIES}
     $<$<BOOL:${VTK_FOUND}>:${VTK_LIBRARIES}>
     $<$<BOOL:${ZARRS_FFI_LIB}>:${ZARRS_FFI_LIB}>
+    $<$<BOOL:${METIS_FOUND}>:${METIS_LIBRARY}>
 )
 
 # Main executable

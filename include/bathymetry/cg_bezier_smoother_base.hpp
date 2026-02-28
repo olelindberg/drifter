@@ -119,7 +119,7 @@ protected:
     // =========================================================================
 
     std::unique_ptr<QuadtreeAdapter> quadtree_owned_;
-    const QuadtreeAdapter *quadtree_ = nullptr;
+    const QuadtreeAdapter* quadtree_ = nullptr;
 
     VecX solution_;
     bool solved_ = false;
@@ -198,9 +198,17 @@ protected:
     /// @param bathy_func Bathymetry function (x, y) -> depth
     void assemble_data_fitting_global(std::function<Real(Real, Real)> bathy_func);
 
+    /// @brief Assemble the system matrix Q = alpha*H + lambda*(BtWB + epsilon*I)
+    /// @return Sparse Q matrix of size (num_global_dofs × num_global_dofs)
+    SpMat assemble_Q() const;
+
+    /// @brief Assemble the RHS vector b = lambda * BtWd
+    /// @return Vector b of size num_global_dofs
+    VecX assemble_b() const;
+
     /// @brief Solve unconstrained system using SparseLU
     ///
-    /// Builds Q = alpha * H + lambda * (BtWB + epsilon * I) and solves Qx = lambda * BtWd
+    /// Uses assemble_Q() and assemble_b(), then solves Qx = b
     void solve_unconstrained();
 
     /// @brief Compute Gauss-Legendre quadrature points and weights on [0, 1]
