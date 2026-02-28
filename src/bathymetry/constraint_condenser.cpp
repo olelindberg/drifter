@@ -1,17 +1,6 @@
 #include "bathymetry/constraint_condenser.hpp"
-#include <Eigen/SparseLU>
-#ifdef DRIFTER_USE_METIS
-#include <iostream> // Required before Eigen/MetisSupport (Eigen bug)
-#include <Eigen/MetisSupport>
-#endif
 
 namespace drifter {
-
-#ifdef DRIFTER_USE_METIS
-using SparseSolver = Eigen::SparseLU<SpMat, Eigen::MetisOrdering<int>>;
-#else
-using SparseSolver = Eigen::SparseLU<SpMat>;
-#endif
 
 std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
                                     Real constraint_reg) {
@@ -50,29 +39,6 @@ std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &
     rhs.tail(num_constraints).setZero();
 
     return {std::move(KKT), std::move(rhs)};
-}
-
-void project_onto_constraints(VecX &solution, const SpMat &A, Real regularization) {
-    if (A.rows() == 0) {
-        return;
-    }
-
-    VecX Ax = A * solution;
-    SpMat AAt = A * A.transpose();
-
-    for (Index i = 0; i < A.rows(); ++i) {
-        AAt.coeffRef(i, i) += regularization;
-    }
-
-    SparseSolver projector;
-    projector.compute(AAt);
-
-    if (projector.info() == Eigen::Success) {
-        VecX lambda = projector.solve(Ax);
-        if (projector.info() == Eigen::Success) {
-            solution -= A.transpose() * lambda;
-        }
-    }
 }
 
 void condense_matrix_and_rhs(

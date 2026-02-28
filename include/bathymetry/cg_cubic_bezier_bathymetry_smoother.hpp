@@ -8,6 +8,7 @@
 
 #include "bathymetry/cg_bezier_smoother_base.hpp"
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
+#include "bathymetry/constraint_condenser.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "bathymetry/cubic_thin_plate_hessian.hpp"
 #include "bathymetry/quadtree_adapter.hpp"

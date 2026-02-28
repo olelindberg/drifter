@@ -28,16 +28,6 @@ namespace drifter {
 std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
                                     Real constraint_reg = 1e-10);
 
-/// @brief Project solution onto constraint manifold Ax = 0
-///
-/// Applies the correction: x -= A^T (AA^T)^{-1} Ax
-/// to project the solution onto the null space of A.
-///
-/// @param solution Solution vector to modify in-place
-/// @param A Constraint matrix
-/// @param regularization Small regularization for AA^T (default 1e-14)
-void project_onto_constraints(VecX &solution, const SpMat &A, Real regularization = 1e-14);
-
 /// @brief Condense sparse matrix and RHS by eliminating slave DOFs
 ///
 /// Given an expand_dof function that maps global DOF indices to (free_index, weight) pairs,

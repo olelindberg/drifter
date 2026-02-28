@@ -180,19 +180,6 @@ void CGCubicBezierBathymetrySmoother::recover_solution_from_free(
     solution_(dof_manager_->free_to_global(f)) = x_free(f);
   }
   back_substitute_slaves(solution_, constraints);
-
-  // Project onto edge constraint manifold (for numerical accuracy)
-  if (sys.num_edge > 0) {
-    OptionalScopedTimer t(
-        solve_profile_ ? &solve_profile_->constraint_projection_ms : nullptr);
-
-    SpMat A_full = assemble_A_edge();
-    project_onto_constraints(solution_, A_full);
-
-    // Re-run back-substitution to restore hanging node constraints
-    // (projection may have modified slave DOFs directly)
-    back_substitute_slaves(solution_, constraints);
-  }
 }
 
 // =============================================================================
@@ -403,13 +390,6 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_full_kkt() {
   }
 
   solution_ = sol.head(num_dofs);
-
-  // Project onto constraint manifold (for numerical accuracy)
-  if (A.rows() > 0) {
-    OptionalScopedTimer t(
-        solve_profile_ ? &solve_profile_->constraint_projection_ms : nullptr);
-    project_onto_constraints(solution_, A);
-  }
 }
 
 // =============================================================================
