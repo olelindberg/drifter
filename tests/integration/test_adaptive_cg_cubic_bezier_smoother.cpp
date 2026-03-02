@@ -423,7 +423,10 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.error_output_dir = "/tmp/adaptive_cg_cubic_errors";
   config.smoother_config.edge_ngauss = 4;
   config.smoother_config.use_iterative_solver = true;
-  // Test iterative Schur complement CG solver with LU inner solves
+  config.smoother_config.use_multigrid = true;
+  config.smoother_config.multigrid_config.smoother_type =
+      SmootherType::ColoredMultiplicativeSchwarz;
+  config.smoother_config.multigrid_config.verbose = true;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -478,6 +481,132 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
             << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+}
+
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
+       DISABLED_ColoredSchwarzGeoTiffProfiling) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
+  }
+
+  // Kattegat test area - same as AdaptiveGeoTiffRefinement
+  Real center_x = 4095238.0;
+  Real center_y = 3344695.0;
+  Real domain_size = 100000.0;
+
+  Real xmin = center_x - domain_size / 2;
+  Real xmax = center_x + domain_size / 2;
+  Real ymin = center_y - domain_size / 2;
+  Real ymax = center_y + domain_size / 2;
+
+  auto depth_func = create_depth_function();
+
+  std::cout << "\n=== Colored Schwarz Profiling on GeoTIFF Data ===" << std::endl;
+
+  // Test both multiplicative and colored Schwarz on a uniform grid first
+  std::vector<std::pair<std::string, SmootherType>> smoother_types = {
+      {"Multiplicative", SmootherType::MultiplicativeSchwarz},
+      {"Colored", SmootherType::ColoredMultiplicativeSchwarz}};
+
+  for (const auto &[name, smoother_type] : smoother_types) {
+    // Build a uniform mesh with moderate refinement
+    QuadtreeAdapter mesh;
+    mesh.build_uniform(xmin, xmax, ymin, ymax, 16, 16); // 256 elements
+
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 10.0;
+    config.edge_ngauss = 4;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.schur_cg_tolerance = 1e-10;
+    config.multigrid_config.num_levels = 3;
+    config.multigrid_config.pre_smoothing = 1;
+    config.multigrid_config.post_smoothing = 1;
+    config.multigrid_config.smoother_type = smoother_type;
+
+    MultigridProfile mg_profile;
+    CGCubicSolveProfile solve_profile;
+    solve_profile.multigrid_profile = &mg_profile;
+
+    CGCubicBezierBathymetrySmoother smoother(mesh, config);
+    smoother.set_solve_profile(&solve_profile);
+    smoother.set_bathymetry_data(depth_func);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    smoother.solve();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    double total_ms =
+        std::chrono::duration<double, std::milli>(end - start).count();
+
+    double schwarz_total = mg_profile.schwarz_matvec_ms +
+                           mg_profile.schwarz_gather_ms +
+                           mg_profile.schwarz_local_solve_ms +
+                           mg_profile.schwarz_scatter_update_ms;
+
+    std::cout << "\n" << name << " Schwarz (16x16 = 256 elements):\n";
+    std::cout << "  Total solve time: " << std::fixed << std::setprecision(2)
+              << total_ms << " ms\n";
+    std::cout << "  CG iterations: " << solve_profile.outer_cg_iterations
+              << "\n";
+    std::cout << "  Q^-1 calls: " << solve_profile.qinv_apply_calls << "\n";
+    std::cout << "  Schwarz total: " << schwarz_total << " ms\n";
+    std::cout << "    MatVec: " << mg_profile.schwarz_matvec_ms << " ms ("
+              << std::setprecision(1)
+              << 100.0 * mg_profile.schwarz_matvec_ms /
+                     std::max(0.001, schwarz_total)
+              << "%)\n";
+    std::cout << "    Gather: " << mg_profile.schwarz_gather_ms << " ms\n";
+    std::cout << "    Local solve: " << mg_profile.schwarz_local_solve_ms
+              << " ms\n";
+    std::cout << "    Scatter: " << mg_profile.schwarz_scatter_update_ms
+              << " ms ("
+              << 100.0 * mg_profile.schwarz_scatter_update_ms /
+                     std::max(0.001, schwarz_total)
+              << "%)\n";
+
+    EXPECT_TRUE(smoother.is_solved());
+    EXPECT_GT(solve_profile.outer_cg_iterations, 0);
+  }
+
+  // Now test adaptive refinement with colored Schwarz
+  std::cout << "\n=== Adaptive Refinement with Colored Schwarz ===\n";
+
+  AdaptiveCGCubicBezierConfig adaptive_config;
+  adaptive_config.error_threshold = 1.0;
+  adaptive_config.error_metric_type = ErrorMetricType::VolumeChange;
+  adaptive_config.max_iterations = 3;
+  adaptive_config.max_elements = 1000;
+  adaptive_config.smoother_config.lambda = 10.0;
+  adaptive_config.max_refinement_level = 10;
+  adaptive_config.verbose = true;
+  adaptive_config.ngauss_error = 6;
+  adaptive_config.smoother_config.edge_ngauss = 4;
+  adaptive_config.smoother_config.use_iterative_solver = true;
+  adaptive_config.smoother_config.use_multigrid = true;
+  adaptive_config.smoother_config.multigrid_config.smoother_type =
+      SmootherType::ColoredMultiplicativeSchwarz;
+
+  AdaptiveCGCubicBezierSmoother adaptive_smoother(xmin, xmax, ymin, ymax, 4, 4,
+                                                   adaptive_config);
+  adaptive_smoother.set_bathymetry_data(depth_func);
+  adaptive_smoother.set_land_mask(create_land_mask());
+
+  auto start = std::chrono::high_resolution_clock::now();
+  auto result = adaptive_smoother.solve_adaptive();
+  auto end = std::chrono::high_resolution_clock::now();
+
+  double time_ms =
+      std::chrono::duration<double, std::milli>(end - start).count();
+
+  std::cout << "\nAdaptive result (Colored Schwarz):\n";
+  std::cout << "  Elements: " << result.num_elements << "\n";
+  std::cout << "  Max error: " << result.max_error << " m\n";
+  std::cout << "  Mean error: " << result.mean_error << " m\n";
+  std::cout << "  Total time: " << time_ms << " ms\n";
+  std::cout << "  Converged: " << (result.converged ? "yes" : "no") << "\n";
+
+  EXPECT_TRUE(adaptive_smoother.is_solved());
 }
 
 TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveWithC1Constraints) {

@@ -152,6 +152,7 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/cubic_thin_plate_hessian.cpp
     src/bathymetry/cg_cubic_bezier_dof_manager.cpp
     src/bathymetry/cg_cubic_bezier_bathymetry_smoother.cpp
+    src/bathymetry/bezier_multigrid_preconditioner.cpp
     src/bathymetry/adaptive_cg_cubic_bezier_smoother.cpp
     # CG Bezier bathymetry smoother (linear with C⁰ continuity)
     src/bathymetry/linear_bezier_basis_2d.cpp

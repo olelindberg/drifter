@@ -25,6 +25,7 @@ set(UNIT_TESTS
     unit/test_biharmonic_assembler.cpp
     unit/test_bezier_basis_2d.cpp
     unit/test_thin_plate_hessian.cpp
+    unit/test_bezier_multigrid.cpp
     unit/test_area_of_interest.cpp)
 
 # Integration tests

@@ -165,7 +165,12 @@ CGCubicBezierBathymetrySmoother::build_condensed_system() {
   }
 
   // Build edge constraint matrix on FREE DOFs
-  sys.A_edge = assemble_A_edge_free(expand_dof);
+  {
+    OptionalScopedTimer t(solve_profile_
+                              ? &solve_profile_->edge_constraint_assembly_ms
+                              : nullptr);
+    sys.A_edge = assemble_A_edge_free(expand_dof);
+  }
 
   return sys;
 }
@@ -248,27 +253,143 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
   int iterations = 0;
 
   if (sys.num_edge == 0) {
-    // No edge constraints - direct solve on Q_reduced
+    // No edge constraints - solve Q*x = b directly
     OptionalScopedTimer t(solve_profile_ ? &solve_profile_->outer_cg_total_ms
                                          : nullptr);
-    SparseSolver solver;
-    solver.compute(sys.Q_reduced);
-    if (solver.info() != Eigen::Success) {
-      throw std::runtime_error(
-          "CGCubicBezierBathymetrySmoother: LU factorization failed");
+
+    if (config_.use_multigrid) {
+      // Use PCG with multigrid preconditioner
+      BezierMultigridPreconditioner mg_precond(config_.multigrid_config);
+      {
+        OptionalScopedTimer t_setup(
+            solve_profile_ ? &solve_profile_->inner_cg_setup_ms : nullptr);
+        // Wire MG profile if available
+        if (solve_profile_ && solve_profile_->multigrid_profile) {
+          mg_precond.set_profile(solve_profile_->multigrid_profile);
+        }
+        mg_precond.setup(sys.Q_reduced, *quadtree_, *dof_manager_);
+      }
+
+      // Preconditioned CG: solve Q*x = b with M = MG preconditioner
+      x_free = VecX::Zero(sys.num_free);
+      VecX r = sys.b_reduced - sys.Q_reduced * x_free;
+
+      VecX z;
+      {
+        OptionalScopedTimer t_qinv(
+            solve_profile_ ? &solve_profile_->qinv_apply_total_ms : nullptr);
+        if (solve_profile_)
+          solve_profile_->qinv_apply_calls++;
+        z = mg_precond.apply(r);
+      }
+
+      VecX p = z;
+      Real rz_old = r.dot(z);
+
+      Real b_norm = sys.b_reduced.norm();
+      Real tol_sq = config_.schur_cg_tolerance * config_.schur_cg_tolerance *
+                    b_norm * b_norm;
+
+      for (int iter = 0; iter < config_.schur_cg_max_iterations; ++iter) {
+        VecX Qp = sys.Q_reduced * p;
+        Real pQp = p.dot(Qp);
+
+        if (std::abs(pQp) < 1e-30) {
+          break; // Breakdown
+        }
+
+        Real alpha = rz_old / pQp;
+        {
+          OptionalScopedTimer t_vec(
+              solve_profile_ ? &solve_profile_->cg_vector_ops_ms : nullptr);
+          x_free += alpha * p;
+          r -= alpha * Qp;
+        }
+
+        Real r_norm_sq = r.squaredNorm();
+        iterations = iter + 1;
+
+        if (r_norm_sq < tol_sq) {
+          break; // Converged
+        }
+
+        {
+          OptionalScopedTimer t_qinv(
+              solve_profile_ ? &solve_profile_->qinv_apply_total_ms : nullptr);
+          if (solve_profile_)
+            solve_profile_->qinv_apply_calls++;
+          z = mg_precond.apply(r);
+        }
+
+        {
+          OptionalScopedTimer t_vec(
+              solve_profile_ ? &solve_profile_->cg_vector_ops_ms : nullptr);
+          Real rz_new = r.dot(z);
+          p = z + (rz_new / rz_old) * p;
+          rz_old = rz_new;
+        }
+      }
+    } else {
+      // Direct LU solve
+      SparseSolver solver;
+      solver.compute(sys.Q_reduced);
+      if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "CGCubicBezierBathymetrySmoother: LU factorization failed");
+      }
+      x_free = solver.solve(sys.b_reduced);
+      iterations = 1;
     }
-    x_free = solver.solve(sys.b_reduced);
-    iterations = 1;
+
+    if (solve_profile_) {
+      solve_profile_->outer_cg_iterations = iterations;
+    }
   } else {
-    // LU factorization of Q for inner solves
-    SparseSolver Q_solver;
+    // Setup solver for Q (either LU or multigrid)
+    std::unique_ptr<SparseSolver> Q_solver;
+    std::unique_ptr<BezierMultigridPreconditioner> mg_precond;
+
+    // Lambda for applying Q^{-1} with timing
+    std::function<VecX(const VecX &)> apply_Qinv;
+
     {
       OptionalScopedTimer t(solve_profile_ ? &solve_profile_->inner_cg_setup_ms
                                            : nullptr);
-      Q_solver.compute(sys.Q_reduced);
-      if (Q_solver.info() != Eigen::Success) {
-        throw std::runtime_error(
-            "CGCubicBezierBathymetrySmoother: Q LU factorization failed");
+
+      if (config_.use_multigrid) {
+        // Setup multigrid preconditioner
+        mg_precond = std::make_unique<BezierMultigridPreconditioner>(
+            config_.multigrid_config);
+        // Wire MG profile if available
+        if (solve_profile_ && solve_profile_->multigrid_profile) {
+          mg_precond->set_profile(solve_profile_->multigrid_profile);
+        }
+        mg_precond->setup(sys.Q_reduced, *quadtree_, *dof_manager_);
+
+        // Use MG V-cycle as approximate Q^{-1}
+        apply_Qinv = [this, &mg_precond](const VecX &v) -> VecX {
+          OptionalScopedTimer t_qinv(
+              solve_profile_ ? &solve_profile_->qinv_apply_total_ms : nullptr);
+          if (solve_profile_)
+            solve_profile_->qinv_apply_calls++;
+          return mg_precond->apply(v);
+        };
+      } else {
+        // Use LU factorization for exact Q^{-1}
+        Q_solver = std::make_unique<SparseSolver>();
+        Q_solver->compute(sys.Q_reduced);
+        if (Q_solver->info() != Eigen::Success) {
+          throw std::runtime_error(
+              "CGCubicBezierBathymetrySmoother: Q LU factorization failed");
+        }
+
+        apply_Qinv = [this, &Q_solver](const VecX &v) -> VecX {
+          OptionalScopedTimer t_qinv(
+              solve_profile_ ? &solve_profile_->qinv_apply_total_ms : nullptr);
+          if (solve_profile_)
+            solve_profile_->qinv_apply_calls++;
+          return Q_solver->solve(v);
+        };
       }
     }
 
@@ -279,14 +400,21 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
 
     // Schur complement matvec: S * v = A * Q^{-1} * A^T * v
     auto schur_matvec = [&](const VecX &v) -> VecX {
+      OptionalScopedTimer t_schur(
+          solve_profile_ ? &solve_profile_->schur_matvec_total_ms : nullptr);
       VecX Atv = sys.A_edge.transpose() * v;
-      VecX Qinv_Atv = Q_solver.solve(Atv);
+      VecX Qinv_Atv = apply_Qinv(Atv);
       return sys.A_edge * Qinv_Atv;
     };
 
     // RHS: A * Q^{-1} * b
-    VecX Qinv_b = Q_solver.solve(sys.b_reduced);
-    VecX rhs = sys.A_edge * Qinv_b;
+    VecX Qinv_b, rhs;
+    {
+      OptionalScopedTimer t_rhs(solve_profile_ ? &solve_profile_->schur_rhs_ms
+                                               : nullptr);
+      Qinv_b = apply_Qinv(sys.b_reduced);
+      rhs = sys.A_edge * Qinv_b;
+    }
 
     // CG on Schur complement S * λ = rhs
     VecX lambda = VecX::Zero(m);
@@ -308,8 +436,12 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
         }
 
         Real alpha = rs_old / pSp;
-        lambda += alpha * p;
-        r -= alpha * Sp;
+        {
+          OptionalScopedTimer t_vec(
+              solve_profile_ ? &solve_profile_->cg_vector_ops_ms : nullptr);
+          lambda += alpha * p;
+          r -= alpha * Sp;
+        }
 
         Real rs_new = r.squaredNorm();
         iterations = iter + 1;
@@ -318,19 +450,26 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
           break; // Converged
         }
 
-        p = r + (rs_new / rs_old) * p;
-        rs_old = rs_new;
+        {
+          OptionalScopedTimer t_vec(
+              solve_profile_ ? &solve_profile_->cg_vector_ops_ms : nullptr);
+          p = r + (rs_new / rs_old) * p;
+          rs_old = rs_new;
+        }
       }
     }
 
     // Recover x: x = Q^{-1} * (b - A^T * λ)
-    VecX rhs_x = sys.b_reduced - sys.A_edge.transpose() * lambda;
-    x_free = Q_solver.solve(rhs_x);
+    {
+      OptionalScopedTimer t_recover(
+          solve_profile_ ? &solve_profile_->solution_recovery_ms : nullptr);
+      VecX rhs_x = sys.b_reduced - sys.A_edge.transpose() * lambda;
+      x_free = apply_Qinv(rhs_x);
+    }
 
     if (solve_profile_) {
       solve_profile_->outer_cg_iterations = iterations;
-      solve_profile_->inner_cg_total_calls =
-          iterations + 2; // Each CG iter + 2 for setup
+      solve_profile_->inner_cg_total_calls = solve_profile_->qinv_apply_calls;
     }
   }
 

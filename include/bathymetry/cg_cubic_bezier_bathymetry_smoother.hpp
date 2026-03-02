@@ -6,6 +6,7 @@
 /// Uses Continuous Galerkin assembly where DOFs at element boundaries are
 /// shared. Cubic Bezier (degree 3, 4×4 = 16 DOFs) with C¹ constraints.
 
+#include "bathymetry/bezier_multigrid_preconditioner.hpp"
 #include "bathymetry/cg_bezier_smoother_base.hpp"
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
 #include "bathymetry/constraint_condenser.hpp"
@@ -28,19 +29,41 @@ struct CGCubicIterationProfile;
 
 /// @brief Timing profile for solve phase (all times in milliseconds)
 struct CGCubicSolveProfile {
-  double matrix_build_ms = 0.0; ///< Q matrix construction
-  double constraint_build_ms =
-      0.0; ///< C¹ edge constraint assembly (in DOF manager)
+  // =========================================================================
+  // Direct solver timings
+  // =========================================================================
+  double matrix_build_ms = 0.0;          ///< Q matrix construction
+  double constraint_build_ms = 0.0;      ///< Hanging node constraint condensation
   double kkt_assembly_ms = 0.0;          ///< KKT system build
   double sparse_lu_compute_ms = 0.0;     ///< SparseLU factorization
   double sparse_lu_solve_ms = 0.0;       ///< SparseLU back-substitution
   double constraint_projection_ms = 0.0; ///< Constraint projection solve
 
-  // Iterative solver timings
-  double inner_cg_setup_ms = 0.0; ///< ICC preconditioner setup
+  // =========================================================================
+  // Iterative solver timings (high-level)
+  // =========================================================================
+  double inner_cg_setup_ms = 0.0; ///< Q^{-1} setup (LU or MG)
   int outer_cg_iterations = 0;    ///< Number of outer CG iterations
   double outer_cg_total_ms = 0.0; ///< Total outer CG time
   int inner_cg_total_calls = 0;   ///< Total inner solve calls
+
+  // =========================================================================
+  // Iterative solver detailed breakdown
+  // =========================================================================
+  double edge_constraint_assembly_ms = 0.0; ///< assemble_A_edge_free()
+  double schur_rhs_ms = 0.0;                ///< Initial A * Q^{-1} * b
+  double schur_matvec_total_ms = 0.0;       ///< Total Schur matvec time
+  double cg_vector_ops_ms = 0.0;            ///< CG vector updates (alpha, x, r, p)
+  double solution_recovery_ms = 0.0;        ///< recover_solution_from_free()
+
+  // Q^{-1} application breakdown (accumulated over all calls)
+  double qinv_apply_total_ms = 0.0; ///< Total time in apply_Qinv
+  int qinv_apply_calls = 0;         ///< Number of Q^{-1} applications
+
+  // =========================================================================
+  // Multigrid profiling (when use_multigrid=true)
+  // =========================================================================
+  MultigridProfile *multigrid_profile = nullptr; ///< Detailed MG breakdown
 };
 
 /// @brief Configuration for CG cubic Bezier bathymetry smoother
@@ -92,6 +115,13 @@ struct CGCubicBezierSmootherConfig {
   /// Initial diagonal shift for ICC preconditioner (robustness for small
   /// lambda)
   Real icc_shift = 1e-3;
+
+  /// Use geometric multigrid preconditioner for Q (default: false = LU)
+  /// Only used when use_iterative_solver = true
+  bool use_multigrid = false;
+
+  /// Multigrid preconditioner configuration
+  MultigridConfig multigrid_config;
 };
 
 /// @brief CG cubic Bezier bathymetry smoother with C¹ continuity
