@@ -420,22 +420,19 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
     CGLinearAdaptationResult result;
     result.iteration = static_cast<int>(history_.size());
 
-    // Create smoother if not exists
+    // Create smoother and solve if not exists (initial solve)
     if (!smoother_) {
-        ScopedTimer t(profile.rebuild_ms);
-        rebuild_smoother();
+        {
+            ScopedTimer t(profile.rebuild_ms);
+            rebuild_smoother();
+        }
+        smoother_->set_profile(current_profile_);
+        {
+            ScopedTimer t(profile.solve_ms);
+            smoother_->solve();
+        }
+        smoother_->set_profile(nullptr);
     }
-
-    // Ensure profile pointer is set on smoother for solve sub-timings
-    smoother_->set_profile(current_profile_);
-
-    // Solve on current mesh
-    {
-        ScopedTimer t(profile.solve_ms);
-        smoother_->solve();
-    }
-
-    smoother_->set_profile(nullptr);
 
     // Record context
     profile.num_elements = quadtree_->num_elements();
@@ -443,7 +440,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
     profile.num_free_dofs = smoother_->num_free_dofs();
     profile.num_constraints = smoother_->num_constraints();
 
-    // Estimate errors
+    // 1. Estimate errors (metric) - requires prior solve
     std::vector<CGLinearElementErrorEstimate> errors;
     {
         ScopedTimer t(profile.error_estimation_ms);
@@ -465,7 +462,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
     result.max_error = max_err;
     result.mean_error = errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
 
-    // Check stopping criteria
+    // 2. Check stopping criteria
     bool error_converged = (max_err <= config_.error_threshold);
     bool max_elements_reached = (static_cast<int>(result.num_elements) >= config_.max_elements);
 
@@ -516,7 +513,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
         write_error_csv(config_.error_output_dir, result.iteration, errors, selected, *quadtree_);
     }
 
-    // Write VTK if configured (after solve, before refinement)
+    // Write VTK if configured (after error estimation, before refinement)
     if (!config_.vtk_output_prefix.empty()) {
         std::string vtk_file =
             config_.vtk_output_prefix + "_iter_" + std::to_string(result.iteration);
@@ -565,11 +562,18 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::adapt_once() {
         result.converged = true;
         result.convergence_reason = ConvergenceReason::MaxRefinementLevel;
     } else {
-        // Store current solution before refinement for coarsening error computation
+        // 3. Adapt: Store current solution and refine elements
         store_current_solution();
-
-        // refine_elements() internally times refinement_ms and rebuild_ms
         refine_elements(valid_refine);
+
+        // 4. Solve on refined mesh
+        smoother_->set_profile(current_profile_);
+        {
+            ScopedTimer t(profile.solve_ms);
+            smoother_->solve();
+        }
+        smoother_->set_profile(nullptr);
+
         result.converged = false;
     }
 
@@ -615,10 +619,7 @@ CGLinearAdaptationResult AdaptiveCGLinearBezierSmoother::solve_adaptive() {
         }
     }
 
-    // Ensure final smoother is solved (in case we stopped after refinement)
-    if (smoother_ && !smoother_->is_solved()) {
-        smoother_->solve();
-    }
+    // No postprocess needed - each iteration ends with a solve
 
     if (config_.verbose) {
         print_profile_report();

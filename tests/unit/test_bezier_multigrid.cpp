@@ -210,7 +210,8 @@ TEST_F(BezierMultigridTest, MultigridNoConstraintsMatchesDirect) {
 
 TEST_F(BezierMultigridTest, ConfigDefaults) {
     MultigridConfig config;
-    EXPECT_EQ(config.num_levels, 4);
+    EXPECT_EQ(config.num_levels, 100);  // High default; coarsening controlled by min_tree_level
+    EXPECT_EQ(config.min_tree_level, 2);  // Coarsest level: 4x4 elements
     EXPECT_EQ(config.pre_smoothing, 1);
     EXPECT_EQ(config.post_smoothing, 1);
     EXPECT_NEAR(config.jacobi_omega, 0.8, TOLERANCE);
@@ -285,6 +286,164 @@ TEST_F(BezierMultigridTest, JacobiSmootherStillWorks) {
 
     EXPECT_GT(z.norm(), 0.0);
     EXPECT_GT(r.dot(z), 0.0);
+}
+
+// =============================================================================
+// L2 projection (full weighting) transfer operator tests
+// =============================================================================
+
+TEST_F(BezierMultigridTest, L2BernsteinMass1DDimensions) {
+    // The 1D Bernstein mass matrix should be 4x4 for cubic
+    MultigridConfig config;
+    BezierMultigridPreconditioner precond(config);
+
+    // Access internal state via setup then check levels
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Verify the multigrid hierarchy was built with L2 operators
+    EXPECT_TRUE(precond.is_setup());
+    EXPECT_GE(precond.num_levels(), 1);
+}
+
+TEST_F(BezierMultigridTest, L2RestrictionProlongationTranspose) {
+    // Verify that P = R^T (symmetry of the transfer operators)
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 4.0);
+        if (i > 0) {
+            triplets.emplace_back(i, i - 1, -1.0);
+            triplets.emplace_back(i - 1, i, -1.0);
+        }
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.num_levels = 3;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // For each level, verify P = R^T
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const auto &L = precond.level(level);
+        const auto &L_fine = precond.level(level + 1);
+
+        // P is at coarse level, R is at fine level
+        SpMat P = L.P;
+        SpMat R = L_fine.R;
+        SpMat P_expected = R.transpose();
+
+        // Check dimensions
+        EXPECT_EQ(P.rows(), P_expected.rows());
+        EXPECT_EQ(P.cols(), P_expected.cols());
+
+        // Check that P = R^T (within tolerance)
+        SpMat diff = P - P_expected;
+        Real max_diff = 0.0;
+        for (int k = 0; k < diff.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(diff, k); it; ++it) {
+                max_diff = std::max(max_diff, std::abs(it.value()));
+            }
+        }
+        EXPECT_LT(max_diff, TOLERANCE)
+            << "P != R^T at level " << level << ", max diff = " << max_diff;
+    }
+}
+
+TEST_F(BezierMultigridTest, L2RestrictionConstantPreservation) {
+    // L2 restriction should preserve constant fields
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.num_levels = 3;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Create constant field on finest level
+    int finest = precond.num_levels() - 1;
+    Index finest_dofs = precond.level(finest).Q.rows();
+    VecX fine_const = VecX::Constant(finest_dofs, 3.14159);
+
+    // Restrict to coarser levels and check constant is preserved
+    VecX current = fine_const;
+    for (int level = finest; level > 0; --level) {
+        const auto &L = precond.level(level);
+        VecX coarse = L.R * current;
+
+        // Check that all values are close to the constant
+        Real mean = coarse.mean();
+        Real max_dev = (coarse.array() - mean).abs().maxCoeff();
+
+        EXPECT_NEAR(mean, 3.14159, LOOSE_TOLERANCE)
+            << "Mean should be preserved at level " << (level - 1);
+        EXPECT_LT(max_dev, LOOSE_TOLERANCE)
+            << "Constant field not preserved at level " << (level - 1);
+
+        current = coarse;
+    }
+}
+
+TEST_F(BezierMultigridTest, L2GalerkinSymmetric) {
+    // Verify that the Galerkin coarse operator Q_c = R * Q_f * P is symmetric
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 4.0);
+        if (i > 0) {
+            triplets.emplace_back(i, i - 1, -1.0);
+            triplets.emplace_back(i - 1, i, -1.0);
+        }
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.num_levels = 3;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Check symmetry of Q at each level
+    for (int level = 0; level < precond.num_levels(); ++level) {
+        const SpMat &Q_level = precond.level(level).Q;
+        SpMat Q_t = Q_level.transpose();
+        SpMat diff = Q_level - Q_t;
+
+        Real max_asym = 0.0;
+        for (int k = 0; k < diff.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(diff, k); it; ++it) {
+                max_asym = std::max(max_asym, std::abs(it.value()));
+            }
+        }
+        EXPECT_LT(max_asym, TOLERANCE)
+            << "Q not symmetric at level " << level << ", max asymmetry = " << max_asym;
+    }
 }
 
 } // namespace

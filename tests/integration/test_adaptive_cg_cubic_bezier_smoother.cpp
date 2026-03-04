@@ -425,8 +425,10 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.smoother_config.use_iterative_solver = true;
   config.smoother_config.use_multigrid = true;
   config.smoother_config.multigrid_config.smoother_type =
-      SmootherType::ColoredMultiplicativeSchwarz;
+      SmootherType::MultiplicativeSchwarz;
   config.smoother_config.multigrid_config.verbose = true;
+  config.smoother_config.multigrid_config.num_levels = 100;
+  config.smoother_config.multigrid_config.min_tree_level = 2;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -501,7 +503,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
 
   auto depth_func = create_depth_function();
 
-  std::cout << "\n=== Colored Schwarz Profiling on GeoTIFF Data ===" << std::endl;
+  std::cout << "\n=== Colored Schwarz Profiling on GeoTIFF Data ==="
+            << std::endl;
 
   // Test both multiplicative and colored Schwarz on a uniform grid first
   std::vector<std::pair<std::string, SmootherType>> smoother_types = {
@@ -588,7 +591,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
       SmootherType::ColoredMultiplicativeSchwarz;
 
   AdaptiveCGCubicBezierSmoother adaptive_smoother(xmin, xmax, ymin, ymax, 4, 4,
-                                                   adaptive_config);
+                                                  adaptive_config);
   adaptive_smoother.set_bathymetry_data(depth_func);
   adaptive_smoother.set_land_mask(create_land_mask());
 
@@ -700,4 +703,173 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ThrowsIfEvaluateBeforeSolve) {
   smoother.set_bathymetry_data([](Real, Real) { return 50.0; });
 
   EXPECT_THROW(smoother.evaluate(50.0, 50.0), std::runtime_error);
+}
+
+// =============================================================================
+// Multigrid Convergence Analysis: Uniform vs Adaptive Meshes
+// =============================================================================
+
+TEST_F(AdaptiveCGCubicBezierSmootherTest,
+       DISABLED_MultigridConvergenceUniformVsAdaptive) {
+  // Investigate whether mixed-size elements at coarse levels affect MG
+  // convergence
+
+  // Test function: Sharp cone (requires significant refinement near peak)
+  auto cone = [](Real x, Real y) {
+    Real cx = 50.0, cy = 50.0;
+    Real dx = x - cx, dy = y - cy;
+    Real r = std::sqrt(dx * dx + dy * dy);
+    return std::max(0.0, 50.0 - r); // Cone with peak at center
+  };
+
+  std::cout << "\n"
+            << std::string(70, '=') << "\n"
+            << "Multigrid Convergence: Uniform vs Adaptive Mesh\n"
+            << std::string(70, '=') << "\n\n";
+
+  // Common solver config
+  CGCubicBezierSmootherConfig solver_config;
+  solver_config.lambda = 10.0;
+  solver_config.edge_ngauss = 4;
+  solver_config.use_iterative_solver = true;
+  solver_config.use_multigrid = true;
+  solver_config.schur_cg_tolerance = 1e-10;
+  solver_config.multigrid_config.num_levels = 3;
+  solver_config.multigrid_config.pre_smoothing = 1;
+  solver_config.multigrid_config.post_smoothing = 1;
+  solver_config.multigrid_config.smoother_type =
+      SmootherType::ColoredMultiplicativeSchwarz;
+
+  // Store results for comparison
+  struct TestResult {
+    std::string name;
+    Index num_elements;
+    Index num_dofs;
+    int cg_iterations;
+    int vcycle_calls;
+    double solve_time_ms;
+  };
+  std::vector<TestResult> results;
+
+  // =========================================================================
+  // Test 1: Uniform meshes of increasing size
+  // =========================================================================
+  std::cout << "--- Uniform Meshes ---\n\n";
+
+  for (int n : {4, 8, 16, 32}) {
+    QuadtreeAdapter mesh;
+    mesh.build_uniform(0.0, 100.0, 0.0, 100.0, n, n);
+
+    MultigridProfile mg_profile;
+    CGCubicSolveProfile solve_profile;
+    solve_profile.multigrid_profile = &mg_profile;
+
+    CGCubicBezierBathymetrySmoother smoother(mesh, solver_config);
+    smoother.set_solve_profile(&solve_profile);
+    smoother.set_bathymetry_data(cone);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    smoother.solve();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    double time_ms =
+        std::chrono::duration<double, std::milli>(end - start).count();
+
+    results.push_back({std::to_string(n) + "x" + std::to_string(n) + " uniform",
+                       mesh.num_elements(), smoother.num_free_dofs(),
+                       solve_profile.outer_cg_iterations,
+                       mg_profile.vcycle_calls, time_ms});
+
+    std::cout << std::setw(12) << results.back().name << ": " << std::setw(5)
+              << results.back().num_elements << " elems, " << std::setw(6)
+              << results.back().num_dofs << " DOFs, " << std::setw(3)
+              << results.back().cg_iterations << " CG iters, " << std::fixed
+              << std::setprecision(1) << std::setw(8) << time_ms << " ms\n";
+  }
+
+  // =========================================================================
+  // Test 2: Adaptive meshes with increasing refinement
+  // =========================================================================
+  std::cout << "\n--- Adaptive Meshes ---\n\n";
+
+  for (double threshold : {5.0, 2.0, 1.0, 0.3}) {
+    AdaptiveCGCubicBezierConfig adaptive_config;
+    adaptive_config.error_threshold = threshold;
+    adaptive_config.max_iterations = 10;
+    adaptive_config.max_elements = 500;
+    adaptive_config.smoother_config = solver_config;
+
+    AdaptiveCGCubicBezierSmoother adaptive(0.0, 100.0, 0.0, 100.0, 4, 4,
+                                           adaptive_config);
+    adaptive.set_bathymetry_data(cone);
+
+    // First pass: just get the mesh
+    adaptive.solve_adaptive();
+
+    // Now re-solve with profiling on the final mesh
+    const auto &mesh = adaptive.mesh();
+    MultigridProfile mg_profile;
+    CGCubicSolveProfile solve_profile;
+    solve_profile.multigrid_profile = &mg_profile;
+
+    // Get the verbose coloring info
+    auto config_verbose = solver_config;
+    config_verbose.multigrid_config.verbose = true;
+
+    CGCubicBezierBathymetrySmoother smoother(mesh, config_verbose);
+    smoother.set_solve_profile(&solve_profile);
+    smoother.set_bathymetry_data(cone);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    smoother.solve();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    double time_ms =
+        std::chrono::duration<double, std::milli>(end - start).count();
+
+    std::ostringstream name;
+    name << "thresh=" << std::fixed << std::setprecision(1) << threshold;
+
+    results.push_back(
+        {name.str(), mesh.num_elements(), smoother.num_free_dofs(),
+         solve_profile.outer_cg_iterations, mg_profile.vcycle_calls, time_ms});
+
+    std::cout << std::setw(12) << results.back().name << ": " << std::setw(5)
+              << results.back().num_elements << " elems, " << std::setw(6)
+              << results.back().num_dofs << " DOFs, " << std::setw(3)
+              << results.back().cg_iterations << " CG iters, " << std::fixed
+              << std::setprecision(1) << std::setw(8) << time_ms << " ms\n";
+  }
+
+  // =========================================================================
+  // Summary Table
+  // =========================================================================
+  std::cout << "\n"
+            << std::string(70, '-') << "\n"
+            << "Summary: CG Iterations per 1000 DOFs\n"
+            << std::string(70, '-') << "\n\n";
+
+  std::cout << "| " << std::setw(15) << "Mesh"
+            << " | " << std::setw(8) << "Elements"
+            << " | " << std::setw(8) << "DOFs"
+            << " | " << std::setw(8) << "CG Iters"
+            << " | " << std::setw(12) << "Iters/1000"
+            << " |\n";
+  std::cout << "|" << std::string(17, '-') << "|" << std::string(10, '-') << "|"
+            << std::string(10, '-') << "|" << std::string(10, '-') << "|"
+            << std::string(14, '-') << "|\n";
+
+  for (const auto &r : results) {
+    double iters_per_1k = 1000.0 * r.cg_iterations / r.num_dofs;
+    std::cout << "| " << std::setw(15) << r.name << " | " << std::setw(8)
+              << r.num_elements << " | " << std::setw(8) << r.num_dofs << " | "
+              << std::setw(8) << r.cg_iterations << " | " << std::fixed
+              << std::setprecision(2) << std::setw(12) << iters_per_1k
+              << " |\n";
+  }
+
+  std::cout << "\nNote: Lower 'Iters/1000' = better multigrid efficiency\n";
+  std::cout
+      << "If adaptive meshes have much higher Iters/1000, the mixed-size\n";
+  std::cout << "coarsening may be degrading multigrid convergence.\n";
 }

@@ -66,7 +66,8 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 
 - `Real` = double precision
 - `VecX`, `MatX` = Eigen dynamic vectors/matrices
-- `Vec3`, `Mat3` = 3D vectors/matrices
+- `Vec2`, `Vec3`, `Mat2`, `Mat3` = Fixed-size 2D/3D vectors/matrices
+- `SpMat` = Eigen sparse matrix (used in FEM assembly and solvers)
 - `Index` = int64_t for element indexing
 - Hexahedron geometry constants in `Hex::` namespace
 - `SigmaCoord` for terrain-following vertical coordinates
@@ -165,6 +166,11 @@ Solved via KKT system with constraint projection for exact satisfaction.
 - `enable_boundary_dirichlet` - Pin corners to data (can cause oscillations)
 
 **Non-conforming meshes:** Hanging node constraints via de Casteljau subdivision ensure continuity at 2:1 T-junctions.
+
+**Multigrid Preconditioner:** `BezierMultigridPreconditioner` accelerates CG solves using geometric multigrid with:
+- V-cycle on natural quadtree hierarchy (coarsening via Morton code parent grouping)
+- Bezier subdivision matrices for prolongation/restriction
+- Colored multiplicative Schwarz smoother (4-8 colors via graph coloring)
 
 ## Testing
 

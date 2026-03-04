@@ -39,88 +39,30 @@ QuadtreeAdapter::QuadtreeAdapter(const OctreeAdapter &octree) : impl_(std::make_
 }
 
 void QuadtreeAdapter::sync_with_octree(const OctreeAdapter &octree) {
-    // Find the minimum z value (bottom of domain)
-    Real zmin = std::numeric_limits<Real>::max();
-    for (Index i = 0; i < octree.num_elements(); ++i) {
-        const auto &bounds = octree.element_bounds(i);
-        zmin = std::min(zmin, bounds.zmin);
-    }
-
     // Clear existing data
     root_.reset();
     leaf_storage_.clear();
     leaves_.clear();
     xy_lookup_.clear();
 
-    // Find domain XY bounds
-    Real xmin = std::numeric_limits<Real>::max();
-    Real xmax = std::numeric_limits<Real>::lowest();
-    Real ymin = std::numeric_limits<Real>::max();
-    Real ymax = std::numeric_limits<Real>::lowest();
-
-    // Collect bottom elements (those with z = zmin)
-    std::vector<std::pair<Index, ElementBounds>> bottom_elements;
-    const Real tol = 1e-10;
-
-    for (Index i = 0; i < octree.num_elements(); ++i) {
-        const auto &bounds = octree.element_bounds(i);
-        if (std::abs(bounds.zmin - zmin) < tol) {
-            bottom_elements.emplace_back(i, bounds);
-            xmin = std::min(xmin, bounds.xmin);
-            xmax = std::max(xmax, bounds.xmax);
-            ymin = std::min(ymin, bounds.ymin);
-            ymax = std::max(ymax, bounds.ymax);
-        }
+    // Get octree root - it contains the full tree structure
+    const OctreeNode* octree_root = octree.root();
+    if (!octree_root) {
+        throw std::runtime_error("QuadtreeAdapter: octree has no root node");
     }
 
-    if (bottom_elements.empty()) {
-        throw std::runtime_error("QuadtreeAdapter: no bottom elements found in octree");
+    // Copy tree structure from octree, projecting to 2D (bottom face)
+    root_ = copy_octree_node_to_2d(octree_root, nullptr);
+
+    if (!root_) {
+        throw std::runtime_error("QuadtreeAdapter: failed to copy octree structure");
     }
 
-    // Set domain bounds
-    domain_.xmin = xmin;
-    domain_.xmax = xmax;
-    domain_.ymin = ymin;
-    domain_.ymax = ymax;
+    // Set domain from root bounds
+    domain_ = root_->bounds;
 
-    // Create leaf nodes directly from bottom elements
-    // Store in leaf_storage_ for ownership, leaves_ for fast access
-    leaf_storage_.reserve(bottom_elements.size());
-    leaves_.reserve(bottom_elements.size());
-
-    for (const auto &[octree_idx, bounds3d] : bottom_elements) {
-        auto node = std::make_unique<QuadtreeNode>();
-        node->bounds.xmin = bounds3d.xmin;
-        node->bounds.xmax = bounds3d.xmax;
-        node->bounds.ymin = bounds3d.ymin;
-        node->bounds.ymax = bounds3d.ymax;
-        node->octree_element = octree_idx;
-
-        // Compute level from element size relative to domain
-        Real dx = bounds3d.xmax - bounds3d.xmin;
-        Real dy = bounds3d.ymax - bounds3d.ymin;
-        Real domain_dx = xmax - xmin;
-        Real domain_dy = ymax - ymin;
-
-        // Level = log2(domain_size / element_size)
-        node->level.x = static_cast<int>(std::round(std::log2(domain_dx / dx)));
-        node->level.y = static_cast<int>(std::round(std::log2(domain_dy / dy)));
-
-        // Use octree's Morton code directly to ensure consistency with
-        // MortonUtil::parent_x/parent_y navigation in evaluate_prev_solution
-        node->morton = octree.element_morton(octree_idx);
-
-        node->leaf_index = static_cast<Index>(leaves_.size());
-
-        // Store raw pointer for fast access
-        leaves_.push_back(node.get());
-
-        // Transfer ownership to storage
-        leaf_storage_.push_back(std::move(node));
-    }
-
-    // Build spatial lookup for neighbor finding
-    build_lookup();
+    // Collect leaves and build lookups
+    rebuild_leaf_list();
 }
 
 void QuadtreeAdapter::build_uniform(Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny) {
@@ -136,38 +78,22 @@ void QuadtreeAdapter::build_uniform(Real xmin, Real xmax, Real ymin, Real ymax, 
     domain_.ymin = ymin;
     domain_.ymax = ymax;
 
-    Real dx = (xmax - xmin) / nx;
-    Real dy = (ymax - ymin) / ny;
+    // Create root node
+    root_ = std::make_unique<QuadtreeNode>();
+    root_->bounds = domain_;
+    root_->level = {0, 0};
+    root_->morton = Morton3D::encode(0, 0, 0);
+    root_->octree_element = -1;
 
-    // Compute uniform level
-    int level_x = static_cast<int>(std::round(std::log2(nx)));
-    int level_y = static_cast<int>(std::round(std::log2(ny)));
+    // Compute target levels from grid size (assumes power-of-2)
+    int target_level_x = static_cast<int>(std::round(std::log2(nx)));
+    int target_level_y = static_cast<int>(std::round(std::log2(ny)));
 
-    leaf_storage_.reserve(nx * ny);
-    leaves_.reserve(nx * ny);
+    // Recursively subdivide from root to target level
+    subdivide_to_level(root_.get(), target_level_x, target_level_y);
 
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            auto node = std::make_unique<QuadtreeNode>();
-            node->bounds.xmin = xmin + i * dx;
-            node->bounds.xmax = xmin + (i + 1) * dx;
-            node->bounds.ymin = ymin + j * dy;
-            node->bounds.ymax = ymin + (j + 1) * dy;
-            node->level.x = level_x;
-            node->level.y = level_y;
-            node->morton = Morton3D::encode(static_cast<uint32_t>(i), static_cast<uint32_t>(j), 0);
-            node->octree_element = -1; // Standalone quadtree
-            node->leaf_index = static_cast<Index>(leaves_.size());
-
-            // Store raw pointer for fast access
-            leaves_.push_back(node.get());
-
-            // Transfer ownership to storage
-            leaf_storage_.push_back(std::move(node));
-        }
-    }
-
-    build_lookup();
+    // Collect leaves and build lookups
+    rebuild_leaf_list();
 }
 
 const QuadBounds &QuadtreeAdapter::element_bounds(Index elem) const {
@@ -508,6 +434,162 @@ Index QuadtreeAdapter::add_element(const QuadBounds &bounds, QuadLevel level) {
     build_lookup();
 
     return idx;
+}
+
+// =============================================================================
+// Tree construction helpers
+// =============================================================================
+
+void QuadtreeAdapter::subdivide_to_level(QuadtreeNode* node, int target_x, int target_y) {
+    bool need_x = node->level.x < target_x;
+    bool need_y = node->level.y < target_y;
+
+    if (!need_x && !need_y) {
+        return;  // Reached target level, this is a leaf
+    }
+
+    Real xmid = 0.5 * (node->bounds.xmin + node->bounds.xmax);
+    Real ymid = 0.5 * (node->bounds.ymin + node->bounds.ymax);
+
+    uint32_t px, py, pz;
+    Morton3D::decode(node->morton, px, py, pz);
+
+    // Determine subdivision pattern based on which dimensions need refinement
+    int num_x = need_x ? 2 : 1;
+    int num_y = need_y ? 2 : 1;
+
+    for (int cy = 0; cy < num_y; ++cy) {
+        for (int cx = 0; cx < num_x; ++cx) {
+            auto child = std::make_unique<QuadtreeNode>();
+            child->parent = node;
+
+            // Only increment level in dimensions being subdivided
+            child->level.x = node->level.x + (need_x ? 1 : 0);
+            child->level.y = node->level.y + (need_y ? 1 : 0);
+
+            // Update Morton code based on actual subdivision
+            uint32_t new_px = need_x ? (2 * px + cx) : px;
+            uint32_t new_py = need_y ? (2 * py + cy) : py;
+            child->morton = Morton3D::encode(new_px, new_py, 0);
+
+            // Set bounds based on subdivision pattern
+            if (need_x) {
+                child->bounds.xmin = (cx == 0) ? node->bounds.xmin : xmid;
+                child->bounds.xmax = (cx == 0) ? xmid : node->bounds.xmax;
+            } else {
+                child->bounds.xmin = node->bounds.xmin;
+                child->bounds.xmax = node->bounds.xmax;
+            }
+
+            if (need_y) {
+                child->bounds.ymin = (cy == 0) ? node->bounds.ymin : ymid;
+                child->bounds.ymax = (cy == 0) ? ymid : node->bounds.ymax;
+            } else {
+                child->bounds.ymin = node->bounds.ymin;
+                child->bounds.ymax = node->bounds.ymax;
+            }
+
+            child->octree_element = -1;
+
+            // Recurse
+            subdivide_to_level(child.get(), target_x, target_y);
+
+            node->children.push_back(std::move(child));
+        }
+    }
+}
+
+std::unique_ptr<QuadtreeNode> QuadtreeAdapter::copy_octree_node_to_2d(
+    const OctreeNode* octree_node,
+    QuadtreeNode* parent
+) {
+    if (!octree_node) return nullptr;
+
+    auto node = std::make_unique<QuadtreeNode>();
+    node->parent = parent;
+
+    // Project 3D bounds to 2D
+    node->bounds.xmin = octree_node->bounds.xmin;
+    node->bounds.xmax = octree_node->bounds.xmax;
+    node->bounds.ymin = octree_node->bounds.ymin;
+    node->bounds.ymax = octree_node->bounds.ymax;
+
+    // Copy level (just x and y from DirectionalLevel)
+    node->level.x = octree_node->level.level_x;
+    node->level.y = octree_node->level.level_y;
+
+    // Copy Morton code (works for 2D since we use Morton3D with z=0)
+    node->morton = octree_node->morton;
+
+    // If this is a leaf in octree, mark octree element index
+    if (octree_node->is_leaf()) {
+        node->octree_element = octree_node->leaf_index;
+    } else {
+        // Copy children (project 8 octree children to quadtree)
+        // For bottom face: only keep children at zmin
+        Real zmin = octree_node->bounds.zmin;
+        const Real tol = 1e-10;
+
+        for (const auto& oct_child : octree_node->children) {
+            // Only copy children that touch the bottom face
+            if (std::abs(oct_child->bounds.zmin - zmin) < tol) {
+                auto quad_child = copy_octree_node_to_2d(oct_child.get(), node.get());
+                if (quad_child) {
+                    node->children.push_back(std::move(quad_child));
+                }
+            }
+        }
+    }
+
+    return node;
+}
+
+// =============================================================================
+// Tree traversal API
+// =============================================================================
+
+std::vector<const QuadtreeNode*> QuadtreeAdapter::nodes_at_level(int level) const {
+    std::vector<const QuadtreeNode*> result;
+    if (root_) {
+        collect_nodes_at_level(root_.get(), level, result);
+    }
+    return result;
+}
+
+void QuadtreeAdapter::collect_nodes_at_level(const QuadtreeNode* node, int target_level,
+                                              std::vector<const QuadtreeNode*>& result) const {
+    if (!node) return;
+
+    int node_level = node->level.max_level();
+    if (node_level == target_level) {
+        result.push_back(node);
+        return;
+    }
+
+    // If we haven't reached target level yet, recurse into children
+    if (node_level < target_level) {
+        for (const auto& child : node->children) {
+            collect_nodes_at_level(child.get(), target_level, result);
+        }
+    }
+    // If node_level > target_level, this node is deeper than we want - don't include
+}
+
+int QuadtreeAdapter::max_depth() const {
+    if (!root_) return 0;
+    return max_depth_recursive(root_.get());
+}
+
+int QuadtreeAdapter::max_depth_recursive(const QuadtreeNode* node) const {
+    if (!node) return 0;
+
+    int depth = node->level.max_level();
+
+    for (const auto& child : node->children) {
+        depth = std::max(depth, max_depth_recursive(child.get()));
+    }
+
+    return depth;
 }
 
 } // namespace drifter

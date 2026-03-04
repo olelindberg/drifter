@@ -199,6 +199,23 @@ public:
     const std::vector<QuadtreeNode*> &elements() const { return leaves_; }
 
     // =========================================================================
+    // Tree traversal API (for multigrid hierarchy)
+    // =========================================================================
+
+    /// @brief Get root node of the quadtree (for tree traversal)
+    /// @return Pointer to root node, or nullptr if tree not built
+    const QuadtreeNode* root() const { return root_.get(); }
+
+    /// @brief Get all nodes at a specific depth level (internal + leaves)
+    /// @param level Tree depth level (0 = root)
+    /// @return Vector of node pointers at that level
+    std::vector<const QuadtreeNode*> nodes_at_level(int level) const;
+
+    /// @brief Get maximum depth in tree
+    /// @return Maximum level of any node (0 if only root)
+    int max_depth() const;
+
+    // =========================================================================
     // Connectivity
     // =========================================================================
 
@@ -308,9 +325,34 @@ private:
     /// Find fine neighbors at an edge (for coarse element)
     std::vector<QuadtreeNode*> find_fine_neighbors_at_edge(QuadtreeNode* node, int edge_id) const;
 
-    /// Create a node from octree element bounds
+    /// Create a node from octree element bounds (legacy, for flat construction)
     std::unique_ptr<QuadtreeNode> create_node_from_octree(const ElementBounds &bounds3d,
                                                           Index octree_idx);
+
+    /// @brief Recursively subdivide a node to target level
+    /// @param node Node to subdivide
+    /// @param target_x Target level in x direction
+    /// @param target_y Target level in y direction
+    void subdivide_to_level(QuadtreeNode* node, int target_x, int target_y);
+
+    /// @brief Recursively copy octree node to quadtree node (project to 2D)
+    /// @param octree_node Source octree node
+    /// @param parent Parent quadtree node (nullptr for root)
+    /// @return New quadtree node
+    std::unique_ptr<QuadtreeNode> copy_octree_node_to_2d(const OctreeNode* octree_node,
+                                                          QuadtreeNode* parent);
+
+    /// @brief Recursively collect nodes at a specific level
+    /// @param node Current node
+    /// @param target_level Target depth level
+    /// @param result Output vector of nodes
+    void collect_nodes_at_level(const QuadtreeNode* node, int target_level,
+                                 std::vector<const QuadtreeNode*>& result) const;
+
+    /// @brief Recursively find maximum depth in subtree
+    /// @param node Current node
+    /// @return Maximum depth in subtree rooted at node
+    int max_depth_recursive(const QuadtreeNode* node) const;
 };
 
 } // namespace drifter

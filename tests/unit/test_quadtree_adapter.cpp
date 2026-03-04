@@ -46,9 +46,9 @@ TEST_F(QuadtreeAdapterTest, BuildUniform) {
 
 TEST_F(QuadtreeAdapterTest, BuildUniformElementSizes) {
     QuadtreeAdapter quadtree;
-    quadtree.build_uniform(0.0, 12.0, 0.0, 8.0, 3, 2);
+    quadtree.build_uniform(0.0, 16.0, 0.0, 8.0, 4, 2);
 
-    EXPECT_EQ(quadtree.num_elements(), 6);
+    EXPECT_EQ(quadtree.num_elements(), 8);
 
     // Each element should be 4x4
     for (Index i = 0; i < quadtree.num_elements(); ++i) {
@@ -189,28 +189,28 @@ TEST_F(QuadtreeAdapterTest, InteriorNeighborsConforming) {
 
 TEST_F(QuadtreeAdapterTest, BoundaryDetection) {
     QuadtreeAdapter quadtree;
-    quadtree.build_uniform(0.0, 10.0, 0.0, 10.0, 3, 3);
+    quadtree.build_uniform(0.0, 10.0, 0.0, 10.0, 4, 4);
 
     int boundary_edge_count = 0;
     quadtree.for_each_boundary_edge([&](Index, int) {
         boundary_edge_count++;
     });
 
-    // 3x3 grid: 12 boundary edges (3 on each side)
-    EXPECT_EQ(boundary_edge_count, 12);
+    // 4x4 grid: 16 boundary edges (4 on each side)
+    EXPECT_EQ(boundary_edge_count, 16);
 }
 
 TEST_F(QuadtreeAdapterTest, InteriorEdgeCount) {
     QuadtreeAdapter quadtree;
-    quadtree.build_uniform(0.0, 10.0, 0.0, 10.0, 3, 3);
+    quadtree.build_uniform(0.0, 10.0, 0.0, 10.0, 4, 4);
 
     int interior_edge_count = 0;
     quadtree.for_each_interior_edge([&](Index, int, const EdgeNeighborInfo&) {
         interior_edge_count++;
     });
 
-    // 3x3 grid: 2*3 horizontal + 2*3 vertical = 12 interior edges
-    EXPECT_EQ(interior_edge_count, 12);
+    // 4x4 grid: 3*4 horizontal + 3*4 vertical = 24 interior edges
+    EXPECT_EQ(interior_edge_count, 24);
 }
 
 TEST_F(QuadtreeAdapterTest, NeighborReciprocity) {

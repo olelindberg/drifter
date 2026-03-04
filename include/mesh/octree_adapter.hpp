@@ -156,6 +156,9 @@ public:
     /// Get all leaf elements
     const std::vector<OctreeNode*> &elements() const { return leaves_; }
 
+    /// Get root node of the octree (for tree traversal)
+    const OctreeNode* root() const { return root_.get(); }
+
     // =========================================================================
     // Connectivity
     // =========================================================================

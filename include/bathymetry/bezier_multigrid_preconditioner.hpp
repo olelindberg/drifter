@@ -18,6 +18,7 @@
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include <Eigen/SparseLU>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -31,7 +32,8 @@ enum class SmootherType {
   ColoredMultiplicativeSchwarz
 };
 
-/// @brief Detailed timing profile for multigrid preconditioner (all times in ms)
+/// @brief Detailed timing profile for multigrid preconditioner (all times in
+/// ms)
 struct MultigridProfile {
   // =========================================================================
   // Setup phase breakdown
@@ -49,17 +51,17 @@ struct MultigridProfile {
   double apply_total_ms = 0.0; ///< Total time in apply() calls
 
   // V-cycle components (accumulated)
-  double vcycle_pre_smooth_ms = 0.0;  ///< Pre-smoothing total time
-  double vcycle_residual_ms = 0.0;    ///< Residual computation (r = b - Q*x)
-  double vcycle_restrict_ms = 0.0;    ///< Restriction (r_c = R*r) total time
-  double vcycle_prolong_ms = 0.0;     ///< Prolongation (e = P*e_c) total time
-  double vcycle_post_smooth_ms = 0.0; ///< Post-smoothing total time
+  double vcycle_pre_smooth_ms = 0.0;   ///< Pre-smoothing total time
+  double vcycle_residual_ms = 0.0;     ///< Residual computation (r = b - Q*x)
+  double vcycle_restrict_ms = 0.0;     ///< Restriction (r_c = R*r) total time
+  double vcycle_prolong_ms = 0.0;      ///< Prolongation (e = P*e_c) total time
+  double vcycle_post_smooth_ms = 0.0;  ///< Post-smoothing total time
   double vcycle_coarse_solve_ms = 0.0; ///< Coarsest level direct solve time
 
   // Schwarz smoother breakdown (accumulated over all smooth_schwarz calls)
-  double schwarz_matvec_ms = 0.0;        ///< Full mat-vec Qx = Q*x
-  double schwarz_gather_ms = 0.0;        ///< Gather local residual r_local
-  double schwarz_local_solve_ms = 0.0;   ///< Local LU solve dx = Q_block^{-1}*r
+  double schwarz_matvec_ms = 0.0;      ///< Full mat-vec Qx = Q*x
+  double schwarz_gather_ms = 0.0;      ///< Gather local residual r_local
+  double schwarz_local_solve_ms = 0.0; ///< Local LU solve dx = Q_block^{-1}*r
   double schwarz_scatter_update_ms = 0.0; ///< Scatter + incremental Qx update
 
   // Jacobi smoother timing (accumulated)
@@ -92,7 +94,12 @@ struct MultigridProfile {
 /// @brief Configuration for geometric multigrid preconditioner
 struct MultigridConfig {
   /// Number of V-cycle levels (including finest)
-  int num_levels = 3;
+  int num_levels = 100;
+
+  /// Minimum tree level for coarsest multigrid level (0 = 1x1, 1 = 2x2, 2 = 4x4
+  /// elements) Coarsening stops when composite grid nodes reach this tree
+  /// level.
+  int min_tree_level = 2;
 
   /// Pre-smoothing iterations
   int pre_smoothing = 1;
@@ -111,6 +118,44 @@ struct MultigridConfig {
 
   /// Enable verbose logging during setup
   bool verbose = false;
+};
+
+/// @brief Active node in a composite multigrid level
+///
+/// Represents a node that contributes DOFs at a specific MG level.
+/// Can be either a leaf node (passes through unchanged at this level)
+/// or an internal node (has children at finer MG level that get subdivided).
+struct CompositeGridNode {
+  /// Pointer to the underlying quadtree node
+  const QuadtreeNode *tree_node = nullptr;
+
+  /// True if this node's 4 children exist at finer MG level (subdivision)
+  /// False if this node passes through unchanged (identity prolongation)
+  bool is_subdivided = false;
+
+  /// Global DOF indices at this MG level (16 DOFs for cubic Bezier)
+  std::array<Index, 16> dof_indices;
+
+  CompositeGridNode() { dof_indices.fill(-1); }
+};
+
+/// @brief Composite grid level for adaptive multigrid
+///
+/// Represents all active nodes at one MG level. For adaptive meshes,
+/// this includes both internal nodes (parents of finer elements) and
+/// leaf nodes that pass through unchanged.
+struct CompositeGridLevel {
+  /// Active nodes at this level
+  std::vector<CompositeGridNode> nodes;
+
+  /// Total unique DOFs at this level
+  Index num_dofs = 0;
+
+  /// Map from tree node pointer to index in nodes vector
+  std::map<const QuadtreeNode *, Index> node_index_map;
+
+  /// Maximum tree depth among nodes at this level
+  int max_depth = 0;
 };
 
 /// @brief Data for a single multigrid level
@@ -145,6 +190,19 @@ struct MultigridLevel {
 
   /// Number of colors used in coloring
   int num_colors = 0;
+
+  // =========================================================================
+  // Composite grid structure for adaptive meshes
+  // =========================================================================
+
+  /// Indices of nodes that are subdivided (have 4 children at finer level)
+  std::vector<Index> subdivision_node_indices;
+
+  /// Indices of nodes that pass through unchanged (coarse leaves)
+  std::vector<Index> passthrough_node_indices;
+
+  /// Composite grid structure for this level
+  CompositeGridLevel composite_grid;
 };
 
 /// @brief Geometric multigrid preconditioner for CG Bezier bathymetry smoother
@@ -199,27 +257,65 @@ public:
 private:
   MultigridConfig config_;
   std::vector<MultigridLevel> levels_;
-  MultigridProfile *profile_ = nullptr; ///< Optional profiling (null = disabled)
+  MultigridProfile *profile_ =
+      nullptr; ///< Optional profiling (null = disabled)
+
+  /// Cached references for composite hierarchy building (valid only during
+  /// setup)
+  const QuadtreeAdapter *mesh_ = nullptr;
+  const CGCubicBezierDofManager *dof_manager_ = nullptr;
 
   /// Cached Bezier subdivision matrices (4x4 for cubic)
   MatX S_left_;  // [0, 0.5] subdivision
   MatX S_right_; // [0.5, 1] subdivision
 
-  /// @brief Build coarse level from fine level
-  /// @param fine_level Index of fine level
-  /// @param mesh Quadtree mesh (for Morton codes)
-  /// @param fine_dof_manager DOF manager for fine level
-  void build_coarse_level(int fine_level, const QuadtreeAdapter &mesh,
-                          const CGCubicBezierDofManager &fine_dof_manager);
+  // =========================================================================
+  // L2 projection (full weighting) transfer operators
+  // =========================================================================
 
-  /// @brief Build prolongation operator for a single coarsening step
+  /// Cached 1D Bernstein mass matrix (4x4 for cubic)
+  MatX M_1D_;
+
+  /// Cached 2D mass matrix (16x16, tensor product)
+  MatX M_2D_;
+
+  /// Cached inverse of 2D mass matrix
+  MatX M_2D_inv_;
+
+  /// Cached local L2 restriction matrix (16x64, coarse × 4 children)
+  MatX R_L2_local_;
+
+  /// Cached local L2 prolongation matrix (64x16, 4 children × coarse)
+  MatX P_L2_local_;
+
+  /// @brief Build 1D cubic Bernstein mass matrix
+  /// @return 4x4 mass matrix M[i,j] = ∫₀¹ Bᵢ³(t) · Bⱼ³(t) dt
+  static MatX build_bernstein_mass_1d();
+
+  /// @brief Build local L2 operators (restriction and prolongation)
+  /// @details Computes R_L2_local_ = M_c⁻¹ · P_bezier^T · M_f
+  ///          and P_L2_local_ = R_L2_local_^T
+  void build_l2_operators_local();
+
+  /// @brief Build global restriction operator using L2 projection
+  /// @param mg_level The coarse MG level index
+  /// @return Restriction matrix R: fine -> coarse
+  SpMat build_restriction_l2(int mg_level);
+
+  /// @brief Build prolongation from tree level L to level L+1
+  /// @param tree_level Tree level (0 = root/coarsest)
   /// @param mesh Quadtree mesh
-  /// @param fine_dof_manager DOF manager for fine level
-  /// @param coarse_num_dofs Output: number of coarse DOFs
-  /// @return Global prolongation matrix (fine_dofs x coarse_dofs)
-  SpMat build_prolongation(const QuadtreeAdapter &mesh,
-                           const CGCubicBezierDofManager &fine_dof_manager,
-                           Index &coarse_num_dofs);
+  /// @param leaf_dof_manager DOF manager for leaf level
+  /// @param coarse_num_dofs Output: number of DOFs at tree_level
+  /// @param expected_fine_dofs Expected number of DOFs at tree_level+1 (0 to
+  /// auto-compute)
+  /// @return Prolongation matrix P: level -> level+1 (coarse_dofs x fine_dofs
+  /// rows)
+  SpMat
+  build_prolongation_for_level(int tree_level, const QuadtreeAdapter &mesh,
+                               const CGCubicBezierDofManager &leaf_dof_manager,
+                               Index &coarse_num_dofs,
+                               Index expected_fine_dofs = 0);
 
   /// @brief V-cycle recursion
   /// @param level Current level (0 = finest)
@@ -268,7 +364,8 @@ private:
   void build_element_blocks(int level,
                             const CGCubicBezierDofManager &dof_manager);
 
-  /// @brief Build element coloring for colored Schwarz smoother using graph coloring
+  /// @brief Build element coloring for colored Schwarz smoother using graph
+  /// coloring
   /// @param level Level index
   /// @details Uses greedy graph coloring based on DOF adjacency. Elements that
   ///          share DOFs get different colors. Works for both uniform and
@@ -277,6 +374,73 @@ private:
 
   /// @brief Compute Kronecker product of two matrices
   static MatX kronecker_product(const MatX &A, const MatX &B);
+
+  // =========================================================================
+  // Composite grid methods for adaptive meshes
+  // =========================================================================
+
+  /// @brief Build composite grid hierarchy from all leaves
+  /// @param mesh Quadtree mesh
+  /// @param dof_manager DOF manager for leaf level
+  /// @details Initializes finest level with all leaves, then iteratively
+  ///          builds coarser levels by coarsening complete sibling groups.
+  void build_composite_hierarchy(const QuadtreeAdapter &mesh,
+                                 const CGCubicBezierDofManager &dof_manager);
+
+  /// @brief Build one coarse composite level from finer level
+  /// @param mg_level The coarse MG level index to build
+  /// @details Groups fine nodes by parent, coarsens complete sibling groups
+  ///          of 4, and passes through incomplete groups unchanged.
+  void build_composite_level_from_finer(int mg_level);
+
+  /// @brief Build prolongation using composite grid structure
+  /// @param mg_level The coarse MG level index
+  /// @return Prolongation matrix P: coarse -> fine
+  /// @details Builds P with subdivision entries for coarsened nodes and
+  ///          identity entries for pass-through nodes.
+  SpMat build_prolongation_composite(int mg_level);
+
+  /// @brief Assign DOFs to node using position-based deduplication
+  /// @param node The composite grid node to assign DOFs to
+  /// @param bounds Element bounds for DOF positioning
+  /// @param position_to_dof Map from quantized position to DOF index
+  /// @param num_dofs Current DOF count (incremented for new DOFs)
+  void assign_dofs_from_bounds(
+      CompositeGridNode &node, const QuadBounds &bounds,
+      std::map<std::pair<int64_t, int64_t>, Index> &position_to_dof,
+      Index &num_dofs);
+
+  /// @brief Find minimum leaf depth in mesh
+  /// @param mesh Quadtree mesh
+  /// @return Minimum tree depth among all leaves
+  static int compute_min_leaf_depth(const QuadtreeAdapter &mesh);
+
+  /// @brief Get child index (0-3) based on position within parent
+  /// @param child Child node
+  /// @param parent Parent node
+  /// @return Child index: 0=(0,0), 1=(1,0), 2=(0,1), 3=(1,1)
+  static int get_child_quadrant(const QuadtreeNode *child,
+                                const QuadtreeNode *parent);
+
+  /// @brief Recursively add prolongation entries from coarse node to all
+  /// descendant leaves
+  /// @param tree_node Current tree node (start with coarse node's child)
+  /// @param coarse_node The coarse composite grid node
+  /// @param fine_grid The fine composite grid level
+  /// @param P_accumulated Accumulated subdivision matrix from coarse to current
+  /// node
+  /// @param P_local Subdivision matrices for each quadrant
+  /// @param triplets Output triplet list for prolongation matrix
+  /// @param processed_fine_dofs Set of fine DOFs already processed (to avoid
+  /// duplicates)
+  /// @param parent Parent of tree_node (for quadrant determination)
+  void add_recursive_prolongation(
+      const QuadtreeNode *tree_node, const CompositeGridNode &coarse_node,
+      const CompositeGridLevel &fine_grid, const MatX &P_accumulated,
+      const std::array<MatX, 4> &P_local,
+      std::vector<Eigen::Triplet<Real>> &triplets,
+      std::set<Index> &processed_fine_dofs,
+      const QuadtreeNode *parent) const;
 };
 
 } // namespace drifter
