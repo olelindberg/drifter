@@ -267,6 +267,10 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
         if (solve_profile_ && solve_profile_->multigrid_profile) {
           mg_precond.set_profile(solve_profile_->multigrid_profile);
         }
+        // Connect element matrix cache for CachedRediscretization strategy
+        if (element_matrix_cache_) {
+          mg_precond.set_element_matrix_cache(element_matrix_cache_);
+        }
         mg_precond.setup(sys.Q_reduced, *quadtree_, *dof_manager_);
       }
 
@@ -363,6 +367,10 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
         // Wire MG profile if available
         if (solve_profile_ && solve_profile_->multigrid_profile) {
           mg_precond->set_profile(solve_profile_->multigrid_profile);
+        }
+        // Connect element matrix cache for CachedRediscretization strategy
+        if (element_matrix_cache_) {
+          mg_precond->set_element_matrix_cache(element_matrix_cache_);
         }
         mg_precond->setup(sys.Q_reduced, *quadtree_, *dof_manager_);
 

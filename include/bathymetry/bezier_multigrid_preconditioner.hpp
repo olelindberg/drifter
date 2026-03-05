@@ -20,6 +20,7 @@
 #include <Eigen/SparseLU>
 #include <map>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 namespace drifter {
@@ -30,6 +31,15 @@ enum class SmootherType {
   MultiplicativeSchwarz,
   AdditiveSchwarz,
   ColoredMultiplicativeSchwarz
+};
+
+/// @brief Strategy for building coarse-level system matrices
+enum class CoarseGridStrategy {
+  /// Q_c = R * Q_f * P (algebraic Galerkin projection)
+  Galerkin,
+  /// Assemble from cached element matrices (exact, includes data fitting)
+  /// Requires element_matrix_cache to be set via set_element_matrix_cache()
+  CachedRediscretization
 };
 
 /// @brief Detailed timing profile for multigrid preconditioner (all times in
@@ -118,6 +128,10 @@ struct MultigridConfig {
 
   /// Enable verbose logging during setup
   bool verbose = false;
+
+  /// Strategy for building coarse-level system matrices
+  /// Default: Galerkin (preserves original behavior)
+  CoarseGridStrategy coarse_grid_strategy = CoarseGridStrategy::Galerkin;
 };
 
 /// @brief Active node in a composite multigrid level
@@ -254,11 +268,24 @@ public:
   /// @brief Get current profile pointer
   MultigridProfile *profile() const { return profile_; }
 
+  /// @brief Set element matrix cache for CachedRediscretization strategy
+  /// @param cache Pointer to map owned by adaptive smoother (persists across refinement)
+  /// @note Only used when config.coarse_grid_strategy == CachedRediscretization
+  void set_element_matrix_cache(
+      const std::map<std::tuple<uint64_t, int, int>, MatX>* cache) {
+    element_matrix_cache_ = cache;
+  }
+
 private:
   MultigridConfig config_;
   std::vector<MultigridLevel> levels_;
   MultigridProfile *profile_ =
       nullptr; ///< Optional profiling (null = disabled)
+
+  /// External element matrix cache for CachedRediscretization strategy
+  /// Key: (morton, level_x, level_y) -> element matrix Q_elem
+  const std::map<std::tuple<uint64_t, int, int>, MatX>* element_matrix_cache_ =
+      nullptr;
 
   /// Cached references for composite hierarchy building (valid only during
   /// setup)
@@ -301,6 +328,12 @@ private:
   /// @param mg_level The coarse MG level index
   /// @return Restriction matrix R: fine -> coarse
   SpMat build_restriction_l2(int mg_level);
+
+  /// @brief Assemble coarse level matrix from cached element matrices
+  /// @param mg_level The coarse MG level index
+  /// @return Assembled system matrix for this level
+  /// @note Requires element_matrix_cache_ to be set
+  SpMat assemble_from_cached_matrices(int mg_level);
 
   /// @brief Build prolongation from tree level L to level L+1
   /// @param tree_level Tree level (0 = root/coarsest)

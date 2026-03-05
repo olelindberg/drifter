@@ -69,6 +69,9 @@ void AdaptiveCGCubicBezierSmoother::rebuild_smoother() {
             std::make_unique<CGCubicBezierBathymetrySmoother>(*quadtree_, config_.smoother_config);
     }
 
+    // Connect smoother to persistent element matrix cache for multigrid reuse
+    smoother_->set_element_matrix_cache(&element_matrices_);
+
     // Pass profile pointer so assembly sub-timings are recorded
     smoother_->set_profile(current_profile_);
 

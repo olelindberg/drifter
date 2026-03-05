@@ -13,7 +13,9 @@
 #include "mesh/seabed_surface.hpp"
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 namespace drifter {
@@ -108,6 +110,14 @@ public:
     Index num_free_dofs() const { return dof_manager_num_free_dofs(); }
     Index num_constraints() const { return dof_manager_num_constraints(); }
 
+    /// @brief Set external cache for element matrices (for multigrid reuse)
+    /// @param cache Pointer to map owned by adaptive smoother (persists across refinement)
+    /// @note Cache is populated during assemble_hessian_global() and assemble_data_fitting_global()
+    void set_element_matrix_cache(
+        std::map<std::tuple<uint64_t, int, int>, MatX>* cache) {
+        element_matrix_cache_ = cache;
+    }
+
     /// @brief Get element control point values
     /// @return Vector of DOF values for this element
     /// @note Public so adaptive smoothers can access coefficients
@@ -130,6 +140,14 @@ protected:
     VecX BtWd_global_;     ///< Data fitting RHS
     Real dTWd_global_ = 0; ///< Data norm for residual computation
     Real alpha_ = 0;       ///< Scale normalization factor (norm_BtWB / norm_H)
+
+    /// External cache for element matrices (owned by adaptive smoother)
+    /// If set, element matrices are stored during assembly for multigrid reuse
+    std::map<std::tuple<uint64_t, int, int>, MatX>* element_matrix_cache_ = nullptr;
+
+    /// Temporary storage for element matrices during assembly
+    /// Populated in assemble_hessian_global(), completed in assemble_data_fitting_global()
+    std::vector<MatX> element_matrix_cache_temp_;
 
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes
@@ -230,6 +248,11 @@ protected:
 
     /// @brief Evaluate gradient in a specific element
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
+
+    /// @brief Store element matrix in external cache
+    /// @param elem Element index
+    /// @param Q_local Element matrix to cache
+    void cache_element_matrix(Index elem, const MatX& Q_local);
 };
 
 } // namespace drifter

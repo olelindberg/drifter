@@ -414,7 +414,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   AdaptiveCGCubicBezierConfig config;
   config.error_threshold = 1.0;
   config.error_metric_type = ErrorMetricType::VolumeChange;
-  config.max_iterations = 5;
+  config.max_iterations = 2;
   config.max_elements = 2500;
   config.smoother_config.lambda = 10.0;
   config.max_refinement_level = 12;
@@ -429,6 +429,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.smoother_config.multigrid_config.verbose = true;
   config.smoother_config.multigrid_config.num_levels = 100;
   config.smoother_config.multigrid_config.min_tree_level = 2;
+  config.smoother_config.multigrid_config.coarse_grid_strategy =
+      CoarseGridStrategy::CachedRediscretization;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;

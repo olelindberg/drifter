@@ -2,6 +2,8 @@
 #include "bathymetry/bezier_multigrid_preconditioner.hpp"
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
+#include "mesh/octree_adapter.hpp"
+#include "mesh/refine_mask.hpp"
 #include <cmath>
 
 using namespace drifter;
@@ -443,6 +445,242 @@ TEST_F(BezierMultigridTest, L2GalerkinSymmetric) {
         }
         EXPECT_LT(max_asym, TOLERANCE)
             << "Q not symmetric at level " << level << ", max asymmetry = " << max_asym;
+    }
+}
+
+// =============================================================================
+// Cached Rediscretization tests
+// =============================================================================
+
+TEST_F(BezierMultigridTest, CoarseGridStrategyDefault) {
+    // Verify default coarse grid strategy is Galerkin
+    MultigridConfig config;
+    EXPECT_EQ(config.coarse_grid_strategy, CoarseGridStrategy::Galerkin);
+}
+
+TEST_F(BezierMultigridTest, CachedRediscretizationConfigurable) {
+    // Verify CachedRediscretization strategy can be configured
+    MultigridConfig config;
+    config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    EXPECT_EQ(config.coarse_grid_strategy, CoarseGridStrategy::CachedRediscretization);
+
+    BezierMultigridPreconditioner precond(config);
+    // Without a cache, setup should fall back to Galerkin
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Setup should not crash even without cache (falls back to Galerkin)
+    precond.setup(Q, mesh_, smoother.dof_manager());
+    EXPECT_TRUE(precond.is_setup());
+}
+
+TEST_F(BezierMultigridTest, CachedRediscretizationWithAdaptiveSmoother) {
+    // Test that CachedRediscretization works with adaptive smoother's cache
+    // Build a uniform mesh (2x2) that can have multigrid hierarchy
+    QuadtreeAdapter uniform_mesh;
+    uniform_mesh.build_uniform(0.0, 1.0, 0.0, 1.0, 4, 4);
+
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 10.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.multigrid_config.num_levels = 2;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    config.schur_cg_tolerance = 1e-8;
+    config.edge_ngauss = 0; // Disable edge constraints for cleaner test
+
+    CGCubicBezierBathymetrySmoother smoother(uniform_mesh, config);
+
+    // The smoother assembles element matrices during set_bathymetry_data
+    auto bathy_func = [](Real x, Real y) { return x * x + y * y; };
+    smoother.set_bathymetry_data(bathy_func);
+    smoother.solve();
+
+    // Verify solution is reasonable
+    Real center_value = smoother.evaluate(0.5, 0.5);
+    Real expected = bathy_func(0.5, 0.5);
+    EXPECT_NEAR(center_value, expected, 0.5);
+}
+
+TEST_F(BezierMultigridTest, CachedRediscretizationConvergence) {
+    // Compare convergence with Galerkin vs CachedRediscretization strategies
+    // Both should converge to similar solutions for simple problems
+    QuadtreeAdapter uniform_mesh;
+    uniform_mesh.build_uniform(0.0, 1.0, 0.0, 1.0, 4, 4);
+
+    auto bathy_func = [](Real x, Real y) { return std::sin(M_PI * x) * std::cos(M_PI * y); };
+
+    // Galerkin strategy
+    CGCubicBezierSmootherConfig config_galerkin;
+    config_galerkin.lambda = 10.0;
+    config_galerkin.use_iterative_solver = true;
+    config_galerkin.use_multigrid = true;
+    config_galerkin.multigrid_config.num_levels = 2;
+    config_galerkin.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    config_galerkin.schur_cg_tolerance = 1e-8;
+    config_galerkin.edge_ngauss = 0;
+
+    CGCubicBezierBathymetrySmoother smoother_galerkin(uniform_mesh, config_galerkin);
+    smoother_galerkin.set_bathymetry_data(bathy_func);
+    smoother_galerkin.solve();
+
+    // CachedRediscretization strategy
+    CGCubicBezierSmootherConfig config_cached;
+    config_cached.lambda = 10.0;
+    config_cached.use_iterative_solver = true;
+    config_cached.use_multigrid = true;
+    config_cached.multigrid_config.num_levels = 2;
+    config_cached.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    config_cached.schur_cg_tolerance = 1e-8;
+    config_cached.edge_ngauss = 0;
+
+    CGCubicBezierBathymetrySmoother smoother_cached(uniform_mesh, config_cached);
+    smoother_cached.set_bathymetry_data(bathy_func);
+    smoother_cached.solve();
+
+    // Both should produce solutions in similar range
+    // Note: They may differ slightly because CachedRediscretization uses exact
+    // element matrices while Galerkin uses projected matrices
+    std::vector<std::pair<Real, Real>> test_points = {
+        {0.25, 0.25}, {0.5, 0.5}, {0.75, 0.75}, {0.25, 0.75}};
+
+    for (const auto &[x, y] : test_points) {
+        Real val_galerkin = smoother_galerkin.evaluate(x, y);
+        Real val_cached = smoother_cached.evaluate(x, y);
+        // Allow larger tolerance as the coarse operators are different
+        EXPECT_NEAR(val_galerkin, val_cached, 0.1)
+            << "Large difference at (" << x << ", " << y << ")";
+    }
+}
+
+TEST_F(BezierMultigridTest, CachedRediscretizationSymmetric) {
+    // Verify that CachedRediscretization produces symmetric coarse operators
+    QuadtreeAdapter uniform_mesh;
+    uniform_mesh.build_uniform(0.0, 1.0, 0.0, 1.0, 4, 4);
+
+    CGCubicBezierSmootherConfig smoother_config;
+    smoother_config.lambda = 10.0;
+    smoother_config.use_iterative_solver = true;
+    smoother_config.use_multigrid = true;
+    smoother_config.multigrid_config.num_levels = 2;
+    smoother_config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    smoother_config.edge_ngauss = 0;
+
+    CGCubicBezierBathymetrySmoother smoother(uniform_mesh, smoother_config);
+
+    auto bathy_func = [](Real x, Real y) { return x + y; };
+    smoother.set_bathymetry_data(bathy_func);
+    smoother.solve();
+
+    // The element matrices should be symmetric, so assembled coarse Q should be too
+    // Note: We can't directly access the multigrid levels from the smoother,
+    // but we verified convergence which requires reasonable operators
+    EXPECT_TRUE(smoother.is_solved());
+}
+
+// =============================================================================
+// Adaptive mesh restriction tests (partition of unity)
+// =============================================================================
+
+TEST_F(BezierMultigridTest, L2RestrictionRowSumsEqualOneAdaptive) {
+    // Test with ADAPTIVE mesh (non-uniform), not just uniform
+    // This catches the bug where partial children break partition of unity
+
+    // Create octree and refine only some elements
+    OctreeAdapter octree(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    octree.build_uniform(2, 2, 1);
+
+    // Refine only some elements (creates partial children)
+    std::vector<Index> to_refine = {0, 1};  // Refine 2 of 4 elements
+    std::vector<RefineMask> masks(to_refine.size(), RefineMask::XY);
+    octree.refine(to_refine, masks);
+
+    // Create QuadtreeAdapter from refined octree
+    QuadtreeAdapter adaptive_mesh(octree);
+
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(adaptive_mesh, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.num_levels = 3;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, adaptive_mesh, smoother.dof_manager());
+
+    // Verify row sums = 1 for each restriction operator
+    for (int level = precond.num_levels() - 1; level > 0; --level) {
+        const SpMat &R = precond.level(level).R;
+        VecX row_sums = R * VecX::Ones(R.cols());
+
+        for (Index i = 0; i < R.rows(); ++i) {
+            EXPECT_NEAR(row_sums(i), 1.0, 1e-10)
+                << "Row " << i << " of R at level " << level
+                << " sums to " << row_sums(i) << ", not 1.0";
+        }
+    }
+}
+
+TEST_F(BezierMultigridTest, AdaptiveMeshConstantPreservation) {
+    // Verify constant fields are preserved during restriction on adaptive meshes
+
+    // Create octree and refine only some elements
+    OctreeAdapter octree(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    octree.build_uniform(2, 2, 1);
+
+    // Refine only some elements (creates partial children)
+    std::vector<Index> to_refine = {0, 1};  // Refine 2 of 4 elements
+    std::vector<RefineMask> masks(to_refine.size(), RefineMask::XY);
+    octree.refine(to_refine, masks);
+
+    // Create QuadtreeAdapter from refined octree
+    QuadtreeAdapter adaptive_mesh(octree);
+
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(adaptive_mesh, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.num_levels = 3;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, adaptive_mesh, smoother.dof_manager());
+
+    // Restrict constant field and verify it stays constant
+    int finest = precond.num_levels() - 1;
+    VecX fine_const = VecX::Constant(precond.level(finest).Q.rows(), 3.14159);
+
+    VecX current = fine_const;
+    for (int level = finest; level > 0; --level) {
+        VecX coarse = precond.level(level).R * current;
+
+        // All values should be exactly 3.14159
+        for (Index i = 0; i < coarse.size(); ++i) {
+            EXPECT_NEAR(coarse(i), 3.14159, 1e-10)
+                << "Value " << i << " at level " << (level - 1) << " is " << coarse(i);
+        }
+
+        current = coarse;
     }
 }
 

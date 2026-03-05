@@ -81,6 +81,12 @@ public:
     /// @brief Check if bathymetry data has been set
     bool has_bathymetry_data() const { return static_cast<bool>(bathy_func_); }
 
+    /// @brief Access cached element matrices (for multigrid CachedRediscretization)
+    /// @return Map from (morton, level_x, level_y) to element matrix Q_elem
+    const std::map<std::tuple<uint64_t, int, int>, MatX>& element_matrices() const {
+        return element_matrices_;
+    }
+
 protected:
     // =========================================================================
     // Shared state
@@ -111,6 +117,11 @@ protected:
     /// Morton alone doesn't uniquely identify an element - same Morton can exist
     /// at different levels with different positions/sizes.
     std::map<std::tuple<uint64_t, int, int>, VecX> prev_solutions_;
+
+    /// Cached element matrices (Q_elem = alpha*H + lambda*B + eps*I)
+    /// Key: (morton, level_x, level_y) - persists across refinement iterations
+    /// Used for multigrid coarse level assembly via CachedRediscretization strategy
+    std::map<std::tuple<uint64_t, int, int>, MatX> element_matrices_;
 
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes

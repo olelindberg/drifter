@@ -222,13 +222,21 @@ void BezierMultigridPreconditioner::setup(
         levels_[mg_level + 1].R = R;  // R maps mg_level+1 -> mg_level (fine -> coarse)
         levels_[mg_level].P = R.transpose();  // P = R^T (coarse -> fine)
 
-        // Galerkin projection: Q_coarse = R * Q_fine * P
+        // Build coarse level system matrix
         {
             OptionalScopedTimer t2(profile_ ? &profile_->setup_galerkin_ms : nullptr);
-            SpMat temp = levels_[mg_level + 1].Q * levels_[mg_level].P;
-            levels_[mg_level].Q = R * temp;
-            // Symmetrize
-            levels_[mg_level].Q = 0.5 * (levels_[mg_level].Q + SpMat(levels_[mg_level].Q.transpose()));
+
+            if (config_.coarse_grid_strategy == CoarseGridStrategy::CachedRediscretization &&
+                element_matrix_cache_ != nullptr) {
+                // Assemble from cached element matrices (exact, includes data fitting)
+                levels_[mg_level].Q = assemble_from_cached_matrices(mg_level);
+            } else {
+                // Galerkin projection: Q_coarse = R * Q_fine * P
+                SpMat temp = levels_[mg_level + 1].Q * levels_[mg_level].P;
+                levels_[mg_level].Q = R * temp;
+                // Symmetrize
+                levels_[mg_level].Q = 0.5 * (levels_[mg_level].Q + SpMat(levels_[mg_level].Q.transpose()));
+            }
         }
 
         // Compute diagonal inverse for Jacobi
@@ -284,6 +292,48 @@ void BezierMultigridPreconditioner::setup(
                 "BezierMultigridPreconditioner: Coarsest level LU factorization failed");
         }
     }
+}
+
+SpMat BezierMultigridPreconditioner::assemble_from_cached_matrices(int mg_level) {
+    const auto& grid = levels_[mg_level].composite_grid;
+    Index num_dofs = grid.num_dofs;
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(grid.nodes.size() * 16 * 16);
+
+    for (const auto& node : grid.nodes) {
+        // Build key from tree node
+        const QuadtreeNode* tn = node.tree_node;
+        auto key = std::make_tuple(tn->morton, tn->level.x, tn->level.y);
+
+        auto it = element_matrix_cache_->find(key);
+        if (it == element_matrix_cache_->end()) {
+            // No cached matrix for this node - skip
+            // This can happen for nodes that weren't in the fine grid
+            // when the cache was populated (shouldn't happen for valid hierarchies)
+            continue;
+        }
+
+        const MatX& Q_local = it->second;
+
+        for (int i = 0; i < 16; ++i) {
+            Index I = node.dof_indices[i];
+            if (I < 0) continue;
+
+            for (int j = 0; j < 16; ++j) {
+                Index J = node.dof_indices[j];
+                if (J < 0) continue;
+
+                if (std::abs(Q_local(i, j)) > 1e-16) {
+                    triplets.emplace_back(I, J, Q_local(i, j));
+                }
+            }
+        }
+    }
+
+    SpMat Q(num_dofs, num_dofs);
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+    return Q;
 }
 
 SpMat BezierMultigridPreconditioner::build_prolongation_for_level(
@@ -1443,6 +1493,43 @@ SpMat BezierMultigridPreconditioner::build_restriction_l2(int mg_level) {
 
     SpMat R(coarse_dofs, fine_dofs);
     R.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Normalize rows to sum to 1 (partition of unity)
+    // This ensures constant fields are preserved during restriction.
+    // For adaptive meshes with partial children, the raw L2 projection
+    // doesn't automatically satisfy this property.
+    {
+        // Convert to RowMajor for efficient row access
+        Eigen::SparseMatrix<Real, Eigen::RowMajor> R_row(R);
+        VecX row_sums = R_row * VecX::Ones(fine_dofs);
+
+        // Debug: report row sum statistics before normalization
+        if (config_.verbose) {
+            Real min_sum = row_sums.minCoeff();
+            Real max_sum = row_sums.maxCoeff();
+            Real mean_sum = row_sums.mean();
+            Index num_needing_norm = 0;
+            for (Index i = 0; i < row_sums.size(); ++i) {
+                if (std::abs(row_sums(i) - 1.0) > 1e-10) ++num_needing_norm;
+            }
+            std::cerr << "[Multigrid] R row sums before normalization: min=" << min_sum
+                      << ", max=" << max_sum << ", mean=" << mean_sum
+                      << ", rows needing normalization=" << num_needing_norm
+                      << "/" << row_sums.size() << "\n";
+        }
+
+        for (Index i = 0; i < R_row.rows(); ++i) {
+            Real scale = row_sums(i);
+            if (std::abs(scale) > 1e-14 && std::abs(scale - 1.0) > 1e-10) {
+                Real inv_scale = 1.0 / scale;
+                for (Eigen::SparseMatrix<Real, Eigen::RowMajor>::InnerIterator it(R_row, i); it; ++it) {
+                    it.valueRef() *= inv_scale;
+                }
+            }
+        }
+
+        R = SpMat(R_row);  // Convert back to ColMajor
+    }
 
     if (config_.verbose) {
         std::cerr << "[Multigrid] L2 Restriction " << (mg_level + 1) << "->" << mg_level

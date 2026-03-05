@@ -265,6 +265,14 @@ void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hess
     std::vector<Eigen::Triplet<Real>> triplets;
     triplets.reserve(num_elements * ndof * ndof);
 
+    // Initialize temporary storage for element matrices if caching is enabled
+    if (element_matrix_cache_) {
+        element_matrix_cache_temp_.resize(static_cast<size_t>(num_elements));
+        for (auto& m : element_matrix_cache_temp_) {
+            m = MatX::Zero(ndof, ndof);
+        }
+    }
+
     for (Index elem = 0; elem < num_elements; ++elem) {
         Vec2 size = quadtree_->element_size(elem);
         Real dx = size(0);
@@ -272,6 +280,11 @@ void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hess
 
         MatX H_local = hessian.scaled_hessian(dx, dy);
         const auto &global_dofs = element_global_dofs(elem);
+
+        // Store hessian contribution in temporary cache
+        if (element_matrix_cache_) {
+            element_matrix_cache_temp_[static_cast<size_t>(elem)] = H_local;
+        }
 
         for (int i = 0; i < ndof; ++i) {
             Index I = global_dofs[i];
@@ -317,6 +330,9 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
 
         const auto &global_dofs = element_global_dofs(elem);
 
+        // Accumulate local data fitting matrix for caching
+        MatX B_local = MatX::Zero(ndof, ndof);
+
         for (int qi = 0; qi < static_cast<int>(gauss_pts.size()); ++qi) {
             Real u = gauss_pts[qi];
             for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
@@ -335,16 +351,33 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
                     Index I = global_dofs[i];
                     for (int j = 0; j < ndof; ++j) {
                         Index J = global_dofs[j];
-                        triplets.emplace_back(I, J, weight * B(i) * B(j));
+                        Real val = weight * B(i) * B(j);
+                        triplets.emplace_back(I, J, val);
+                        B_local(i, j) += val;
                     }
                     BtWd_global_(I) += weight * B(i) * d;
                 }
             }
         }
+
+        // Complete and cache element matrix: Q_elem = alpha*H + lambda*B + eps*I
+        // Note: alpha is computed after this loop, so we cache without alpha scaling
+        // The multigrid will use the raw element matrix directly
+        if (element_matrix_cache_ && !element_matrix_cache_temp_.empty()) {
+            // element_matrix_cache_temp_ contains H_local from assemble_hessian_global()
+            // Add lambda * B_local + ridge_epsilon * I
+            element_matrix_cache_temp_[static_cast<size_t>(elem)] += lambda() * B_local;
+            element_matrix_cache_temp_[static_cast<size_t>(elem)] +=
+                lambda() * ridge_epsilon() * MatX::Identity(ndof, ndof);
+            cache_element_matrix(elem, element_matrix_cache_temp_[static_cast<size_t>(elem)]);
+        }
     }
 
     BtWB_global_.resize(num_dofs, num_dofs);
     BtWB_global_.setFromTriplets(triplets.begin(), triplets.end());
+
+    // Clear temporary storage
+    element_matrix_cache_temp_.clear();
 
     // Compute scale normalization factor (used in solve and objective_value)
     Real norm_BtWB = BtWB_global_.norm();
@@ -385,6 +418,20 @@ void CGBezierSmootherBase::solve_unconstrained() {
     if (solver.info() != Eigen::Success) {
         throw std::runtime_error("CGBezierSmootherBase: SparseLU solve failed");
     }
+}
+
+// =============================================================================
+// Element matrix caching
+// =============================================================================
+
+void CGBezierSmootherBase::cache_element_matrix(Index elem, const MatX& Q_local) {
+    if (!element_matrix_cache_) {
+        return;
+    }
+
+    const QuadtreeNode* node = quadtree_->elements()[static_cast<size_t>(elem)];
+    auto key = std::make_tuple(node->morton, node->level.x, node->level.y);
+    (*element_matrix_cache_)[key] = Q_local;
 }
 
 } // namespace drifter
