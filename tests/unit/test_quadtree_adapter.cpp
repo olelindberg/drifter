@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 #include "bathymetry/quadtree_adapter.hpp"
+#include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <cmath>
+#include <filesystem>
+#include <iostream>
 
 using namespace drifter;
 
@@ -378,4 +381,131 @@ TEST_F(QuadtreeAdapterTest, OctreeXYBoundsMatch) {
         EXPECT_NEAR(quad_bounds.ymin, oct_bounds.ymin, TOLERANCE);
         EXPECT_NEAR(quad_bounds.ymax, oct_bounds.ymax, TOLERANCE);
     }
+}
+
+// =============================================================================
+// Center-graded model problem tests
+// =============================================================================
+
+TEST_F(QuadtreeAdapterTest, BuildCenterGradedSingleLevel) {
+    QuadtreeAdapter quadtree;
+    quadtree.build_center_graded(1);
+
+    // Single level = 1 element covering entire domain
+    EXPECT_EQ(quadtree.num_elements(), 1);
+
+    const auto& domain = quadtree.domain_bounds();
+    EXPECT_NEAR(domain.xmin, 0.0, TOLERANCE);
+    EXPECT_NEAR(domain.xmax, 1000.0, TOLERANCE);
+    EXPECT_NEAR(domain.ymin, 0.0, TOLERANCE);
+    EXPECT_NEAR(domain.ymax, 1000.0, TOLERANCE);
+}
+
+TEST_F(QuadtreeAdapterTest, BuildCenterGradedTwoLevels) {
+    QuadtreeAdapter quadtree;
+    quadtree.build_center_graded(2);
+
+    // 2 levels: root subdivides into 4, only center element is refined further
+    // But at level 2, we just have 4 elements (2x2)
+    EXPECT_EQ(quadtree.num_elements(), 4);
+
+    // All elements should be 500m x 500m
+    for (Index i = 0; i < quadtree.num_elements(); ++i) {
+        Vec2 size = quadtree.element_size(i);
+        EXPECT_NEAR(size(0), 500.0, TOLERANCE);
+        EXPECT_NEAR(size(1), 500.0, TOLERANCE);
+    }
+}
+
+TEST_F(QuadtreeAdapterTest, BuildCenterGradedThreeLevels) {
+    QuadtreeAdapter quadtree;
+    quadtree.build_center_graded(3);
+
+    // 3 levels with 2:1 balancing
+    // Level diff between level 1 and level 2 is only 1, so no extra balancing needed
+    EXPECT_EQ(quadtree.num_elements(), 7);
+
+    // Count elements by size
+    int count_500 = 0;
+    int count_250 = 0;
+    for (Index i = 0; i < quadtree.num_elements(); ++i) {
+        Vec2 size = quadtree.element_size(i);
+        if (std::abs(size(0) - 500.0) < TOLERANCE) {
+            count_500++;
+        } else if (std::abs(size(0) - 250.0) < TOLERANCE) {
+            count_250++;
+        }
+    }
+    EXPECT_EQ(count_500, 3);  // 3 corner elements
+    EXPECT_EQ(count_250, 4);  // 4 center sub-elements
+}
+
+TEST_F(QuadtreeAdapterTest, BuildCenterGradedBalanced) {
+    // Test that 2:1 balance constraint is satisfied for various levels
+    for (int num_levels = 3; num_levels <= 6; ++num_levels) {
+        QuadtreeAdapter quadtree;
+        quadtree.build_center_graded(num_levels);
+
+        // Verify 2:1 balance constraint is satisfied
+        for (Index i = 0; i < quadtree.num_elements(); ++i) {
+            int my_level = quadtree.element_level(i).max_level();
+            auto neighbors = quadtree.get_edge_neighbors(i);
+            for (int edge = 0; edge < 4; ++edge) {
+                const auto& info = neighbors[edge];
+                if (info.is_boundary()) continue;
+                for (Index nb_idx : info.neighbor_elements) {
+                    int nb_level = quadtree.element_level(nb_idx).max_level();
+                    EXPECT_LE(std::abs(my_level - nb_level), 1)
+                        << "num_levels=" << num_levels
+                        << " Element " << i << " (level " << my_level
+                        << ") violates 2:1 with neighbor " << nb_idx
+                        << " (level " << nb_level << ")";
+                }
+            }
+        }
+    }
+}
+
+TEST_F(QuadtreeAdapterTest, BuildCenterGradedFinestAtCenter) {
+    QuadtreeAdapter quadtree;
+    quadtree.build_center_graded(5);
+
+    // Find element near center (slightly offset to avoid corner ambiguity)
+    // The finest element containing center is at [500, 562.5]x[500, 562.5]
+    Vec2 query(530.0, 530.0);
+    Index center_elem = quadtree.find_element(query);
+    ASSERT_GE(center_elem, 0);
+
+    // Center element should be at finest level (level 4)
+    QuadLevel level = quadtree.element_level(center_elem);
+    EXPECT_EQ(level.max_level(), 4);
+
+    // Center element size should be 1000 / 2^4 = 62.5m
+    Vec2 size = quadtree.element_size(center_elem);
+    EXPECT_NEAR(size(0), 62.5, TOLERANCE);
+    EXPECT_NEAR(size(1), 62.5, TOLERANCE);
+}
+
+TEST_F(QuadtreeAdapterTest, BuildCenterGradedWriteVTK) {
+    QuadtreeAdapter quadtree;
+    quadtree.build_center_graded(5);
+
+    // Collect refinement levels as cell data
+    std::vector<Real> refinement_levels(quadtree.num_elements());
+    for (Index i = 0; i < quadtree.num_elements(); ++i) {
+        refinement_levels[i] = static_cast<Real>(quadtree.element_level(i).max_level());
+    }
+
+    // Write flat mesh (z=0) with refinement level as cell data
+    std::string output_file = "/tmp/center_graded_5levels";
+    io::write_cg_bezier_surface_vtk(
+        output_file, quadtree,
+        [](Real, Real) { return 0.0; },  // flat mesh
+        2,  // minimal resolution
+        "z",
+        {{"level", refinement_levels}});
+
+    std::cout << "Output written to: " << output_file << ".vtu" << std::endl;
+
+    EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }

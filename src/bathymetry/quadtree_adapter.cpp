@@ -96,6 +96,43 @@ void QuadtreeAdapter::build_uniform(Real xmin, Real xmax, Real ymin, Real ymax, 
     rebuild_leaf_list();
 }
 
+void QuadtreeAdapter::build_center_graded(int num_levels) {
+    // Clear existing data
+    root_.reset();
+    leaf_storage_.clear();
+    leaves_.clear();
+    xy_lookup_.clear();
+
+    // Fixed 1000m x 1000m domain
+    domain_.xmin = 0.0;
+    domain_.xmax = 1000.0;
+    domain_.ymin = 0.0;
+    domain_.ymax = 1000.0;
+
+    // Create root node
+    root_ = std::make_unique<QuadtreeNode>();
+    root_->bounds = domain_;
+    root_->level = {0, 0};
+    root_->morton = Morton3D::encode(0, 0, 0);
+    root_->octree_element = -1;
+
+    if (num_levels <= 1) {
+        // Single element covering entire domain
+        rebuild_leaf_list();
+        return;
+    }
+
+    // Recursively refine toward center
+    Vec2 center(500.0, 500.0);
+    subdivide_toward_center(root_.get(), num_levels - 1, center);
+
+    // Collect leaves and build lookups
+    rebuild_leaf_list();
+
+    // Apply 2:1 balancing
+    balance();
+}
+
 const QuadBounds &QuadtreeAdapter::element_bounds(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(leaves_.size())) {
         throw std::out_of_range("QuadtreeAdapter: element index out of range");
@@ -439,6 +476,121 @@ Index QuadtreeAdapter::add_element(const QuadBounds &bounds, QuadLevel level) {
 // =============================================================================
 // Tree construction helpers
 // =============================================================================
+
+void QuadtreeAdapter::refine_leaf(QuadtreeNode* node) {
+    if (!node || !node->is_leaf()) {
+        return;
+    }
+
+    Real xmid = 0.5 * (node->bounds.xmin + node->bounds.xmax);
+    Real ymid = 0.5 * (node->bounds.ymin + node->bounds.ymax);
+
+    uint32_t px, py, pz;
+    Morton3D::decode(node->morton, px, py, pz);
+
+    for (int cy = 0; cy < 2; ++cy) {
+        for (int cx = 0; cx < 2; ++cx) {
+            auto child = std::make_unique<QuadtreeNode>();
+            child->parent = node;
+            child->level.x = node->level.x + 1;
+            child->level.y = node->level.y + 1;
+            child->morton = Morton3D::encode(2 * px + cx, 2 * py + cy, 0);
+
+            child->bounds.xmin = (cx == 0) ? node->bounds.xmin : xmid;
+            child->bounds.xmax = (cx == 0) ? xmid : node->bounds.xmax;
+            child->bounds.ymin = (cy == 0) ? node->bounds.ymin : ymid;
+            child->bounds.ymax = (cy == 0) ? ymid : node->bounds.ymax;
+
+            child->octree_element = -1;
+
+            node->children.push_back(std::move(child));
+        }
+    }
+}
+
+void QuadtreeAdapter::balance() {
+    // Iterate until no more refinement is needed
+    bool changed = true;
+
+    while (changed) {
+        changed = false;
+
+        // Collect current leaves (copy since we may modify during iteration)
+        std::vector<QuadtreeNode*> current_leaves = leaves_;
+
+        for (QuadtreeNode* node : current_leaves) {
+            // Check all 4 edge neighbors
+            for (int edge = 0; edge < 4; ++edge) {
+                EdgeNeighborInfo info = get_neighbor(node->leaf_index, edge);
+
+                if (info.is_boundary()) {
+                    continue;
+                }
+
+                for (Index nb_idx : info.neighbor_elements) {
+                    QuadtreeNode* neighbor = leaves_[nb_idx];
+
+                    // Check 2:1 balance constraint per axis
+                    int diff_x = node->level.x - neighbor->level.x;
+                    int diff_y = node->level.y - neighbor->level.y;
+
+                    // If neighbor is more than 1 level coarser, refine it
+                    if ((diff_x > 1 || diff_y > 1) && neighbor->is_leaf()) {
+                        refine_leaf(neighbor);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if (changed) {
+            rebuild_leaf_list();
+        }
+    }
+}
+
+void QuadtreeAdapter::subdivide_toward_center(QuadtreeNode* node, int remaining_levels,
+                                               const Vec2& center) {
+    if (remaining_levels <= 0) {
+        return;  // This is a leaf
+    }
+
+    // Subdivide into 4 children
+    Real xmid = 0.5 * (node->bounds.xmin + node->bounds.xmax);
+    Real ymid = 0.5 * (node->bounds.ymin + node->bounds.ymax);
+
+    // Determine which child should be further refined (the one containing center)
+    // When center is exactly at midpoint, pick upper-right (cx=1, cy=1)
+    int refine_cx = (center(0) >= xmid) ? 1 : 0;
+    int refine_cy = (center(1) >= ymid) ? 1 : 0;
+
+    uint32_t px, py, pz;
+    Morton3D::decode(node->morton, px, py, pz);
+
+    for (int cy = 0; cy < 2; ++cy) {
+        for (int cx = 0; cx < 2; ++cx) {
+            auto child = std::make_unique<QuadtreeNode>();
+            child->parent = node;
+            child->level.x = node->level.x + 1;
+            child->level.y = node->level.y + 1;
+            child->morton = Morton3D::encode(2 * px + cx, 2 * py + cy, 0);
+
+            child->bounds.xmin = (cx == 0) ? node->bounds.xmin : xmid;
+            child->bounds.xmax = (cx == 0) ? xmid : node->bounds.xmax;
+            child->bounds.ymin = (cy == 0) ? node->bounds.ymin : ymid;
+            child->bounds.ymax = (cy == 0) ? ymid : node->bounds.ymax;
+
+            child->octree_element = -1;
+
+            // Only refine the child containing the center
+            if (cx == refine_cx && cy == refine_cy) {
+                subdivide_toward_center(child.get(), remaining_levels - 1, center);
+            }
+
+            node->children.push_back(std::move(child));
+        }
+    }
+}
 
 void QuadtreeAdapter::subdivide_to_level(QuadtreeNode* node, int target_x, int target_y) {
     bool need_x = node->level.x < target_x;

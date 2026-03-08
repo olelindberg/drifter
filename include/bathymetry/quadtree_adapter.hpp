@@ -167,6 +167,14 @@ public:
     /// @param nx, ny Number of elements in each direction
     void build_uniform(Real xmin, Real xmax, Real ymin, Real ymax, int nx, int ny);
 
+    /// @brief Build a model problem grid graded toward center
+    ///
+    /// Creates a 1000m x 1000m domain with refinement graded toward the center.
+    /// The coarsest level has 1 element, finest level elements are at center.
+    ///
+    /// @param num_levels Number of refinement levels (1 = single element, 2 = 2x2, etc.)
+    void build_center_graded(int num_levels);
+
     /// @brief Add a single element manually (for testing non-conforming meshes)
     /// @param bounds Element bounds
     /// @param level Refinement level
@@ -334,6 +342,20 @@ private:
     /// @param target_x Target level in x direction
     /// @param target_y Target level in y direction
     void subdivide_to_level(QuadtreeNode* node, int target_x, int target_y);
+
+    /// @brief Recursively subdivide toward center point
+    /// @param node Node to subdivide
+    /// @param remaining_levels How many more levels to refine
+    /// @param center Center point to refine toward
+    void subdivide_toward_center(QuadtreeNode* node, int remaining_levels, const Vec2& center);
+
+    /// @brief Balance the quadtree for 2:1 constraint
+    /// @details Ensures adjacent elements differ by at most 1 level per axis
+    void balance();
+
+    /// @brief Refine a leaf node into 4 children
+    /// @param node Leaf node to refine (must be a leaf)
+    void refine_leaf(QuadtreeNode* node);
 
     /// @brief Recursively copy octree node to quadtree node (project to 2D)
     /// @param octree_node Source octree node

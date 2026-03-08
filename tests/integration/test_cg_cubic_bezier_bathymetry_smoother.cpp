@@ -947,6 +947,103 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, KattegatIntegration) {
   EXPECT_LT(avg_diff, 50.0); // Average error less than 50m
 }
 
+TEST_F(CGCubicBezierSmootherGeoTiffTest, KattegatWithBezierSubdivisionMG) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
+  }
+
+  // Kattegat test area
+  Real center_x = 4095238.0;  // EPSG:3034
+  Real center_y = 3344695.0;  // EPSG:3034
+  Real domain_size = 30000.0; // 30 km
+
+  Real xmin = center_x - domain_size / 2;
+  Real xmax = center_x + domain_size / 2;
+  Real ymin = center_y - domain_size / 2;
+  Real ymax = center_y + domain_size / 2;
+
+  std::cout << "=== Kattegat with BezierSubdivision MG ===" << std::endl;
+  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
+            << ymax << "]" << std::endl;
+
+  // Create uniform mesh
+  QuadtreeAdapter mesh;
+  mesh.build_uniform(xmin, xmax, ymin, ymax, 8, 8);
+
+  std::cout << "Mesh elements: " << mesh.num_elements() << std::endl;
+
+  // Depth function using multi-source bathymetry
+  auto depth_func = create_depth_function();
+
+  // Create CG Cubic Bezier smoother with iterative solver and BezierSubdivision
+  // MG
+  CGCubicBezierSmootherConfig config;
+  config.lambda = 10.0;
+  config.ngauss_data = 4;
+  config.ngauss_energy = 4;
+  config.use_iterative_solver = true;
+  config.use_multigrid = true;
+  config.schur_cg_tolerance = 1e-10;
+  config.multigrid_config.num_levels = 3;
+  config.multigrid_config.min_tree_level = 0;
+  config.multigrid_config.pre_smoothing = 2;
+  config.multigrid_config.post_smoothing = 2;
+  config.multigrid_config.smoother_type = SmootherType::MultiplicativeSchwarz;
+  config.multigrid_config.transfer_strategy =
+      TransferOperatorStrategy::BezierSubdivision;
+  config.multigrid_config.coarse_grid_strategy =
+      CoarseGridStrategy::CachedRediscretization;
+
+  CGCubicBezierBathymetrySmoother smoother(mesh, config);
+  smoother.set_bathymetry_data(depth_func);
+
+  std::cout << "DOFs: " << smoother.num_global_dofs() << std::endl;
+  std::cout << "Constraints: " << smoother.num_constraints() << std::endl;
+
+  // Solve
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Write output for ParaView verification
+  std::string output_base = "/tmp/cg_cubic_bezier_kattegat_subdivision_mg";
+  smoother.write_vtk(output_base, 10);
+
+  std::string output_file = output_base + ".vtu";
+  std::cout << "Output written to: " << output_file << std::endl;
+
+  // Also write control points
+  std::string cp_file = output_base + "_control_points.vtu";
+  smoother.write_control_points_vtk(cp_file);
+  std::cout << "Control points written to: " << cp_file << std::endl;
+
+  // Verify solution quality - compare to input at sample points
+  Real max_diff = 0.0;
+  Real sum_diff = 0.0;
+  int count = 0;
+
+  for (Real x = xmin + 1000; x < xmax - 1000; x += 1000) {
+    for (Real y = ymin + 1000; y < ymax - 1000; y += 1000) {
+      Real input_depth = depth_func(x, y);
+      Real output_depth = smoother.evaluate(x, y);
+
+      if (!std::isnan(input_depth) && !std::isnan(output_depth)) {
+        Real diff = std::abs(input_depth - output_depth);
+        max_diff = std::max(max_diff, diff);
+        sum_diff += diff;
+        count++;
+      }
+    }
+  }
+
+  Real avg_diff = sum_diff / count;
+  std::cout << "Max difference from input: " << max_diff << " m" << std::endl;
+  std::cout << "Avg difference from input: " << avg_diff << " m" << std::endl;
+
+  // Reasonable fit quality (smoothed, so not exact)
+  EXPECT_LT(avg_diff, 50.0); // Average error less than 50m
+}
+
 TEST_F(CGCubicBezierSmootherGeoTiffTest, DISABLED_KattegatWithC1Constraints) {
   if (!data_files_exist()) {
     GTEST_SKIP() << "Bathymetry data not available";
@@ -2070,8 +2167,7 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_IterativeSolverProfilingBenchmark) {
   }
 }
 
-TEST_F(CGCubicBezierSmootherTest,
-       DISABLED_AdditiveSchwarzComparisonBenchmark) {
+TEST_F(CGCubicBezierSmootherTest, DISABLED_AdditiveSchwarzComparisonBenchmark) {
   // Compare Multiplicative vs Additive Schwarz smoothers
   // Additive Schwarz eliminates the 45% scatter+update bottleneck but may
   // require more iterations to converge.
@@ -2146,10 +2242,10 @@ TEST_F(CGCubicBezierSmootherTest,
           std::chrono::duration<double, std::milli>(end - start).count();
       r.mult_cg_iters = solve_profile.outer_cg_iterations;
       r.mult_vcycles = mg_profile.vcycle_calls;
-      r.mult_schwarz_total_ms =
-          mg_profile.schwarz_matvec_ms + mg_profile.schwarz_gather_ms +
-          mg_profile.schwarz_local_solve_ms +
-          mg_profile.schwarz_scatter_update_ms;
+      r.mult_schwarz_total_ms = mg_profile.schwarz_matvec_ms +
+                                mg_profile.schwarz_gather_ms +
+                                mg_profile.schwarz_local_solve_ms +
+                                mg_profile.schwarz_scatter_update_ms;
       r.mult_scatter_ms = mg_profile.schwarz_scatter_update_ms;
     }
 
@@ -2182,10 +2278,10 @@ TEST_F(CGCubicBezierSmootherTest,
           std::chrono::duration<double, std::milli>(end - start).count();
       r.add_cg_iters = solve_profile.outer_cg_iterations;
       r.add_vcycles = mg_profile.vcycle_calls;
-      r.add_schwarz_total_ms =
-          mg_profile.schwarz_matvec_ms + mg_profile.schwarz_gather_ms +
-          mg_profile.schwarz_local_solve_ms +
-          mg_profile.schwarz_scatter_update_ms;
+      r.add_schwarz_total_ms = mg_profile.schwarz_matvec_ms +
+                               mg_profile.schwarz_gather_ms +
+                               mg_profile.schwarz_local_solve_ms +
+                               mg_profile.schwarz_scatter_update_ms;
       r.add_scatter_ms = mg_profile.schwarz_scatter_update_ms;
     }
 
@@ -2222,7 +2318,8 @@ TEST_F(CGCubicBezierSmootherTest,
   ofs << "\n## Schwarz Smoother Timing\n\n";
   ofs << "| Mesh | Mult Schwarz (ms) | Mult Scatter (ms) | Add Schwarz (ms) "
          "| Add Scatter (ms) |\n";
-  ofs << "|------|-------------------|-------------------|------------------|---"
+  ofs << "|------|-------------------|-------------------|------------------|--"
+         "-"
          "---------------|\n";
   for (const auto &r : results) {
     ofs << "| " << r.mesh_desc << " | " << std::fixed << std::setprecision(2)
@@ -2235,8 +2332,8 @@ TEST_F(CGCubicBezierSmootherTest,
     const auto &last = results.back();
     double speedup = last.mult_total_ms / std::max(0.001, last.add_total_ms);
     double scatter_reduction =
-        100.0 * (1.0 - last.add_scatter_ms /
-                           std::max(0.001, last.mult_scatter_ms));
+        100.0 *
+        (1.0 - last.add_scatter_ms / std::max(0.001, last.mult_scatter_ms));
 
     ofs << "### Largest Mesh (" << last.mesh_desc << ")\n\n";
     ofs << "- **Speedup**: " << std::fixed << std::setprecision(2) << speedup
@@ -2269,8 +2366,7 @@ TEST_F(CGCubicBezierSmootherTest,
   }
 }
 
-TEST_F(CGCubicBezierSmootherTest,
-       DISABLED_ColoredSchwarzComparisonBenchmark) {
+TEST_F(CGCubicBezierSmootherTest, DISABLED_ColoredSchwarzComparisonBenchmark) {
   // Compare all three Schwarz variants:
   // - Multiplicative: Sequential element processing with Qx updates
   // - Additive: Parallel element processing, single update at end
@@ -2296,8 +2392,8 @@ TEST_F(CGCubicBezierSmootherTest,
            10.0 * std::cos(0.08 * x) * std::sin(0.08 * y);
   };
 
-  auto run_test = [&](const QuadtreeAdapter &mesh, SmootherType type)
-      -> SchwarzResult {
+  auto run_test = [&](const QuadtreeAdapter &mesh,
+                      SmootherType type) -> SchwarzResult {
     CGCubicBezierSmootherConfig config;
     config.lambda = 10.0;
     config.edge_ngauss = 4;
@@ -2322,8 +2418,7 @@ TEST_F(CGCubicBezierSmootherTest,
     auto end = std::chrono::high_resolution_clock::now();
 
     SchwarzResult r;
-    r.total_ms =
-        std::chrono::duration<double, std::milli>(end - start).count();
+    r.total_ms = std::chrono::duration<double, std::milli>(end - start).count();
     r.cg_iters = solve_profile.outer_cg_iterations;
     r.schwarz_ms = mg_profile.schwarz_matvec_ms + mg_profile.schwarz_gather_ms +
                    mg_profile.schwarz_local_solve_ms +
@@ -2380,10 +2475,11 @@ TEST_F(CGCubicBezierSmootherTest,
   for (const auto &r : results) {
     double speedup = r.mult.total_ms / std::max(0.001, r.colored.total_ms);
     ofs << "| " << r.mesh_desc << " | " << r.num_dofs << " | " << std::fixed
-        << std::setprecision(2) << r.mult.total_ms << " | " << r.colored.total_ms
-        << " | " << r.add.total_ms << " | " << r.mult.cg_iters << " | "
-        << r.colored.cg_iters << " | " << r.add.cg_iters << " | "
-        << std::setprecision(2) << speedup << "x |\n";
+        << std::setprecision(2) << r.mult.total_ms << " | "
+        << r.colored.total_ms << " | " << r.add.total_ms << " | "
+        << r.mult.cg_iters << " | " << r.colored.cg_iters << " | "
+        << r.add.cg_iters << " | " << std::setprecision(2) << speedup
+        << "x |\n";
   }
 
   ofs << "\n## Schwarz Timing Breakdown\n\n";
@@ -2402,8 +2498,9 @@ TEST_F(CGCubicBezierSmootherTest,
     const auto &last = results.back();
     double colored_speedup =
         last.mult.total_ms / std::max(0.001, last.colored.total_ms);
-    double scatter_reduction = 100.0 * (1.0 - last.colored.scatter_ms /
-                                                  std::max(0.001, last.mult.scatter_ms));
+    double scatter_reduction =
+        100.0 *
+        (1.0 - last.colored.scatter_ms / std::max(0.001, last.mult.scatter_ms));
     int iter_increase = last.colored.cg_iters - last.mult.cg_iters;
 
     ofs << "### Largest Mesh (" << last.mesh_desc << ")\n\n";
@@ -2413,8 +2510,8 @@ TEST_F(CGCubicBezierSmootherTest,
         << scatter_reduction << "%\n";
     ofs << "- **CG iteration change**: " << iter_increase << " iterations ("
         << std::setprecision(1)
-        << 100.0 * iter_increase / std::max(1, last.mult.cg_iters)
-        << "% " << (iter_increase >= 0 ? "more" : "fewer") << ")\n";
+        << 100.0 * iter_increase / std::max(1, last.mult.cg_iters) << "% "
+        << (iter_increase >= 0 ? "more" : "fewer") << ")\n";
 
     if (colored_speedup > 1.1) {
       ofs << "\n**Recommendation**: Colored Schwarz offers the best "
@@ -2433,8 +2530,7 @@ TEST_F(CGCubicBezierSmootherTest,
 
   // Verify all methods converge
   for (const auto &r : results) {
-    EXPECT_GT(r.mult.cg_iters, 0)
-        << "Mult didn't converge for " << r.mesh_desc;
+    EXPECT_GT(r.mult.cg_iters, 0) << "Mult didn't converge for " << r.mesh_desc;
     EXPECT_GT(r.colored.cg_iters, 0)
         << "Colored didn't converge for " << r.mesh_desc;
   }

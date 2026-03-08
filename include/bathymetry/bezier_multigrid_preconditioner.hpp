@@ -42,6 +42,16 @@ enum class CoarseGridStrategy {
   CachedRediscretization
 };
 
+/// @brief Strategy for building transfer operators (P and R)
+enum class TransferOperatorStrategy {
+  /// R = L2 projection (M_c^{-1} * P^T * M_f), P = R^T
+  /// Symmetric multigrid but can have large negative weights
+  L2Projection,
+  /// P = pure Bezier subdivision, R = P^T normalized
+  /// All non-negative weights (de Casteljau convex combinations)
+  BezierSubdivision
+};
+
 /// @brief Detailed timing profile for multigrid preconditioner (all times in
 /// ms)
 struct MultigridProfile {
@@ -132,6 +142,10 @@ struct MultigridConfig {
   /// Strategy for building coarse-level system matrices
   /// Default: Galerkin (preserves original behavior)
   CoarseGridStrategy coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+
+  /// Strategy for building transfer operators (P and R)
+  /// Default: L2Projection (preserves original behavior)
+  TransferOperatorStrategy transfer_strategy = TransferOperatorStrategy::L2Projection;
 };
 
 /// @brief Active node in a composite multigrid level
@@ -260,6 +274,16 @@ public:
 
   /// @brief Get level data (for debugging/testing)
   const MultigridLevel &level(int l) const { return levels_[l]; }
+
+  /// @brief Get local L2 restriction matrix (16x64) for testing
+  /// @details Maps 4 child elements (each 16 DOFs) to 1 parent (16 DOFs)
+  ///          in reference space [0,1]x[0,1]
+  const MatX &R_L2_local() const { return R_L2_local_; }
+
+  /// @brief Get local L2 prolongation matrix (64x16) for testing
+  /// @details Maps 1 parent (16 DOFs) to 4 child elements (each 16 DOFs)
+  ///          in reference space [0,1]x[0,1]. P = R^T
+  const MatX &P_L2_local() const { return P_L2_local_; }
 
   /// @brief Set profile for detailed timing instrumentation
   /// @param profile Pointer to profile struct (null to disable profiling)

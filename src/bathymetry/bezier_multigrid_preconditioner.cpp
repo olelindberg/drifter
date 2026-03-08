@@ -190,9 +190,7 @@ void BezierMultigridPreconditioner::setup(
         Index coarse_num_dofs = levels_[mg_level].composite_grid.num_dofs;
 
         // Check if coarsening produced a usable level
-        bool insufficient_reduction = coarse_num_dofs >= levels_[mg_level + 1].num_dofs * 0.9;
-
-        if (coarse_num_dofs == 0 || insufficient_reduction) {
+        if (coarse_num_dofs == 0) {
             // Can't use this level - truncate hierarchy (discard this level)
             int levels_to_keep = finest_level - mg_level;
             std::vector<MultigridLevel> new_levels(levels_to_keep);
@@ -202,14 +200,8 @@ void BezierMultigridPreconditioner::setup(
             levels_ = std::move(new_levels);
 
             if (config_.verbose) {
-                std::cerr << "[Multigrid] Truncated to " << levels_.size() << " levels";
-                if (coarse_num_dofs == 0) {
-                    std::cerr << " (no coarse DOFs)";
-                } else {
-                    std::cerr << " (insufficient DOF reduction: " << coarse_num_dofs
-                              << " >= " << static_cast<int>(levels_[mg_level + 1].num_dofs * 0.9) << ")";
-                }
-                std::cerr << "\n";
+                std::cerr << "[Multigrid] Truncated to " << levels_.size() << " levels"
+                          << " (no coarse DOFs)\n";
             }
             break;
         }
@@ -217,10 +209,36 @@ void BezierMultigridPreconditioner::setup(
         // Level is valid - process it
         levels_[mg_level].num_dofs = coarse_num_dofs;
 
-        // Build L2 projection operators: R from integral matching, P = R^T
-        SpMat R = build_restriction_l2(mg_level);
+        // Build transfer operators based on strategy
+        SpMat P, R;
+        if (config_.transfer_strategy == TransferOperatorStrategy::BezierSubdivision) {
+            // Pure Bezier subdivision: P from de Casteljau, R = P^T normalized
+            if (config_.verbose) {
+                std::cerr << "[Multigrid] Using BezierSubdivision transfer for level " << mg_level << "\n";
+            }
+            P = build_prolongation_composite(mg_level);
+            R = P.transpose();
+
+            // Normalize R rows to sum to 1 (partition of unity)
+            Eigen::SparseMatrix<Real, Eigen::RowMajor> R_row(R);
+            VecX row_sums = R_row * VecX::Ones(R.cols());
+            for (Index i = 0; i < R_row.rows(); ++i) {
+                Real scale = row_sums(i);
+                if (std::abs(scale) > 1e-14 && std::abs(scale - 1.0) > 1e-10) {
+                    Real inv_scale = 1.0 / scale;
+                    for (Eigen::SparseMatrix<Real, Eigen::RowMajor>::InnerIterator it(R_row, i); it; ++it) {
+                        it.valueRef() *= inv_scale;
+                    }
+                }
+            }
+            R = SpMat(R_row);
+        } else {
+            // L2 projection: R from integral matching, P = R^T
+            R = build_restriction_l2(mg_level);
+            P = R.transpose();
+        }
         levels_[mg_level + 1].R = R;  // R maps mg_level+1 -> mg_level (fine -> coarse)
-        levels_[mg_level].P = R.transpose();  // P = R^T (coarse -> fine)
+        levels_[mg_level].P = P;       // P maps mg_level -> mg_level+1 (coarse -> fine)
 
         // Build coarse level system matrix
         {
@@ -229,10 +247,18 @@ void BezierMultigridPreconditioner::setup(
             if (config_.coarse_grid_strategy == CoarseGridStrategy::CachedRediscretization &&
                 element_matrix_cache_ != nullptr) {
                 // Assemble from cached element matrices (exact, includes data fitting)
+                if (config_.verbose) {
+                    std::cerr << "[Multigrid] Using CachedRediscretization for level " << mg_level << "\n";
+                }
                 levels_[mg_level].Q = assemble_from_cached_matrices(mg_level);
             } else {
+                if (config_.verbose) {
+                    std::cerr << "[Multigrid] Using Galerkin for level " << mg_level
+                              << " (strategy=" << static_cast<int>(config_.coarse_grid_strategy)
+                              << ", cache=" << (element_matrix_cache_ ? "set" : "null") << ")\n";
+                }
                 // Galerkin projection: Q_coarse = R * Q_fine * P
-                SpMat temp = levels_[mg_level + 1].Q * levels_[mg_level].P;
+                SpMat temp = levels_[mg_level + 1].Q * P;
                 levels_[mg_level].Q = R * temp;
                 // Symmetrize
                 levels_[mg_level].Q = 0.5 * (levels_[mg_level].Q + SpMat(levels_[mg_level].Q.transpose()));
@@ -308,10 +334,17 @@ SpMat BezierMultigridPreconditioner::assemble_from_cached_matrices(int mg_level)
 
         auto it = element_matrix_cache_->find(key);
         if (it == element_matrix_cache_->end()) {
-            // No cached matrix for this node - skip
-            // This can happen for nodes that weren't in the fine grid
-            // when the cache was populated (shouldn't happen for valid hierarchies)
-            continue;
+            // No cached matrix for this node - this is a bug!
+            // Subdivision nodes (parent elements that were refined) won't have
+            // cached matrices because only leaf elements are cached.
+            // CachedRediscretization cannot work in this case.
+            throw std::runtime_error(
+                "BezierMultigridPreconditioner::assemble_from_cached_matrices: "
+                "Missing cached element matrix for node at level " +
+                std::to_string(tn->level.max_level()) +
+                " (morton=" + std::to_string(tn->morton) + "). "
+                "CachedRediscretization strategy requires all composite grid nodes "
+                "to have cached element matrices. Use Galerkin strategy instead.");
         }
 
         const MatX& Q_local = it->second;

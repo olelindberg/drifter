@@ -414,7 +414,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   AdaptiveCGCubicBezierConfig config;
   config.error_threshold = 1.0;
   config.error_metric_type = ErrorMetricType::VolumeChange;
-  config.max_iterations = 2;
+  config.max_iterations = 5;
   config.max_elements = 2500;
   config.smoother_config.lambda = 10.0;
   config.max_refinement_level = 12;
@@ -480,6 +480,75 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
 
   // Write final result
   std::string output_file = "/tmp/adaptive_cg_cubic_bezier_kattegat";
+  smoother.write_vtk(output_file, 8);
+  std::cout << "Output written to        : " << output_file << ".vtu"
+            << std::endl;
+
+  EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+}
+
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
+       AdaptiveGeoTiffWithBezierSubdivisionMG) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Bathymetry data not available";
+  }
+
+  // Kattegat test area
+  Real center_x = 4095238.0; // EPSG:3034
+  Real center_y = 3344695.0; // EPSG:3034
+  Real domain_size = 100000.0;
+
+  AdaptiveCGCubicBezierConfig config;
+  config.error_threshold = 1.0;
+  config.error_metric_type = ErrorMetricType::VolumeChange;
+  config.max_iterations = 3;
+  config.max_elements = 2500;
+  config.smoother_config.lambda = 10.0;
+  config.max_refinement_level = 12;
+  config.verbose = true;
+  config.ngauss_error = 6;
+  config.error_output_dir = "/tmp/adaptive_cg_cubic_errors_subdivision";
+  config.smoother_config.edge_ngauss = 4;
+  config.smoother_config.use_iterative_solver = true;
+  config.smoother_config.use_multigrid = true;
+  config.smoother_config.multigrid_config.smoother_type =
+      SmootherType::MultiplicativeSchwarz;
+  config.smoother_config.multigrid_config.verbose = true;
+  config.smoother_config.multigrid_config.num_levels = 100;
+  config.smoother_config.multigrid_config.min_tree_level = 2;
+  config.smoother_config.multigrid_config.coarse_grid_strategy =
+      CoarseGridStrategy::CachedRediscretization;
+  config.smoother_config.multigrid_config.transfer_strategy =
+      TransferOperatorStrategy::BezierSubdivision;
+
+  Real xmin = center_x - domain_size / 2;
+  Real xmax = center_x + domain_size / 2;
+  Real ymin = center_y - domain_size / 2;
+  Real ymax = center_y + domain_size / 2;
+
+  std::cout << "=== Adaptive CG Cubic Bezier with BezierSubdivision MG ==="
+            << std::endl;
+  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
+            << ymax << "]" << std::endl;
+
+  auto depth_func = create_depth_function();
+  auto land_mask = create_land_mask();
+
+  AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
+  smoother.set_bathymetry_data(depth_func);
+  smoother.set_land_mask(land_mask);
+
+  auto result = smoother.solve_adaptive();
+
+  std::cout << "Final elements           : " << smoother.mesh().num_elements()
+            << std::endl;
+  std::cout << "Iteration                : " << result.iteration << std::endl;
+  std::cout << "Max error (final)        : " << result.max_error << std::endl;
+  std::cout << "Mean error (final)       : " << result.mean_error << std::endl;
+
+  // Write final result
+  std::string output_file =
+      "/tmp/adaptive_cg_cubic_bezier_kattegat_subdivision";
   smoother.write_vtk(output_file, 8);
   std::cout << "Output written to        : " << output_file << ".vtu"
             << std::endl;

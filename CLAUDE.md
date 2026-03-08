@@ -169,8 +169,31 @@ Solved via KKT system with constraint projection for exact satisfaction.
 
 **Multigrid Preconditioner:** `BezierMultigridPreconditioner` accelerates CG solves using geometric multigrid with:
 - V-cycle on natural quadtree hierarchy (coarsening via Morton code parent grouping)
-- Bezier subdivision matrices for prolongation/restriction
 - Colored multiplicative Schwarz smoother (4-8 colors via graph coloring)
+- MG levels = max_tree_depth - min_tree_level + 1
+
+**Transfer Operator Strategies (`TransferOperatorStrategy`):**
+| Strategy | P (prolongation) | R (restriction) | Weights | Use case |
+|----------|------------------|-----------------|---------|----------|
+| `L2Projection` | R^T | M_c^{-1} P^T M_f | ±large (up to ±4000) | Default, symmetric |
+| `BezierSubdivision` | de Casteljau | P^T normalized | Non-negative [0,1] | Adaptive meshes |
+
+Use `BezierSubdivision` for adaptive meshes where L2 projection's large negative weights cause instability.
+
+**Coarse Grid Strategies (`CoarseGridStrategy`):**
+| Strategy | Method | Use case |
+|----------|--------|----------|
+| `Galerkin` | A_c = R * A_f * P | Default, automatic |
+| `CachedRediscretization` | Direct assembly from cached element matrices | With BezierSubdivision |
+
+**Recommended configuration for adaptive meshes:**
+```cpp
+MultigridConfig config;
+config.num_levels = 3;  // Or: max_tree_depth - min_tree_level + 1
+config.min_tree_level = 0;  // Coarsest level (1x1 element)
+config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+```
 
 ## Testing
 
