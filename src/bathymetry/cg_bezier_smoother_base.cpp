@@ -268,7 +268,7 @@ void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hess
     // Initialize temporary storage for element matrices if caching is enabled
     if (element_matrix_cache_) {
         element_matrix_cache_temp_.resize(static_cast<size_t>(num_elements));
-        for (auto& m : element_matrix_cache_temp_) {
+        for (auto &m : element_matrix_cache_temp_) {
             m = MatX::Zero(ndof, ndof);
         }
     }
@@ -424,7 +424,7 @@ void CGBezierSmootherBase::solve_unconstrained() {
 // Element matrix caching
 // =============================================================================
 
-void CGBezierSmootherBase::cache_element_matrix(Index elem, const MatX& Q_local) {
+void CGBezierSmootherBase::cache_element_matrix(Index elem, const MatX &Q_local) {
     if (!element_matrix_cache_) {
         return;
     }

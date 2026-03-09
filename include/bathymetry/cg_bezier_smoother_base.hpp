@@ -252,7 +252,7 @@ protected:
     /// @brief Store element matrix in external cache
     /// @param elem Element index
     /// @param Q_local Element matrix to cache
-    void cache_element_matrix(Index elem, const MatX& Q_local);
+    void cache_element_matrix(Index elem, const MatX &Q_local);
 };
 
 } // namespace drifter

@@ -347,7 +347,7 @@ private:
     /// @param node Node to subdivide
     /// @param remaining_levels How many more levels to refine
     /// @param center Center point to refine toward
-    void subdivide_toward_center(QuadtreeNode* node, int remaining_levels, const Vec2& center);
+    void subdivide_toward_center(QuadtreeNode* node, int remaining_levels, const Vec2 &center);
 
     /// @brief Balance the quadtree for 2:1 constraint
     /// @details Ensures adjacent elements differ by at most 1 level per axis
@@ -362,14 +362,14 @@ private:
     /// @param parent Parent quadtree node (nullptr for root)
     /// @return New quadtree node
     std::unique_ptr<QuadtreeNode> copy_octree_node_to_2d(const OctreeNode* octree_node,
-                                                          QuadtreeNode* parent);
+                                                         QuadtreeNode* parent);
 
     /// @brief Recursively collect nodes at a specific level
     /// @param node Current node
     /// @param target_level Target depth level
     /// @param result Output vector of nodes
     void collect_nodes_at_level(const QuadtreeNode* node, int target_level,
-                                 std::vector<const QuadtreeNode*>& result) const;
+                                std::vector<const QuadtreeNode*> &result) const;
 
     /// @brief Recursively find maximum depth in subtree
     /// @param node Current node

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <iostream> // Required before Eigen/MetisSupport (Eigen bug)
 #include <stdexcept>
 #include <unordered_map>
 
@@ -57,6 +58,11 @@ void CGCubicBezierBathymetrySmoother::init_components() {
   dof_manager_->build_edge_derivative_constraints(config_.edge_ngauss);
 
   solution_.setZero(dof_manager_->num_global_dofs());
+
+  // Enable element matrix caching for multigrid CachedRediscretization
+  if (config_.use_multigrid) {
+    element_matrix_cache_ = &internal_element_cache_;
+  }
 }
 
 // =============================================================================
@@ -291,10 +297,9 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
       Real rz_old = r.dot(z);
 
       Real b_norm = sys.b_reduced.norm();
-      Real tol_sq = config_.schur_cg_tolerance * config_.schur_cg_tolerance *
-                    b_norm * b_norm;
+      Real tol_sq = config_.tolerance * config_.tolerance * b_norm * b_norm;
 
-      for (int iter = 0; iter < config_.schur_cg_max_iterations; ++iter) {
+      for (int iter = 0; iter < config_.max_iterations; ++iter) {
         VecX Qp = sys.Q_reduced * p;
         Real pQp = p.dot(Qp);
 
@@ -349,6 +354,8 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
       solve_profile_->outer_cg_iterations = iterations;
     }
   } else {
+
+    std::cout << "Solving with edge constraints ..." << std::endl;
     // Setup solver for Q (either LU or multigrid)
     std::unique_ptr<SparseSolver> Q_solver;
     std::unique_ptr<BezierMultigridPreconditioner> mg_precond;
@@ -431,11 +438,10 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
     Real rs_old = r.squaredNorm();
     Real rhs_norm = rhs.norm();
 
-    Real tol_sq = config_.schur_cg_tolerance * config_.schur_cg_tolerance *
-                  rhs_norm * rhs_norm;
+    Real tol_sq = config_.tolerance * config_.tolerance * rhs_norm * rhs_norm;
 
     if (rs_old > tol_sq) {
-      for (int iter = 0; iter < config_.schur_cg_max_iterations; ++iter) {
+      for (int iter = 0; iter < config_.max_iterations; ++iter) {
         VecX Sp = schur_matvec(p);
         Real pSp = p.dot(Sp);
 
@@ -453,6 +459,17 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
 
         Real rs_new = r.squaredNorm();
         iterations = iter + 1;
+
+        // Record per-iteration metrics
+        if (solve_profile_) {
+          CGIterationMetrics m;
+          m.iteration = iter;
+          m.schur_residual_norm = std::sqrt(rs_new);
+          m.relative_residual = std::sqrt(rs_new) / rhs_norm;
+          m.alpha = alpha;
+          m.pSp = pSp;
+          solve_profile_->iteration_history.push_back(m);
+        }
 
         if (rs_new < tol_sq) {
           break; // Converged

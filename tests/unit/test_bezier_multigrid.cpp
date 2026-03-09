@@ -115,7 +115,7 @@ TEST_F(BezierMultigridTest, MultigridSmootherConverges) {
     config.use_iterative_solver = true;
     config.use_multigrid = true;
     config.multigrid_config.num_levels = 2;
-    config.schur_cg_tolerance = 1e-8;
+    config.tolerance = 1e-8;
 
     CGCubicBezierBathymetrySmoother smoother(mesh_, config);
 
@@ -141,7 +141,7 @@ TEST_F(BezierMultigridTest, MultigridProducesReasonableSolution) {
     config_mg.use_iterative_solver = true;
     config_mg.use_multigrid = true;
     config_mg.multigrid_config.num_levels = 2;
-    config_mg.schur_cg_tolerance = 1e-8;
+    config_mg.tolerance = 1e-8;
 
     CGCubicBezierBathymetrySmoother smoother_mg(mesh_, config_mg);
 
@@ -189,7 +189,7 @@ TEST_F(BezierMultigridTest, MultigridNoConstraintsMatchesDirect) {
     config_mg.use_iterative_solver = true;
     config_mg.use_multigrid = true;
     config_mg.multigrid_config.num_levels = 2;
-    config_mg.schur_cg_tolerance = 1e-10;
+    config_mg.tolerance = 1e-10;
     config_mg.edge_ngauss = 0; // Disable edge constraints
 
     CGCubicBezierBathymetrySmoother smoother_mg(uniform_mesh, config_mg);
@@ -580,7 +580,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationWithAdaptiveSmoother) {
     config.use_multigrid = true;
     config.multigrid_config.num_levels = 2;
     config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
-    config.schur_cg_tolerance = 1e-8;
+    config.tolerance = 1e-8;
     config.edge_ngauss = 0; // Disable edge constraints for cleaner test
 
     CGCubicBezierBathymetrySmoother smoother(uniform_mesh, config);
@@ -611,7 +611,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationConvergence) {
     config_galerkin.use_multigrid = true;
     config_galerkin.multigrid_config.num_levels = 2;
     config_galerkin.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
-    config_galerkin.schur_cg_tolerance = 1e-8;
+    config_galerkin.tolerance = 1e-8;
     config_galerkin.edge_ngauss = 0;
 
     CGCubicBezierBathymetrySmoother smoother_galerkin(uniform_mesh, config_galerkin);
@@ -625,7 +625,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationConvergence) {
     config_cached.use_multigrid = true;
     config_cached.multigrid_config.num_levels = 2;
     config_cached.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
-    config_cached.schur_cg_tolerance = 1e-8;
+    config_cached.tolerance = 1e-8;
     config_cached.edge_ngauss = 0;
 
     CGCubicBezierBathymetrySmoother smoother_cached(uniform_mesh, config_cached);

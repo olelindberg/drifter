@@ -160,6 +160,11 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/cg_linear_bezier_dof_manager.cpp
     src/bathymetry/cg_linear_bezier_bathymetry_smoother.cpp
     src/bathymetry/adaptive_cg_linear_bezier_smoother.cpp
+    # Standalone iterative methods for smoothing/solving
+    src/bathymetry/jacobi_method.cpp
+    src/bathymetry/schwarz_method.cpp
+    src/bathymetry/iterative_solver.cpp
+    src/bathymetry/iterative_method_factory.cpp
 )
 
 set(DG_SOURCES

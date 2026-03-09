@@ -550,7 +550,7 @@ void QuadtreeAdapter::balance() {
 }
 
 void QuadtreeAdapter::subdivide_toward_center(QuadtreeNode* node, int remaining_levels,
-                                               const Vec2& center) {
+                                              const Vec2 &center) {
     if (remaining_levels <= 0) {
         return;  // This is a leaf
     }
@@ -653,9 +653,9 @@ void QuadtreeAdapter::subdivide_to_level(QuadtreeNode* node, int target_x, int t
 
 std::unique_ptr<QuadtreeNode> QuadtreeAdapter::copy_octree_node_to_2d(
     const OctreeNode* octree_node,
-    QuadtreeNode* parent
-) {
-    if (!octree_node) return nullptr;
+    QuadtreeNode* parent) {
+    if (!octree_node)
+        return nullptr;
 
     auto node = std::make_unique<QuadtreeNode>();
     node->parent = parent;
@@ -682,7 +682,7 @@ std::unique_ptr<QuadtreeNode> QuadtreeAdapter::copy_octree_node_to_2d(
         Real zmin = octree_node->bounds.zmin;
         const Real tol = 1e-10;
 
-        for (const auto& oct_child : octree_node->children) {
+        for (const auto &oct_child : octree_node->children) {
             // Only copy children that touch the bottom face
             if (std::abs(oct_child->bounds.zmin - zmin) < tol) {
                 auto quad_child = copy_octree_node_to_2d(oct_child.get(), node.get());
@@ -709,8 +709,9 @@ std::vector<const QuadtreeNode*> QuadtreeAdapter::nodes_at_level(int level) cons
 }
 
 void QuadtreeAdapter::collect_nodes_at_level(const QuadtreeNode* node, int target_level,
-                                              std::vector<const QuadtreeNode*>& result) const {
-    if (!node) return;
+                                             std::vector<const QuadtreeNode*> &result) const {
+    if (!node)
+        return;
 
     int node_level = node->level.max_level();
     if (node_level == target_level) {
@@ -720,7 +721,7 @@ void QuadtreeAdapter::collect_nodes_at_level(const QuadtreeNode* node, int targe
 
     // If we haven't reached target level yet, recurse into children
     if (node_level < target_level) {
-        for (const auto& child : node->children) {
+        for (const auto &child : node->children) {
             collect_nodes_at_level(child.get(), target_level, result);
         }
     }
@@ -728,16 +729,18 @@ void QuadtreeAdapter::collect_nodes_at_level(const QuadtreeNode* node, int targe
 }
 
 int QuadtreeAdapter::max_depth() const {
-    if (!root_) return 0;
+    if (!root_)
+        return 0;
     return max_depth_recursive(root_.get());
 }
 
 int QuadtreeAdapter::max_depth_recursive(const QuadtreeNode* node) const {
-    if (!node) return 0;
+    if (!node)
+        return 0;
 
     int depth = node->level.max_level();
 
-    for (const auto& child : node->children) {
+    for (const auto &child : node->children) {
         depth = std::max(depth, max_depth_recursive(child.get()));
     }
 

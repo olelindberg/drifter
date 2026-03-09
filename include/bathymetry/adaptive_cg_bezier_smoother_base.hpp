@@ -83,7 +83,7 @@ public:
 
     /// @brief Access cached element matrices (for multigrid CachedRediscretization)
     /// @return Map from (morton, level_x, level_y) to element matrix Q_elem
-    const std::map<std::tuple<uint64_t, int, int>, MatX>& element_matrices() const {
+    const std::map<std::tuple<uint64_t, int, int>, MatX> &element_matrices() const {
         return element_matrices_;
     }
 

@@ -43,7 +43,11 @@ set(INTEGRATION_TESTS
     integration/test_cg_linear_bezier_bathymetry_smoother.cpp
     integration/test_adaptive_cg_linear_bezier_smoother.cpp
     # Multi-source bathymetry lookup
-    integration/test_multi_source_bathymetry.cpp)
+    integration/test_multi_source_bathymetry.cpp
+    # Solver comparison verification
+    integration/test_cg_cubic_bezier_solver_comparison.cpp
+    # Standalone iterative methods
+    integration/test_standalone_iterative_methods.cpp)
 
 # Create unit test executable
 add_executable(drifter_unit_tests ${UNIT_TESTS})

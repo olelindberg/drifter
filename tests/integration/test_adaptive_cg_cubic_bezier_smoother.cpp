@@ -501,7 +501,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
   AdaptiveCGCubicBezierConfig config;
   config.error_threshold = 1.0;
   config.error_metric_type = ErrorMetricType::VolumeChange;
-  config.max_iterations = 3;
+  config.max_iterations = 4;
   config.max_elements = 2500;
   config.smoother_config.lambda = 10.0;
   config.max_refinement_level = 12;
@@ -511,15 +511,27 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
   config.smoother_config.edge_ngauss = 4;
   config.smoother_config.use_iterative_solver = true;
   config.smoother_config.use_multigrid = true;
+  //  config.smoother_config.multigrid_config.smoother_type =
+  //      SmootherType::MultiplicativeSchwarz;
+  //  config.smoother_config.multigrid_config.verbose = true;
+  //  config.smoother_config.multigrid_config.num_levels = 100;
+  //  config.smoother_config.multigrid_config.min_tree_level = 2;
+  //  config.smoother_config.multigrid_config.coarse_grid_strategy =
+  //      CoarseGridStrategy::CachedRediscretization;
+  //  config.smoother_config.multigrid_config.transfer_strategy =
+  //      TransferOperatorStrategy::BezierSubdivision;
+
+  config.smoother_config.multigrid_config.verbose = true;
+  config.smoother_config.multigrid_config.num_levels = 4;
+  config.smoother_config.multigrid_config.min_tree_level = 0;
+  config.smoother_config.multigrid_config.pre_smoothing = 2;
+  config.smoother_config.multigrid_config.post_smoothing = 2;
   config.smoother_config.multigrid_config.smoother_type =
       SmootherType::MultiplicativeSchwarz;
-  config.smoother_config.multigrid_config.verbose = true;
-  config.smoother_config.multigrid_config.num_levels = 100;
-  config.smoother_config.multigrid_config.min_tree_level = 2;
-  config.smoother_config.multigrid_config.coarse_grid_strategy =
-      CoarseGridStrategy::CachedRediscretization;
   config.smoother_config.multigrid_config.transfer_strategy =
       TransferOperatorStrategy::BezierSubdivision;
+  config.smoother_config.multigrid_config.coarse_grid_strategy =
+      CoarseGridStrategy::CachedRediscretization;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -592,7 +604,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     config.edge_ngauss = 4;
     config.use_iterative_solver = true;
     config.use_multigrid = true;
-    config.schur_cg_tolerance = 1e-10;
+    config.tolerance = 1e-10;
     config.multigrid_config.num_levels = 3;
     config.multigrid_config.pre_smoothing = 1;
     config.multigrid_config.post_smoothing = 1;
@@ -613,10 +625,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     double total_ms =
         std::chrono::duration<double, std::milli>(end - start).count();
 
-    double schwarz_total = mg_profile.schwarz_matvec_ms +
-                           mg_profile.schwarz_gather_ms +
-                           mg_profile.schwarz_local_solve_ms +
-                           mg_profile.schwarz_scatter_update_ms;
+    double smoothing_total = mg_profile.vcycle_pre_smooth_ms +
+                              mg_profile.vcycle_post_smooth_ms;
 
     std::cout << "\n" << name << " Schwarz (16x16 = 256 elements):\n";
     std::cout << "  Total solve time: " << std::fixed << std::setprecision(2)
@@ -624,20 +634,9 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     std::cout << "  CG iterations: " << solve_profile.outer_cg_iterations
               << "\n";
     std::cout << "  Q^-1 calls: " << solve_profile.qinv_apply_calls << "\n";
-    std::cout << "  Schwarz total: " << schwarz_total << " ms\n";
-    std::cout << "    MatVec: " << mg_profile.schwarz_matvec_ms << " ms ("
-              << std::setprecision(1)
-              << 100.0 * mg_profile.schwarz_matvec_ms /
-                     std::max(0.001, schwarz_total)
-              << "%)\n";
-    std::cout << "    Gather: " << mg_profile.schwarz_gather_ms << " ms\n";
-    std::cout << "    Local solve: " << mg_profile.schwarz_local_solve_ms
-              << " ms\n";
-    std::cout << "    Scatter: " << mg_profile.schwarz_scatter_update_ms
-              << " ms ("
-              << 100.0 * mg_profile.schwarz_scatter_update_ms /
-                     std::max(0.001, schwarz_total)
-              << "%)\n";
+    std::cout << "  Smoothing total: " << smoothing_total << " ms\n";
+    std::cout << "    Pre-smooth: " << mg_profile.vcycle_pre_smooth_ms << " ms\n";
+    std::cout << "    Post-smooth: " << mg_profile.vcycle_post_smooth_ms << " ms\n";
 
     EXPECT_TRUE(smoother.is_solved());
     EXPECT_GT(solve_profile.outer_cg_iterations, 0);
@@ -804,7 +803,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
   solver_config.edge_ngauss = 4;
   solver_config.use_iterative_solver = true;
   solver_config.use_multigrid = true;
-  solver_config.schur_cg_tolerance = 1e-10;
+  solver_config.tolerance = 1e-10;
   solver_config.multigrid_config.num_levels = 3;
   solver_config.multigrid_config.pre_smoothing = 1;
   solver_config.multigrid_config.post_smoothing = 1;

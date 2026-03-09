@@ -11,6 +11,7 @@ DRIFTER is a 3D Discontinuous Galerkin (DG) adaptive multi-resolution coastal oc
 - Always separate I/O code from algorithmic code
 - Never add "Co-Authored-By" lines to git commit messages
 - Always output per-element interpolations to VTK (never uniform global mesh)
+- Never use fallback methods of any kind
 
 ## Build Commands
 
@@ -194,6 +195,8 @@ config.min_tree_level = 0;  // Coarsest level (1x1 element)
 config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
 config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
 ```
+
+**Verification Report:** See `docs/cg_bezier_solver_verification.md` for solver comparison results (Direct vs Iterative+LU vs Iterative+MG) and iterative method benchmarks. Regenerate figures with `./docs/regenerate_figures.sh`.
 
 ## Testing
 
