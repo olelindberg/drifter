@@ -13,6 +13,45 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Display names for solver variants
+SOLVER_DISPLAY_NAMES = {
+    "direct": "Direct",
+    "iterative_lu": "Iterative+LU",
+    "iterative_mg": "MG (L2+Galerkin)",  # Legacy name
+    "iterative_mg_l2_galerkin": "MG (L2+Galerkin)",
+    "iterative_mg_l2_cached": "MG (L2+Cached)",
+    "iterative_mg_bezier_galerkin": "MG (Bezier+Galerkin)",
+    "iterative_mg_bezier_cached": "MG (Bezier+Cached)",
+}
+
+# Preferred solver order for consistent tables
+SOLVER_ORDER = [
+    "direct",
+    "iterative_lu",
+    "iterative_mg",  # Legacy name
+    "iterative_mg_l2_galerkin",
+    "iterative_mg_l2_cached",
+    "iterative_mg_bezier_galerkin",
+    "iterative_mg_bezier_cached",
+]
+
+
+def get_solver_display_name(name: str) -> str:
+    """Get display name for a solver."""
+    return SOLVER_DISPLAY_NAMES.get(name, name)
+
+
+def order_solvers(solver_names: list[str]) -> list[str]:
+    """Order solvers according to preferred order."""
+    ordered = []
+    for s in SOLVER_ORDER:
+        if s in solver_names:
+            ordered.append(s)
+    for s in solver_names:
+        if s not in ordered:
+            ordered.append(s)
+    return ordered
+
 
 def load_solver_metrics(directory: Path) -> dict[str, pd.DataFrame]:
     """Load all solver_metrics_*.csv files."""
@@ -113,7 +152,7 @@ def generate_report(
     lines.append("")
     lines.append("- **Domain**: 1000m x 1000m")
     lines.append("- **Mesh**: 16x16 uniform quadtree (256 elements, 2401 DOFs)")
-    lines.append("- **Bathymetry**: Cosine function `cos(2*pi*x/L) * cos(2*pi*y/L)`")
+    lines.append("- **Bathymetry**: Exponential-sinusoidal function `exp(sin(2*pi*x/L) * sin(2*pi*y/L))`")
     lines.append("- **Lambda**: 1.0 (data fitting weight)")
     lines.append("- **Edge constraints**: 4 Gauss points per edge (C1 continuity)")
     lines.append("")
@@ -121,13 +160,16 @@ def generate_report(
     # Section 1: Solver Comparison
     lines.append("## 1. Solver Comparison")
     lines.append("")
-    lines.append("Three solver strategies are compared for the CG cubic Bezier smoother:")
+    lines.append("Multiple solver strategies are compared for the CG cubic Bezier smoother:")
     lines.append("")
-    lines.append("| Solver | Description |")
-    lines.append("|--------|-------------|")
-    lines.append("| **Direct (SparseLU)** | Direct factorization of the KKT system |")
-    lines.append("| **Iterative + LU** | Schur complement CG with LU-preconditioned Q^-1 |")
-    lines.append("| **Iterative + MG** | Schur complement CG with 2-level multigrid Q^-1 |")
+    lines.append("| Solver | Transfer | Coarse Grid | Description |")
+    lines.append("|--------|----------|-------------|-------------|")
+    lines.append("| **Direct (SparseLU)** | N/A | N/A | Direct factorization of the KKT system |")
+    lines.append("| **Iterative + LU** | N/A | N/A | Schur complement CG with LU-preconditioned Q^-1 |")
+    lines.append("| **MG (L2+Galerkin)** | L2 Projection | Galerkin | Classic algebraic multigrid |")
+    lines.append("| **MG (L2+Cached)** | L2 Projection | Cached Rediscret. | L2 transfer with direct element assembly |")
+    lines.append("| **MG (Bezier+Galerkin)** | Bezier Subdiv. | Galerkin | Non-negative weights with algebraic coarsening |")
+    lines.append("| **MG (Bezier+Cached)** | Bezier Subdiv. | Cached Rediscret. | Recommended for adaptive meshes |")
     lines.append("")
 
     # Final Metrics Table
@@ -136,8 +178,7 @@ def generate_report(
         lines.append("")
 
         # Order solvers consistently
-        solver_order = ["direct", "iterative_lu", "iterative_mg"]
-        solvers = [s for s in solver_order if s in solver_metrics]
+        solvers = order_solvers(list(solver_metrics.keys()))
 
         metrics_to_show = [
             ("solution_l2_norm", "Solution L2 norm"),
@@ -152,8 +193,7 @@ def generate_report(
 
         header = "| Metric |"
         for s in solvers:
-            name = {"direct": "Direct", "iterative_lu": "Iterative+LU", "iterative_mg": "Iterative+MG"}.get(s, s)
-            header += f" {name} |"
+            header += f" {get_solver_display_name(s)} |"
         lines.append(header)
         lines.append("|--------|" + "".join(["--------------|"] * len(solvers)))
 
@@ -172,7 +212,7 @@ def generate_report(
             "All solvers achieve the same objective value and solution quality. "
             "The constraint violation is lower for the iterative solvers due to exact "
             "Schur complement handling. The direct solver is fastest for this problem size, "
-            "while the multigrid preconditioner shows promise for larger problems where "
+            "while the multigrid preconditioners show promise for larger problems where "
             "direct factorization becomes prohibitive."
         )
         lines.append("")
@@ -184,13 +224,13 @@ def generate_report(
         lines.append("| Solver Pair | L2 Difference | Relative Difference |")
         lines.append("|-------------|---------------|---------------------|")
         for _, row in solver_comparison.iterrows():
-            s1 = {"direct": "Direct", "iterative_lu": "Iterative+LU", "iterative_mg": "Iterative+MG"}.get(row["solver1"], row["solver1"])
-            s2 = {"direct": "Direct", "iterative_lu": "Iterative+LU", "iterative_mg": "Iterative+MG"}.get(row["solver2"], row["solver2"])
+            s1 = get_solver_display_name(row["solver1"])
+            s2 = get_solver_display_name(row["solver2"])
             lines.append(f"| {s1} vs {s2} | {row['l2_diff']:.2e} | {row['relative_diff']:.2e} |")
         lines.append("")
         lines.append(
             "The direct and iterative+LU solvers produce nearly identical solutions "
-            "(relative difference ~10^-9). The multigrid preconditioner achieves slightly "
+            "(relative difference ~10^-9). The multigrid preconditioners achieve slightly "
             "different results due to the approximate nature of the V-cycle, but the "
             "relative difference remains small (~10^-6)."
         )

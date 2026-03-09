@@ -2,50 +2,65 @@
 
 This report documents the verification of the CG (Conjugate Gradient) Bezier bathymetry smoothers, comparing different solver strategies and iterative methods.
 
-*Generated: 2026-03-09 23:45*
+*Generated: 2026-03-10 00:23*
 
 ## Test Configuration
 
 - **Domain**: 1000m x 1000m
 - **Mesh**: 16x16 uniform quadtree (256 elements, 2401 DOFs)
-- **Bathymetry**: Cosine function `cos(2*pi*x/L) * cos(2*pi*y/L)`
+- **Bathymetry**: Exponential-sinusoidal function `exp(sin(2*pi*x/L) * sin(2*pi*y/L))`
 - **Lambda**: 1.0 (data fitting weight)
 - **Edge constraints**: 4 Gauss points per edge (C1 continuity)
 
 ## 1. Solver Comparison
 
-Three solver strategies are compared for the CG cubic Bezier smoother:
+Multiple solver strategies are compared for the CG cubic Bezier smoother:
 
-| Solver | Description |
-|--------|-------------|
-| **Direct (SparseLU)** | Direct factorization of the KKT system |
-| **Iterative + LU** | Schur complement CG with LU-preconditioned Q^-1 |
-| **Iterative + MG** | Schur complement CG with 2-level multigrid Q^-1 |
+| Solver | Transfer | Coarse Grid | Description |
+|--------|----------|-------------|-------------|
+| **Direct (SparseLU)** | N/A | N/A | Direct factorization of the KKT system |
+| **Iterative + LU** | N/A | N/A | Schur complement CG with LU-preconditioned Q^-1 |
+| **MG (L2+Galerkin)** | L2 Projection | Galerkin | Classic algebraic multigrid |
+| **MG (L2+Cached)** | L2 Projection | Cached Rediscret. | L2 transfer with direct element assembly |
+| **MG (Bezier+Galerkin)** | Bezier Subdiv. | Galerkin | Non-negative weights with algebraic coarsening |
+| **MG (Bezier+Cached)** | Bezier Subdiv. | Cached Rediscret. | Recommended for adaptive meshes |
 
 ### Final Metrics Comparison
 
-| Metric | Direct | Iterative+LU | Iterative+MG |
-|--------|--------------|--------------|--------------|
-| Solution L2 norm | 25.269 | 25.269 | 25.269 |
-| Data residual | 0.4001 | 0.4001 | 0.4001 |
-| Regularization energy | 0.0021 | 0.0021 | 0.0021 |
-| Constraint violation | 1.63e-08 | 1.93e-08 | 3.30e-08 |
-| Objective value | 13.426 | 13.426 | 13.426 |
-| Schur CG iterations | 0 | 27 | 27 |
-| Q^-1 apply calls | 0 | 30 | 30 |
-| Solve time (ms) | 849 | 662 | 652 |
+| Metric | Direct | Iterative+LU | MG (L2+Galerkin) | MG (L2+Cached) | MG (Bezier+Galerkin) | MG (Bezier+Cached) |
+|--------|--------------|--------------|--------------|--------------|--------------|--------------|
+| Solution L2 norm | 61.715 | 61.715 | 61.715 | 61.708 | 61.715 | 61.715 |
+| Data residual | 0.1398 | 0.1398 | 0.1399 | 0.1941 | 0.1399 | 0.1399 |
+| Regularization energy | 0.0040 | 0.0040 | 0.0040 | 0.0040 | 0.0040 | 0.0040 |
+| Constraint violation | 2.45e-08 | 2.54e-08 | 4.53e-08 | 5.24e-08 | 4.00e-08 | 3.93e-08 |
+| Objective value | 25.235 | 25.235 | 25.235 | 25.332 | 25.235 | 25.235 |
+| Schur CG iterations | 0 | 27 | 27 | 28 | 27 | 27 |
+| Q^-1 apply calls | 0 | 30 | 30 | 31 | 30 | 30 |
+| Solve time (ms) | 681 | 919 | 375 | 749 | 934 | 939 |
 
-All solvers achieve the same objective value and solution quality. The constraint violation is lower for the iterative solvers due to exact Schur complement handling. The direct solver is fastest for this problem size, while the multigrid preconditioner shows promise for larger problems where direct factorization becomes prohibitive.
+All solvers achieve the same objective value and solution quality. The constraint violation is lower for the iterative solvers due to exact Schur complement handling. The direct solver is fastest for this problem size, while the multigrid preconditioners show promise for larger problems where direct factorization becomes prohibitive.
 
 ### Solution Agreement
 
 | Solver Pair | L2 Difference | Relative Difference |
 |-------------|---------------|---------------------|
-| Direct vs Iterative+LU | 4.50e-07 | 1.78e-08 |
-| Direct vs Iterative+MG | 1.95e-04 | 7.72e-06 |
-| Iterative+LU vs Iterative+MG | 1.95e-04 | 7.72e-06 |
+| Direct vs Iterative+LU | 5.80e-07 | 9.39e-09 |
+| Direct vs MG (Bezier+Cached) | 5.50e-04 | 8.91e-06 |
+| Direct vs MG (Bezier+Galerkin) | 4.28e-04 | 6.93e-06 |
+| Direct vs MG (L2+Cached) | 5.34e-02 | 8.66e-04 |
+| Direct vs MG (L2+Galerkin) | 6.95e-04 | 1.13e-05 |
+| Iterative+LU vs MG (Bezier+Cached) | 5.50e-04 | 8.91e-06 |
+| Iterative+LU vs MG (Bezier+Galerkin) | 4.28e-04 | 6.93e-06 |
+| Iterative+LU vs MG (L2+Cached) | 5.34e-02 | 8.66e-04 |
+| Iterative+LU vs MG (L2+Galerkin) | 6.95e-04 | 1.13e-05 |
+| MG (Bezier+Cached) vs MG (Bezier+Galerkin) | 1.45e-04 | 2.34e-06 |
+| MG (Bezier+Cached) vs MG (L2+Cached) | 5.32e-02 | 8.62e-04 |
+| MG (Bezier+Cached) vs MG (L2+Galerkin) | 1.85e-04 | 2.99e-06 |
+| MG (Bezier+Galerkin) vs MG (L2+Cached) | 5.33e-02 | 8.63e-04 |
+| MG (Bezier+Galerkin) vs MG (L2+Galerkin) | 2.91e-04 | 4.72e-06 |
+| MG (L2+Cached) vs MG (L2+Galerkin) | 5.32e-02 | 8.62e-04 |
 
-The direct and iterative+LU solvers produce nearly identical solutions (relative difference ~10^-9). The multigrid preconditioner achieves slightly different results due to the approximate nature of the V-cycle, but the relative difference remains small (~10^-6).
+The direct and iterative+LU solvers produce nearly identical solutions (relative difference ~10^-9). The multigrid preconditioners achieve slightly different results due to the approximate nature of the V-cycle, but the relative difference remains small (~10^-6).
 
 ### Convergence History
 
@@ -90,10 +105,10 @@ Four iterative methods are tested as standalone smoothers on a synthetic SPD sys
 
 | Method | Iterations | Rel. Residual | Sol. Error | Time (ms) | Avg Conv. Rate |
 |--------|------------|---------------|------------|-----------|----------------|
-| Jacobi | 43 | 8.15e-07 | 1.36e-06 | 1.1 | 0.73 |
+| Jacobi | 43 | 8.15e-07 | 1.36e-06 | 0.9 | 0.73 |
 | Multiplicative Schwarz | 6 | 6.16e-07 | 1.05e-06 | 0.5 | 0.09 |
-| Additive Schwarz | 156 | 9.51e-07 | 1.70e-06 | 12.0 | 0.91 |
-| Colored Schwarz | 6 | 3.16e-07 | 5.07e-07 | 0.7 | 0.08 |
+| Additive Schwarz | 156 | 9.51e-07 | 1.70e-06 | 9.8 | 0.91 |
+| Colored Schwarz | 6 | 3.16e-07 | 5.07e-07 | 0.6 | 0.08 |
 
 The colored Schwarz method achieves the best balance of fast convergence (6 iterations) and low solution error (5e-07), making it the recommended smoother for multigrid applications.
 

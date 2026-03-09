@@ -17,6 +17,47 @@ import matplotlib.tri as mtri
 import numpy as np
 import pandas as pd
 
+# Display names for solver variants
+SOLVER_DISPLAY_NAMES = {
+    "direct": "Direct",
+    "iterative_lu": "Iterative+LU",
+    "iterative_mg": "MG (L2+Galerkin)",  # Legacy name
+    "iterative_mg_l2_galerkin": "MG (L2+Galerkin)",
+    "iterative_mg_l2_cached": "MG (L2+Cached)",
+    "iterative_mg_bezier_galerkin": "MG (Bezier+Galerkin)",
+    "iterative_mg_bezier_cached": "MG (Bezier+Cached)",
+    "analytical": "Analytical",
+}
+
+# Preferred solver order for consistent plots
+SOLVER_ORDER = [
+    "direct",
+    "iterative_lu",
+    "iterative_mg",  # Legacy name
+    "iterative_mg_l2_galerkin",
+    "iterative_mg_l2_cached",
+    "iterative_mg_bezier_galerkin",
+    "iterative_mg_bezier_cached",
+]
+
+
+def get_solver_display_name(name: str) -> str:
+    """Get display name for a solver."""
+    return SOLVER_DISPLAY_NAMES.get(name, name)
+
+
+def order_solvers(solver_names: list[str]) -> list[str]:
+    """Order solvers according to preferred order."""
+    ordered = []
+    for s in SOLVER_ORDER:
+        if s in solver_names:
+            ordered.append(s)
+    # Add any remaining solvers not in preferred order
+    for s in solver_names:
+        if s not in ordered:
+            ordered.append(s)
+    return ordered
+
 
 def load_surface_data(directory: Path) -> dict[str, pd.DataFrame]:
     """Load all solver_surface_*.csv files."""
@@ -68,13 +109,6 @@ def plot_solver_surfaces(
     surfaces: dict[str, pd.DataFrame], output_dir: Path | None
 ) -> None:
     """Generate 3D surface plot for each solver showing solution vs analytical."""
-    solver_names = {
-        "direct": "Direct (SparseLU)",
-        "iterative_lu": "Iterative + LU",
-        "iterative_mg": "Iterative + Multigrid",
-        "analytical": "Analytical",
-    }
-
     # Determine common z limits
     z_all = []
     for name, df in surfaces.items():
@@ -86,22 +120,23 @@ def plot_solver_surfaces(
     z_min, z_max = min(z_all), max(z_all)
     zlim = (z_min - 0.1 * abs(z_max - z_min), z_max + 0.1 * abs(z_max - z_min))
 
-    for name, df in surfaces.items():
-        if name == "analytical":
-            continue  # Skip analytical-only file for main plots
+    # Order solvers for consistent output
+    ordered_names = order_solvers([n for n in surfaces.keys() if n != "analytical"])
+
+    for name in ordered_names:
+        df = surfaces[name]
+        display_name = get_solver_display_name(name)
 
         fig = plt.figure(figsize=(16, 6))
 
         # Plot 1: Solution surface
         ax1 = fig.add_subplot(1, 3, 1, projection="3d")
-        plot_surface_trisurf(
-            df, "z_solution", f"{solver_names.get(name, name)}: Solution", ax1, zlim=zlim
-        )
+        plot_surface_trisurf(df, "z_solution", f"{display_name}: Solution", ax1, zlim=zlim)
 
         # Plot 2: Analytical surface
         ax2 = fig.add_subplot(1, 3, 2, projection="3d")
         plot_surface_trisurf(
-            df, "z_analytical", "Analytical: cos(kx*x)*cos(ky*y)", ax2, zlim=zlim
+            df, "z_analytical", "Analytical: exp(sin(kx*x)*sin(ky*y))", ax2, zlim=zlim
         )
 
         # Plot 3: Error (solution - analytical)
@@ -134,14 +169,8 @@ def plot_all_surfaces_comparison(
     surfaces: dict[str, pd.DataFrame], output_dir: Path | None
 ) -> None:
     """Generate comparison plot showing all solver solutions side by side."""
-    solver_order = ["direct", "iterative_lu", "iterative_mg"]
-    solvers = [s for s in solver_order if s in surfaces]
-
-    solver_names = {
-        "direct": "Direct (SparseLU)",
-        "iterative_lu": "Iterative + LU",
-        "iterative_mg": "Iterative + MG",
-    }
+    # Order solvers consistently, excluding analytical
+    solvers = order_solvers([s for s in surfaces.keys() if s != "analytical"])
 
     if len(solvers) < 2:
         print("Not enough solvers for comparison plot")
@@ -157,7 +186,7 @@ def plot_all_surfaces_comparison(
 
     # Create figure: one column per solver + analytical
     n_cols = len(solvers) + 1
-    fig = plt.figure(figsize=(5 * n_cols, 5))
+    fig = plt.figure(figsize=(4 * n_cols, 4))
 
     # First: analytical (use any solver's data)
     ax = fig.add_subplot(1, n_cols, 1, projection="3d")
@@ -171,7 +200,7 @@ def plot_all_surfaces_comparison(
         plot_surface_trisurf(
             surfaces[name],
             "z_solution",
-            solver_names.get(name, name),
+            get_solver_display_name(name),
             ax,
             zlim=zlim,
         )
@@ -192,14 +221,8 @@ def plot_error_comparison(
     surfaces: dict[str, pd.DataFrame], output_dir: Path | None
 ) -> None:
     """Generate error comparison across all solvers."""
-    solver_order = ["direct", "iterative_lu", "iterative_mg"]
-    solvers = [s for s in solver_order if s in surfaces]
-
-    solver_names = {
-        "direct": "Direct",
-        "iterative_lu": "Iter+LU",
-        "iterative_mg": "Iter+MG",
-    }
+    # Order solvers consistently, excluding analytical
+    solvers = order_solvers([s for s in surfaces.keys() if s != "analytical"])
 
     if len(solvers) == 0:
         return
@@ -214,18 +237,19 @@ def plot_error_comparison(
     global_max_error = max(max_errors.values())
 
     # Create figure
-    fig = plt.figure(figsize=(5 * len(solvers), 5))
+    fig = plt.figure(figsize=(4 * len(solvers), 4))
 
     for idx, name in enumerate(solvers):
         df = surfaces[name]
         df_error = df.copy()
         df_error["z_error"] = df["z_solution"] - df["z_analytical"]
 
+        display_name = get_solver_display_name(name)
         ax = fig.add_subplot(1, len(solvers), idx + 1, projection="3d")
         plot_surface_trisurf(
             df_error,
             "z_error",
-            f"{solver_names[name]} Error (max: {max_errors[name]:.2e})",
+            f"{display_name} Error\n(max: {max_errors[name]:.2e})",
             ax,
             cmap="RdBu_r",
             zlim=(-global_max_error * 1.2, global_max_error * 1.2),

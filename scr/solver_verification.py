@@ -14,6 +14,62 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+# Color mapping for all solver variants
+SOLVER_COLORS = {
+    "direct": "#1f77b4",
+    "iterative_lu": "#ff7f0e",
+    "iterative_mg": "#2ca02c",  # Legacy name
+    "iterative_mg_l2_galerkin": "#2ca02c",
+    "iterative_mg_l2_cached": "#d62728",
+    "iterative_mg_bezier_galerkin": "#9467bd",
+    "iterative_mg_bezier_cached": "#8c564b",
+}
+
+# Display names for solver variants
+SOLVER_DISPLAY_NAMES = {
+    "direct": "Direct",
+    "iterative_lu": "Iterative+LU",
+    "iterative_mg": "MG (L2+Galerkin)",  # Legacy name
+    "iterative_mg_l2_galerkin": "MG (L2+Galerkin)",
+    "iterative_mg_l2_cached": "MG (L2+Cached)",
+    "iterative_mg_bezier_galerkin": "MG (Bezier+Galerkin)",
+    "iterative_mg_bezier_cached": "MG (Bezier+Cached)",
+}
+
+# Preferred solver order for consistent plots
+SOLVER_ORDER = [
+    "direct",
+    "iterative_lu",
+    "iterative_mg",  # Legacy name
+    "iterative_mg_l2_galerkin",
+    "iterative_mg_l2_cached",
+    "iterative_mg_bezier_galerkin",
+    "iterative_mg_bezier_cached",
+]
+
+
+def get_solver_color(name: str) -> str:
+    """Get color for a solver, with fallback."""
+    return SOLVER_COLORS.get(name, "#333333")
+
+
+def get_solver_display_name(name: str) -> str:
+    """Get display name for a solver."""
+    return SOLVER_DISPLAY_NAMES.get(name, name)
+
+
+def order_solvers(solver_names: list[str]) -> list[str]:
+    """Order solvers according to preferred order."""
+    ordered = []
+    for s in SOLVER_ORDER:
+        if s in solver_names:
+            ordered.append(s)
+    # Add any remaining solvers not in preferred order
+    for s in solver_names:
+        if s not in ordered:
+            ordered.append(s)
+    return ordered
+
 
 def load_final_metrics(directory: Path) -> dict[str, pd.DataFrame]:
     """Load all solver_metrics_*.csv files."""
@@ -64,19 +120,20 @@ def plot_convergence(
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    colors = {"iterative_lu": "#1f77b4", "iterative_mg": "#ff7f0e"}
+    # Order solvers for consistent legend
+    ordered_names = order_solvers(list(iterations.keys()))
 
     # Plot 1: Absolute residual norm
     ax1 = axes[0]
-    for name, df in iterations.items():
-        color = colors.get(name, None)
+    for name in ordered_names:
+        df = iterations[name]
         ax1.semilogy(
             df["iteration"],
             df["schur_residual_norm"],
             marker="o",
             markersize=3,
-            label=name,
-            color=color,
+            label=get_solver_display_name(name),
+            color=get_solver_color(name),
         )
     ax1.set_xlabel("Iteration")
     ax1.set_ylabel("Schur Residual L2 Norm")
@@ -86,15 +143,15 @@ def plot_convergence(
 
     # Plot 2: Relative residual
     ax2 = axes[1]
-    for name, df in iterations.items():
-        color = colors.get(name, None)
+    for name in ordered_names:
+        df = iterations[name]
         ax2.semilogy(
             df["iteration"],
             df["relative_residual"],
             marker="o",
             markersize=3,
-            label=name,
-            color=color,
+            label=get_solver_display_name(name),
+            color=get_solver_color(name),
         )
     ax2.set_xlabel("Iteration")
     ax2.set_ylabel("Relative Residual")
@@ -122,13 +179,20 @@ def plot_cg_parameters(
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    colors = {"iterative_lu": "#1f77b4", "iterative_mg": "#ff7f0e"}
+    # Order solvers for consistent legend
+    ordered_names = order_solvers(list(iterations.keys()))
 
     # Plot alpha (step size)
     ax1 = axes[0]
-    for name, df in iterations.items():
-        color = colors.get(name, None)
-        ax1.plot(df["iteration"], df["alpha"], marker=".", label=name, color=color)
+    for name in ordered_names:
+        df = iterations[name]
+        ax1.plot(
+            df["iteration"],
+            df["alpha"],
+            marker=".",
+            label=get_solver_display_name(name),
+            color=get_solver_color(name),
+        )
     ax1.set_xlabel("Iteration")
     ax1.set_ylabel("Alpha (step size)")
     ax1.set_title("CG Step Size per Iteration")
@@ -137,9 +201,15 @@ def plot_cg_parameters(
 
     # Plot pSp (curvature)
     ax2 = axes[1]
-    for name, df in iterations.items():
-        color = colors.get(name, None)
-        ax2.semilogy(df["iteration"], df["pSp"], marker=".", label=name, color=color)
+    for name in ordered_names:
+        df = iterations[name]
+        ax2.semilogy(
+            df["iteration"],
+            df["pSp"],
+            marker=".",
+            label=get_solver_display_name(name),
+            color=get_solver_color(name),
+        )
     ax2.set_xlabel("Iteration")
     ax2.set_ylabel("p^T S p")
     ax2.set_title("Search Direction Curvature")
@@ -172,12 +242,14 @@ def plot_final_metrics_comparison(
         "objective_value",
     ]
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     axes = axes.flatten()
 
-    solvers = list(metrics.keys())
+    # Order solvers consistently
+    solvers = order_solvers(list(metrics.keys()))
     x = np.arange(len(solvers))
-    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    colors = [get_solver_color(s) for s in solvers]
+    display_names = [get_solver_display_name(s) for s in solvers]
 
     for idx, metric in enumerate(metric_names):
         ax = axes[idx]
@@ -188,9 +260,9 @@ def plot_final_metrics_comparison(
             except KeyError:
                 values.append(0.0)
 
-        bars = ax.bar(x, values, color=colors[: len(solvers)])
+        bars = ax.bar(x, values, color=colors)
         ax.set_xticks(x)
-        ax.set_xticklabels(solvers, rotation=15)
+        ax.set_xticklabels(display_names, rotation=30, ha="right")
         ax.set_ylabel(metric.replace("_", " ").title())
         ax.set_title(metric)
 
@@ -212,7 +284,7 @@ def plot_final_metrics_comparison(
                 textcoords="offset points",
                 ha="center",
                 va="bottom",
-                fontsize=8,
+                fontsize=7,
             )
 
     plt.tight_layout()
@@ -232,7 +304,11 @@ def plot_timing_comparison(
     if not metrics:
         return
 
-    solvers = list(metrics.keys())
+    # Order solvers consistently
+    solvers = order_solvers(list(metrics.keys()))
+    colors = [get_solver_color(s) for s in solvers]
+    display_names = [get_solver_display_name(s) for s in solvers]
+
     times = []
     iterations = []
 
@@ -246,16 +322,15 @@ def plot_timing_comparison(
         except (KeyError, ValueError):
             iterations.append(0)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Timing
     ax1 = axes[0]
-    bars = ax1.bar(solvers, times, color=colors[: len(solvers)])
+    bars = ax1.bar(display_names, times, color=colors)
     ax1.set_ylabel("Time (ms)")
     ax1.set_title("Total Solve Time")
-    ax1.tick_params(axis="x", rotation=15)
+    ax1.tick_params(axis="x", rotation=30)
+    plt.setp(ax1.get_xticklabels(), ha="right")
     for bar, t in zip(bars, times):
         ax1.annotate(
             f"{t:.1f}",
@@ -264,14 +339,16 @@ def plot_timing_comparison(
             textcoords="offset points",
             ha="center",
             va="bottom",
+            fontsize=8,
         )
 
     # Iterations
     ax2 = axes[1]
-    bars = ax2.bar(solvers, iterations, color=colors[: len(solvers)])
+    bars = ax2.bar(display_names, iterations, color=colors)
     ax2.set_ylabel("Iterations")
     ax2.set_title("Schur CG Iterations")
-    ax2.tick_params(axis="x", rotation=15)
+    ax2.tick_params(axis="x", rotation=30)
+    plt.setp(ax2.get_xticklabels(), ha="right")
     for bar, it in zip(bars, iterations):
         ax2.annotate(
             str(it),
@@ -280,6 +357,7 @@ def plot_timing_comparison(
             textcoords="offset points",
             ha="center",
             va="bottom",
+            fontsize=8,
         )
 
     plt.tight_layout()
@@ -298,9 +376,9 @@ def print_summary_tables(
     comparison: pd.DataFrame | None,
 ) -> None:
     """Print formatted summary tables to console."""
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 90)
     print("                    FINAL METRICS COMPARISON")
-    print("=" * 70)
+    print("=" * 90)
 
     # Create a summary table
     if metrics:
@@ -315,9 +393,14 @@ def print_summary_tables(
             "total_solve_ms",
         ]
 
-        # Header
-        solvers = list(metrics.keys())
-        header = f"{'Metric':<25}" + "".join(f"{s:>20}" for s in solvers)
+        # Order solvers consistently
+        solvers = order_solvers(list(metrics.keys()))
+        col_width = 18
+
+        # Header with display names
+        header = f"{'Metric':<25}" + "".join(
+            f"{get_solver_display_name(s):>{col_width}}" for s in solvers
+        )
         print(header)
         print("-" * len(header))
 
@@ -327,22 +410,25 @@ def print_summary_tables(
                 try:
                     val = metrics[s].loc[metric, "value"]
                     if metric in ["schur_cg_iterations", "qinv_apply_calls"]:
-                        row += f"{int(val):>20}"
+                        row += f"{int(val):>{col_width}}"
                     elif metric == "constraint_violation":
-                        row += f"{val:>20.2e}"
+                        row += f"{val:>{col_width}.2e}"
                     elif metric == "total_solve_ms":
-                        row += f"{val:>20.2f}"
+                        row += f"{val:>{col_width}.2f}"
                     else:
-                        row += f"{val:>20.6f}"
+                        row += f"{val:>{col_width}.6f}"
                 except KeyError:
-                    row += f"{'N/A':>20}"
+                    row += f"{'N/A':>{col_width}}"
             print(row)
 
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 90)
     print("                    CONVERGENCE SUMMARY")
-    print("=" * 70)
-    for name, df in iterations.items():
-        print(f"\n{name}:")
+    print("=" * 90)
+    ordered_iters = order_solvers(list(iterations.keys()))
+    for name in ordered_iters:
+        df = iterations[name]
+        display = get_solver_display_name(name)
+        print(f"\n{display}:")
         print(f"  Total iterations:   {len(df)}")
         if len(df) > 0:
             print(f"  Initial residual:   {df['schur_residual_norm'].iloc[0]:.6e}")
@@ -351,14 +437,16 @@ def print_summary_tables(
             print(f"  Avg conv. rate:     {rate:.4f}")
 
     if comparison is not None and len(comparison) > 0:
-        print("\n" + "=" * 70)
+        print("\n" + "=" * 90)
         print("                    SOLUTION DIFFERENCES")
-        print("=" * 70)
-        print(f"{'Solver 1':<15} {'Solver 2':<15} {'L2 Diff':>15} {'Rel Diff':>15}")
-        print("-" * 60)
+        print("=" * 90)
+        print(f"{'Solver 1':<25} {'Solver 2':<25} {'L2 Diff':>15} {'Rel Diff':>15}")
+        print("-" * 80)
         for _, row in comparison.iterrows():
+            s1 = get_solver_display_name(row["solver1"])
+            s2 = get_solver_display_name(row["solver2"])
             print(
-                f"{row['solver1']:<15} {row['solver2']:<15} "
+                f"{s1:<25} {s2:<25} "
                 f"{row['l2_diff']:>15.6e} {row['relative_diff']:>15.6e}"
             )
 

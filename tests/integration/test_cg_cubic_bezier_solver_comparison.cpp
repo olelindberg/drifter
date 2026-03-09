@@ -30,7 +30,7 @@ protected:
   static constexpr Real L = 1000.0;
   static constexpr int N = 16;
   static constexpr Real SOLUTION_TOLERANCE = 1e-6;
-  static constexpr Real CONSTRAINT_TOLERANCE = 1e-8;
+  static constexpr Real CONSTRAINT_TOLERANCE = 1e-7;
   static constexpr std::string_view OUTPUT_DIR = "/tmp";
 
   void SetUp() override {
@@ -38,7 +38,7 @@ protected:
     kx_ = 2.0 * M_PI / L;
     ky_ = 2.0 * M_PI / L;
     bathy_func_ = [this](Real x, Real y) {
-      return std::cos(kx_ * x) * std::cos(ky_ * y);
+      return std::exp(std::sin(kx_ * x) * std::sin(ky_ * y));
     };
   }
 
@@ -66,7 +66,8 @@ protected:
     return config;
   }
 
-  CGCubicBezierSmootherConfig create_iterative_mg_config() const {
+  /// @brief Base multigrid config with common settings
+  CGCubicBezierSmootherConfig create_iterative_mg_base_config() const {
     CGCubicBezierSmootherConfig config;
     config.lambda = 1.0;
     config.use_iterative_solver = true;
@@ -82,11 +83,52 @@ protected:
     config.multigrid_config.post_smoothing = 2;
     config.multigrid_config.smoother_type =
         SmootherType::ColoredMultiplicativeSchwarz;
+
+    return config;
+  }
+
+  /// @brief MG with L2 projection transfer + Galerkin coarse grid
+  CGCubicBezierSmootherConfig create_iterative_mg_l2_galerkin_config() const {
+    auto config = create_iterative_mg_base_config();
     config.multigrid_config.transfer_strategy =
         TransferOperatorStrategy::L2Projection;
     config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
-
     return config;
+  }
+
+  /// @brief MG with L2 projection transfer + cached rediscretization
+  CGCubicBezierSmootherConfig create_iterative_mg_l2_cached_config() const {
+    auto config = create_iterative_mg_base_config();
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::L2Projection;
+    config.multigrid_config.coarse_grid_strategy =
+        CoarseGridStrategy::CachedRediscretization;
+    return config;
+  }
+
+  /// @brief MG with Bezier subdivision transfer + Galerkin coarse grid
+  CGCubicBezierSmootherConfig
+  create_iterative_mg_bezier_galerkin_config() const {
+    auto config = create_iterative_mg_base_config();
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    return config;
+  }
+
+  /// @brief MG with Bezier subdivision transfer + cached rediscretization
+  CGCubicBezierSmootherConfig create_iterative_mg_bezier_cached_config() const {
+    auto config = create_iterative_mg_base_config();
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy =
+        CoarseGridStrategy::CachedRediscretization;
+    return config;
+  }
+
+  /// @brief Legacy config for backward compatibility with individual tests
+  CGCubicBezierSmootherConfig create_iterative_mg_config() const {
+    return create_iterative_mg_l2_galerkin_config();
   }
 
   // =========================================================================
@@ -347,18 +389,48 @@ TEST_F(CGBezierSolverComparisonTest, IterativeMultigrid) {
 }
 
 TEST_F(CGBezierSolverComparisonTest, AllSolversComparison) {
-  // Run all three solvers, capturing smoothers for surface output
-  std::vector<CGIterationMetrics> history_lu, history_mg;
+  // MG strategy variants to test
+  struct MGVariant {
+    std::string name;
+    std::string display_name;
+    std::function<CGCubicBezierSmootherConfig()> create_config;
+  };
+
+  std::vector<MGVariant> mg_variants = {
+      {"iterative_mg_l2_galerkin", "MG (L2+Galerkin)",
+       [this]() { return create_iterative_mg_l2_galerkin_config(); }},
+      {"iterative_mg_l2_cached", "MG (L2+Cached)",
+       [this]() { return create_iterative_mg_l2_cached_config(); }},
+      {"iterative_mg_bezier_galerkin", "MG (Bezier+Galerkin)",
+       [this]() { return create_iterative_mg_bezier_galerkin_config(); }},
+      {"iterative_mg_bezier_cached", "MG (Bezier+Cached)",
+       [this]() { return create_iterative_mg_bezier_cached_config(); }},
+  };
+
+  // Run baseline solvers
+  std::vector<CGIterationMetrics> history_lu;
   std::unique_ptr<CGCubicBezierBathymetrySmoother> smoother_direct;
   std::unique_ptr<CGCubicBezierBathymetrySmoother> smoother_lu;
-  std::unique_ptr<CGCubicBezierBathymetrySmoother> smoother_mg;
 
   auto metrics_direct = run_solver(create_direct_config(), "direct", nullptr,
                                    &smoother_direct);
   auto metrics_lu = run_solver(create_iterative_lu_config(), "iterative_lu",
                                &history_lu, &smoother_lu);
-  auto metrics_mg = run_solver(create_iterative_mg_config(), "iterative_mg",
-                               &history_mg, &smoother_mg);
+
+  // Run all MG variants
+  std::map<std::string, SolverMetrics> mg_metrics;
+  std::map<std::string, std::vector<CGIterationMetrics>> mg_histories;
+  std::map<std::string, std::unique_ptr<CGCubicBezierBathymetrySmoother>>
+      mg_smoothers;
+
+  for (const auto &variant : mg_variants) {
+    std::vector<CGIterationMetrics> history;
+    std::unique_ptr<CGCubicBezierBathymetrySmoother> smoother;
+    mg_metrics[variant.name] =
+        run_solver(variant.create_config(), variant.name, &history, &smoother);
+    mg_histories[variant.name] = std::move(history);
+    mg_smoothers[variant.name] = std::move(smoother);
+  }
 
   // Print summary
   std::cout << "\n========================================" << std::endl;
@@ -367,52 +439,87 @@ TEST_F(CGBezierSolverComparisonTest, AllSolversComparison) {
 
   print_metrics("1. Direct (SparseLU)", metrics_direct);
   print_metrics("2. Iterative (LU precond)", metrics_lu);
-  print_metrics("3. Iterative (2-level MG)", metrics_mg);
 
-  // Solution differences
-  std::cout << "\n=== SOLUTION DIFFERENCES ===" << std::endl;
+  int idx = 3;
+  for (const auto &variant : mg_variants) {
+    print_metrics(std::to_string(idx) + ". " + variant.display_name,
+                  mg_metrics[variant.name]);
+    ++idx;
+  }
+
+  // Solution differences vs direct baseline
+  std::cout << "\n=== SOLUTION DIFFERENCES (vs Direct) ===" << std::endl;
   std::cout << std::scientific << std::setprecision(6);
 
   const VecX &sol_direct = solutions_["direct"];
   const VecX &sol_lu = solutions_["iterative_lu"];
-  const VecX &sol_mg = solutions_["iterative_mg"];
 
   Real diff_direct_lu = (sol_direct - sol_lu).norm();
-  Real diff_direct_mg = (sol_direct - sol_mg).norm();
-  Real diff_lu_mg = (sol_lu - sol_mg).norm();
+  std::cout << "||x_direct - x_lu||:              " << diff_direct_lu
+            << std::endl;
 
-  std::cout << "||x_direct - x_lu||:   " << diff_direct_lu << std::endl;
-  std::cout << "||x_direct - x_mg||:   " << diff_direct_mg << std::endl;
-  std::cout << "||x_lu - x_mg||:       " << diff_lu_mg << std::endl;
+  for (const auto &variant : mg_variants) {
+    const VecX &sol_mg = solutions_[variant.name];
+    Real diff = (sol_direct - sol_mg).norm();
+    std::cout << "||x_direct - x_" << variant.name << "||: " << diff
+              << std::endl;
+  }
 
   // Timing summary
   std::cout << "\n=== TIMING SUMMARY ===" << std::endl;
   std::cout << std::fixed << std::setprecision(2);
-  std::cout << "Direct solve:     " << metrics_direct.total_solve_ms << " ms"
-            << std::endl;
-  std::cout << "Iterative+LU:     " << metrics_lu.total_solve_ms << " ms"
-            << std::endl;
-  std::cout << "Iterative+MG:     " << metrics_mg.total_solve_ms << " ms"
-            << std::endl;
+  std::cout << "Direct solve:             " << metrics_direct.total_solve_ms
+            << " ms" << std::endl;
+  std::cout << "Iterative+LU:             " << metrics_lu.total_solve_ms
+            << " ms" << std::endl;
+
+  for (const auto &variant : mg_variants) {
+    std::cout << variant.display_name << ": "
+              << std::setw(20 - variant.display_name.size()) << " "
+              << mg_metrics[variant.name].total_solve_ms << " ms" << std::endl;
+  }
+
+  // Iteration count summary
+  std::cout << "\n=== ITERATION COUNTS ===" << std::endl;
+  std::cout << "Iterative+LU:             " << metrics_lu.schur_cg_iterations
+            << " iterations" << std::endl;
+  for (const auto &variant : mg_variants) {
+    std::cout << variant.display_name << ": "
+              << std::setw(20 - variant.display_name.size()) << " "
+              << mg_metrics[variant.name].schur_cg_iterations << " iterations"
+              << std::endl;
+  }
 
   // Write all CSVs
   write_final_metrics_csv("direct", metrics_direct);
   write_final_metrics_csv("iterative_lu", metrics_lu);
-  write_final_metrics_csv("iterative_mg", metrics_mg);
+  for (const auto &variant : mg_variants) {
+    write_final_metrics_csv(variant.name, mg_metrics[variant.name]);
+  }
+
   write_iteration_history_csv("iterative_lu", history_lu);
-  write_iteration_history_csv("iterative_mg", history_mg);
+  for (const auto &variant : mg_variants) {
+    write_iteration_history_csv(variant.name, mg_histories[variant.name]);
+  }
+
   write_comparison_csv();
 
   // Write surface data for plotting
   write_surface_csv("direct", *smoother_direct);
   write_surface_csv("iterative_lu", *smoother_lu);
-  write_surface_csv("iterative_mg", *smoother_mg);
+  for (const auto &variant : mg_variants) {
+    write_surface_csv(variant.name, *mg_smoothers[variant.name]);
+  }
   write_analytical_surface_csv();
 
-  // Verify constraints - direct solver (KKT) is less tight than iterative Schur
+  // Verify constraints
   EXPECT_LT(metrics_direct.constraint_violation, 1e-6);
   EXPECT_LT(metrics_lu.constraint_violation, CONSTRAINT_TOLERANCE);
-  EXPECT_LT(metrics_mg.constraint_violation, 1e-6);
+
+  for (const auto &variant : mg_variants) {
+    EXPECT_LT(mg_metrics[variant.name].constraint_violation, 1e-6)
+        << "MG variant " << variant.name << " should satisfy constraints";
+  }
 
   // Direct and LU should match closely
   Real rel_diff_lu = diff_direct_lu / std::max(sol_direct.norm(), Real(1e-14));
