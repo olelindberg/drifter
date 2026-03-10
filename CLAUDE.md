@@ -190,7 +190,6 @@ Use `BezierSubdivision` for adaptive meshes where L2 projection's large negative
 **Recommended configuration for adaptive meshes:**
 ```cpp
 MultigridConfig config;
-config.num_levels = 3;  // Or: max_tree_depth - min_tree_level + 1
 config.min_tree_level = 0;  // Coarsest level (1x1 element)
 config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
 config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;

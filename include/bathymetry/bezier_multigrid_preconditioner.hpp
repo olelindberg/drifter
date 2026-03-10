@@ -94,13 +94,10 @@ struct MultigridProfile {
 
 /// @brief Configuration for geometric multigrid preconditioner
 struct MultigridConfig {
-  /// Number of V-cycle levels (including finest)
-  int num_levels = 100;
-
-  /// Minimum tree level for coarsest multigrid level (0 = 1x1, 1 = 2x2, 2 = 4x4
-  /// elements) Coarsening stops when composite grid nodes reach this tree
-  /// level.
-  int min_tree_level = 2;
+  /// Minimum tree level for coarsest multigrid level (0 = 1x1, 1 = 2x2, 2 = 4x4,
+  /// 3 = 8x8, 4 = 16x16 elements). Number of V-cycle levels is computed
+  /// automatically as max_tree_depth - min_tree_level + 1.
+  int min_tree_level = 4;
 
   /// Pre-smoothing iterations
   int pre_smoothing = 1;
@@ -111,8 +108,8 @@ struct MultigridConfig {
   /// Damping parameter for weighted Jacobi smoother
   Real jacobi_omega = 0.8;
 
-  /// Smoother type (Jacobi or MultiplicativeSchwarz)
-  SmootherType smoother_type = SmootherType::MultiplicativeSchwarz;
+  /// Smoother type (Jacobi, MultiplicativeSchwarz, or ColoredMultiplicativeSchwarz)
+  SmootherType smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
 
   /// Maximum DOFs on coarsest level before using direct solver
   Index coarsest_direct_size = 200;
@@ -121,13 +118,10 @@ struct MultigridConfig {
   bool verbose = false;
 
   /// Strategy for building coarse-level system matrices
-  /// Default: Galerkin (preserves original behavior)
-  CoarseGridStrategy coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+  CoarseGridStrategy coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
 
   /// Strategy for building transfer operators (P and R)
-  /// Default: L2Projection (preserves original behavior)
-  TransferOperatorStrategy transfer_strategy =
-      TransferOperatorStrategy::BezierSubdivision;
+  TransferOperatorStrategy transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
 };
 
 /// @brief Active node in a composite multigrid level

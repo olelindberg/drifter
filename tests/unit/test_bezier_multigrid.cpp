@@ -58,7 +58,8 @@ TEST_F(BezierMultigridTest, SetupBuildsHierarchy) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 2;
+    config.min_tree_level = 1;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -87,9 +88,10 @@ TEST_F(BezierMultigridTest, VCycleReducesResidual) {
 
     // Setup preconditioner
     MultigridConfig config;
-    config.num_levels = 2;
+    config.min_tree_level = 1;
     config.pre_smoothing = 2;
     config.post_smoothing = 2;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -114,7 +116,7 @@ TEST_F(BezierMultigridTest, MultigridSmootherConverges) {
     config.lambda = 1.0;
     config.use_iterative_solver = true;
     config.use_multigrid = true;
-    config.multigrid_config.num_levels = 2;
+    config.multigrid_config.min_tree_level = 1;
     config.tolerance = 1e-8;
 
     CGCubicBezierBathymetrySmoother smoother(mesh_, config);
@@ -140,7 +142,7 @@ TEST_F(BezierMultigridTest, MultigridProducesReasonableSolution) {
     config_mg.lambda = 10.0;
     config_mg.use_iterative_solver = true;
     config_mg.use_multigrid = true;
-    config_mg.multigrid_config.num_levels = 2;
+    config_mg.multigrid_config.min_tree_level = 1;
     config_mg.tolerance = 1e-8;
 
     CGCubicBezierBathymetrySmoother smoother_mg(mesh_, config_mg);
@@ -188,7 +190,7 @@ TEST_F(BezierMultigridTest, MultigridNoConstraintsMatchesDirect) {
     config_mg.lambda = 10.0;
     config_mg.use_iterative_solver = true;
     config_mg.use_multigrid = true;
-    config_mg.multigrid_config.num_levels = 2;
+    config_mg.multigrid_config.min_tree_level = 1;
     config_mg.tolerance = 1e-10;
     config_mg.edge_ngauss = 0; // Disable edge constraints
 
@@ -214,12 +216,11 @@ TEST_F(BezierMultigridTest, MultigridNoConstraintsMatchesDirect) {
 
 TEST_F(BezierMultigridTest, ConfigDefaults) {
     MultigridConfig config;
-    EXPECT_EQ(config.num_levels, 100);  // High default; coarsening controlled by min_tree_level
-    EXPECT_EQ(config.min_tree_level, 2);  // Coarsest level: 4x4 elements
+    EXPECT_EQ(config.min_tree_level, 4);  // Coarsest level: 16x16 elements
     EXPECT_EQ(config.pre_smoothing, 1);
     EXPECT_EQ(config.post_smoothing, 1);
     EXPECT_NEAR(config.jacobi_omega, 0.8, TOLERANCE);
-    EXPECT_EQ(config.smoother_type, SmootherType::MultiplicativeSchwarz);
+    EXPECT_EQ(config.smoother_type, SmootherType::ColoredMultiplicativeSchwarz);
     EXPECT_EQ(config.coarsest_direct_size, 200);
     EXPECT_FALSE(config.verbose);
 }
@@ -245,10 +246,11 @@ TEST_F(BezierMultigridTest, SchwarzSmootherReducesResidual) {
 
     // Setup preconditioner with Schwarz smoother (default)
     MultigridConfig config;
-    config.num_levels = 2;
+    config.min_tree_level = 1;
     config.pre_smoothing = 2;
     config.post_smoothing = 2;
     config.smoother_type = SmootherType::MultiplicativeSchwarz;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -280,8 +282,9 @@ TEST_F(BezierMultigridTest, JacobiSmootherStillWorks) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 2;
+    config.min_tree_level = 1;
     config.smoother_type = SmootherType::Jacobi;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -299,6 +302,7 @@ TEST_F(BezierMultigridTest, JacobiSmootherStillWorks) {
 TEST_F(BezierMultigridTest, L2BernsteinMass1DDimensions) {
     // The 1D Bernstein mass matrix should be 4x4 for cubic
     MultigridConfig config;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
 
     // Access internal state via setup then check levels
@@ -338,7 +342,9 @@ TEST_F(BezierMultigridTest, L2RestrictionProlongationTranspose) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::L2Projection;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -383,7 +389,8 @@ TEST_F(BezierMultigridTest, L2RestrictionConstantPreservation) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -429,7 +436,8 @@ TEST_F(BezierMultigridTest, L2GalerkinSymmetric) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -539,9 +547,9 @@ TEST_F(BezierMultigridTest, L2LocalProlongationMatrixExport) {
 // =============================================================================
 
 TEST_F(BezierMultigridTest, CoarseGridStrategyDefault) {
-    // Verify default coarse grid strategy is Galerkin
+    // Verify default coarse grid strategy is CachedRediscretization
     MultigridConfig config;
-    EXPECT_EQ(config.coarse_grid_strategy, CoarseGridStrategy::Galerkin);
+    EXPECT_EQ(config.coarse_grid_strategy, CoarseGridStrategy::CachedRediscretization);
 }
 
 TEST_F(BezierMultigridTest, CachedRediscretizationConfigurable) {
@@ -551,7 +559,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationConfigurable) {
     EXPECT_EQ(config.coarse_grid_strategy, CoarseGridStrategy::CachedRediscretization);
 
     BezierMultigridPreconditioner precond(config);
-    // Without a cache, setup should fall back to Galerkin
+    // Without a cache, setup falls back to Galerkin
     CGCubicBezierSmootherConfig smoother_config;
     CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
 
@@ -563,7 +571,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationConfigurable) {
     }
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
-    // Setup should not crash even without cache (falls back to Galerkin)
+    // CachedRediscretization without cache falls back to Galerkin
     precond.setup(Q, mesh_, smoother.dof_manager());
     EXPECT_TRUE(precond.is_setup());
 }
@@ -578,7 +586,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationWithAdaptiveSmoother) {
     config.lambda = 10.0;
     config.use_iterative_solver = true;
     config.use_multigrid = true;
-    config.multigrid_config.num_levels = 2;
+    config.multigrid_config.min_tree_level = 1;
     config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
     config.tolerance = 1e-8;
     config.edge_ngauss = 0; // Disable edge constraints for cleaner test
@@ -609,7 +617,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationConvergence) {
     config_galerkin.lambda = 10.0;
     config_galerkin.use_iterative_solver = true;
     config_galerkin.use_multigrid = true;
-    config_galerkin.multigrid_config.num_levels = 2;
+    config_galerkin.multigrid_config.min_tree_level = 1;
     config_galerkin.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     config_galerkin.tolerance = 1e-8;
     config_galerkin.edge_ngauss = 0;
@@ -623,7 +631,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationConvergence) {
     config_cached.lambda = 10.0;
     config_cached.use_iterative_solver = true;
     config_cached.use_multigrid = true;
-    config_cached.multigrid_config.num_levels = 2;
+    config_cached.multigrid_config.min_tree_level = 1;
     config_cached.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
     config_cached.tolerance = 1e-8;
     config_cached.edge_ngauss = 0;
@@ -656,7 +664,7 @@ TEST_F(BezierMultigridTest, CachedRediscretizationSymmetric) {
     smoother_config.lambda = 10.0;
     smoother_config.use_iterative_solver = true;
     smoother_config.use_multigrid = true;
-    smoother_config.multigrid_config.num_levels = 2;
+    smoother_config.multigrid_config.min_tree_level = 1;
     smoother_config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
     smoother_config.edge_ngauss = 0;
 
@@ -704,7 +712,8 @@ TEST_F(BezierMultigridTest, L2RestrictionRowSumsEqualOneAdaptive) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, adaptive_mesh, smoother.dof_manager());
 
@@ -748,7 +757,8 @@ TEST_F(BezierMultigridTest, AdaptiveMeshConstantPreservation) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, adaptive_mesh, smoother.dof_manager());
 
@@ -806,14 +816,16 @@ TEST_F(BezierMultigridCenterGradedTest, GlobalProlongationRowColumnSumsCenterGra
 
     // Setup multigrid with 3 levels (tree level 0 = MG level 0)
     MultigridConfig config;
-    config.num_levels = 3;
-    config.min_tree_level = 0;  // Tree level 0 = MG level 0
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::L2Projection;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
     ASSERT_EQ(precond.num_levels(), 3) << "Expected exactly 3 MG levels";
 
     // Test P at each level (P is stored at the coarse level)
+    // With L2 projection, column sums should be 1 (partition of unity)
     for (int level = 0; level < precond.num_levels() - 1; ++level) {
         const SpMat &P = precond.level(level).P;
 
@@ -889,8 +901,8 @@ TEST_F(BezierMultigridCenterGradedTest, GlobalRestrictionRowColumnSumsCenterGrad
 
     // Setup multigrid with 3 levels (tree level 0 = MG level 0)
     MultigridConfig config;
-    config.num_levels = 3;
-    config.min_tree_level = 0;  // Tree level 0 = MG level 0
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -974,8 +986,8 @@ TEST_F(BezierMultigridCenterGradedTest, GlobalOperatorsToTextFiles) {
 
     // Setup multigrid with 3 levels (tree level 0 = MG level 0)
     MultigridConfig config;
-    config.num_levels = 3;
-    config.min_tree_level = 0;  // Tree level 0 = MG level 0
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -1135,9 +1147,9 @@ TEST_F(BezierMultigridCenterGradedTest, SubdivisionTransferAllNonNegative) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
-    config.min_tree_level = 0;  // Coarsest = 1x1 element
+    config.min_tree_level = 0;
     config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -1184,9 +1196,9 @@ TEST_F(BezierMultigridCenterGradedTest, SubdivisionRowColumnSums) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
     config.min_tree_level = 0;
     config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -1235,9 +1247,9 @@ TEST_F(BezierMultigridCenterGradedTest, SubdivisionConstantPreservation) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
     config.min_tree_level = 0;
     config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -1279,11 +1291,11 @@ TEST_F(BezierMultigridCenterGradedTest, SubdivisionVCycleConverges) {
     Q.setFromTriplets(triplets.begin(), triplets.end());
 
     MultigridConfig config;
-    config.num_levels = 3;
     config.min_tree_level = 0;
     config.pre_smoothing = 2;
     config.post_smoothing = 2;
     config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
     BezierMultigridPreconditioner precond(config);
     precond.setup(Q, mesh_, smoother.dof_manager());
 
@@ -1295,9 +1307,9 @@ TEST_F(BezierMultigridCenterGradedTest, SubdivisionVCycleConverges) {
 }
 
 TEST_F(BezierMultigridCenterGradedTest, SubdivisionStrategyDefault) {
-    // Verify default is L2Projection for backward compatibility
+    // Verify default is BezierSubdivision (recommended for adaptive meshes)
     MultigridConfig config;
-    EXPECT_EQ(config.transfer_strategy, TransferOperatorStrategy::L2Projection);
+    EXPECT_EQ(config.transfer_strategy, TransferOperatorStrategy::BezierSubdivision);
 }
 
 } // namespace

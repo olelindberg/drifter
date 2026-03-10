@@ -985,7 +985,6 @@ TEST_F(CGCubicBezierSmootherGeoTiffTest, KattegatWithBezierSubdivisionMG) {
   config.use_multigrid = true;
   config.tolerance = 1e-10;
   config.multigrid_config.verbose = true;
-  config.multigrid_config.num_levels = 3;
   config.multigrid_config.min_tree_level = 0;
   config.multigrid_config.pre_smoothing = 2;
   config.multigrid_config.post_smoothing = 2;
@@ -1934,7 +1933,7 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_IterativeSolverProfilingBenchmark) {
     config.use_iterative_solver = true;
     config.use_multigrid = true;
     config.tolerance = 1e-10;
-    config.multigrid_config.num_levels = 3;
+    config.multigrid_config.min_tree_level = 0;
     config.multigrid_config.pre_smoothing = 1;
     config.multigrid_config.post_smoothing = 1;
     config.multigrid_config.smoother_type = SmootherType::MultiplicativeSchwarz;
@@ -2164,7 +2163,7 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_AdditiveSchwarzComparisonBenchmark) {
       config.use_iterative_solver = true;
       config.use_multigrid = true;
       config.tolerance = 1e-10;
-      config.multigrid_config.num_levels = 3;
+      config.multigrid_config.min_tree_level = 0;
       config.multigrid_config.pre_smoothing = 1;
       config.multigrid_config.post_smoothing = 1;
       config.multigrid_config.smoother_type =
@@ -2199,7 +2198,7 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_AdditiveSchwarzComparisonBenchmark) {
       config.use_iterative_solver = true;
       config.use_multigrid = true;
       config.tolerance = 1e-10;
-      config.multigrid_config.num_levels = 3;
+      config.multigrid_config.min_tree_level = 0;
       config.multigrid_config.pre_smoothing = 1;
       config.multigrid_config.post_smoothing = 1;
       config.multigrid_config.smoother_type = SmootherType::AdditiveSchwarz;
@@ -2329,7 +2328,7 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_ColoredSchwarzComparisonBenchmark) {
     config.use_iterative_solver = true;
     config.use_multigrid = true;
     config.tolerance = 1e-10;
-    config.multigrid_config.num_levels = 3;
+    config.multigrid_config.min_tree_level = 0;
     config.multigrid_config.pre_smoothing = 1;
     config.multigrid_config.post_smoothing = 1;
     config.multigrid_config.smoother_type = type;

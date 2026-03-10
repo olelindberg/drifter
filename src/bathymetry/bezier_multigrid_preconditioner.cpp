@@ -137,11 +137,8 @@ void BezierMultigridPreconditioner::setup(
 
   int max_depth = mesh.max_depth();
   int min_depth = compute_min_leaf_depth(mesh);
-  // With tree-based coarsening (recursive prolongation), we can coarsen all the
-  // way to min_tree_level regardless of min_depth, since we traverse the tree
-  // structure
-  int available_levels = max_depth - config_.min_tree_level + 1;
-  int num_levels = std::min(config_.num_levels, std::max(1, available_levels));
+  // Number of levels is determined by tree depth and min_tree_level
+  int num_levels = std::max(1, max_depth - config_.min_tree_level + 1);
 
   if (config_.verbose) {
     std::cerr << "[Multigrid] Tree max_depth: " << max_depth

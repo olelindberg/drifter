@@ -76,8 +76,7 @@ protected:
     config.max_iterations = 1000;
     config.edge_ngauss = 4;
 
-    // 2-level multigrid: 16x16 mesh has depth 4, so level 4 and 3
-    config.multigrid_config.num_levels = 2;
+    // 2-level multigrid: 16x16 mesh has depth 4, so levels 4 and 3
     config.multigrid_config.min_tree_level = 3;
     config.multigrid_config.pre_smoothing = 2;
     config.multigrid_config.post_smoothing = 2;
@@ -525,4 +524,273 @@ TEST_F(CGBezierSolverComparisonTest, AllSolversComparison) {
   Real rel_diff_lu = diff_direct_lu / std::max(sol_direct.norm(), Real(1e-14));
   EXPECT_LT(rel_diff_lu, SOLUTION_TOLERANCE)
       << "Direct and Iterative+LU should produce equivalent solutions";
+}
+
+// =============================================================================
+// Scaling Test: Run all solvers across multiple grid sizes
+// =============================================================================
+
+TEST_F(CGBezierSolverComparisonTest, AllSolversScalingTest) {
+  // Grid sizes to test (prefer powers of 2 for clean quadtree hierarchy)
+  std::vector<int> grid_sizes = {8, 12, 16, 24, 32, 48, 64};
+
+  // CSV output
+  std::string scaling_filename = std::string(OUTPUT_DIR) + "/solver_scaling.csv";
+  std::ofstream scaling_ofs(scaling_filename);
+  scaling_ofs << "grid_size,elements,dofs,solver,time_ms,iterations\n";
+
+  // Solver configurations (as lambdas that take tree_depth)
+  struct SolverVariant {
+    std::string name;
+    std::function<CGCubicBezierSmootherConfig(int tree_depth)> create_config;
+  };
+
+  auto create_direct = [](int /*tree_depth*/) {
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = false;
+    config.use_multigrid = false;
+    config.edge_ngauss = 4;
+    return config;
+  };
+
+  auto create_iterative_lu = [](int /*tree_depth*/) {
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = false;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+    return config;
+  };
+
+  auto create_mg_base = [](int tree_depth) {
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+
+    // Full multigrid: use all levels down to 2x2 coarsest grid (level 1)
+    config.multigrid_config.min_tree_level = 1;  // 2x2 coarsest grid
+    config.multigrid_config.pre_smoothing = 2;
+    config.multigrid_config.post_smoothing = 2;
+    config.multigrid_config.smoother_type =
+        SmootherType::ColoredMultiplicativeSchwarz;
+    return config;
+  };
+
+  auto create_mg_l2_galerkin = [&create_mg_base](int tree_depth) {
+    auto config = create_mg_base(tree_depth);
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::L2Projection;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    return config;
+  };
+
+  auto create_mg_l2_cached = [&create_mg_base](int tree_depth) {
+    auto config = create_mg_base(tree_depth);
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::L2Projection;
+    config.multigrid_config.coarse_grid_strategy =
+        CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  auto create_mg_bezier_galerkin = [&create_mg_base](int tree_depth) {
+    auto config = create_mg_base(tree_depth);
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    return config;
+  };
+
+  auto create_mg_bezier_cached = [&create_mg_base](int tree_depth) {
+    auto config = create_mg_base(tree_depth);
+    config.multigrid_config.transfer_strategy =
+        TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy =
+        CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  // Variants with reduced overhead:
+  // 1. Fewer levels (3 levels max, coarsest = 4x4 or 8x8 depending on fine grid)
+  auto create_mg_bezier_cached_3lev = [](int tree_depth) {
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+    // 3 levels max: min_tree_level = tree_depth - 2 (capped at 0)
+    config.multigrid_config.min_tree_level = std::max(0, tree_depth - 2);
+    config.multigrid_config.pre_smoothing = 2;
+    config.multigrid_config.post_smoothing = 2;
+    config.multigrid_config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.multigrid_config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  // 2. Fewer smoothing iterations (1+1 instead of 2+2)
+  auto create_mg_bezier_cached_1smooth = [](int tree_depth) {
+    (void)tree_depth;  // All levels determined by min_tree_level
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+    config.multigrid_config.min_tree_level = 1;  // 2x2 coarsest grid
+    config.multigrid_config.pre_smoothing = 1;
+    config.multigrid_config.post_smoothing = 1;
+    config.multigrid_config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.multigrid_config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  // 3. Fixed coarsest = 4x4 (min_tree_level=2), 1+1 smoothing
+  auto create_mg_coarse_4x4 = [](int tree_depth) {
+    (void)tree_depth;  // All levels determined by min_tree_level
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+    config.multigrid_config.min_tree_level = 2;  // Coarsest = 4x4
+    config.multigrid_config.pre_smoothing = 1;
+    config.multigrid_config.post_smoothing = 1;
+    config.multigrid_config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.multigrid_config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  // 4. Fixed coarsest = 8x8 (min_tree_level=3), 1+1 smoothing
+  auto create_mg_coarse_8x8 = [](int tree_depth) {
+    (void)tree_depth;  // All levels determined by min_tree_level
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+    config.multigrid_config.min_tree_level = 3;  // Coarsest = 8x8
+    config.multigrid_config.pre_smoothing = 1;
+    config.multigrid_config.post_smoothing = 1;
+    config.multigrid_config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.multigrid_config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  // 5. Fixed coarsest = 16x16 (min_tree_level=4), 1+1 smoothing
+  auto create_mg_coarse_16x16 = [](int tree_depth) {
+    (void)tree_depth;  // All levels determined by min_tree_level
+    CGCubicBezierSmootherConfig config;
+    config.lambda = 1.0;
+    config.use_iterative_solver = true;
+    config.use_multigrid = true;
+    config.tolerance = 1e-6;
+    config.max_iterations = 1000;
+    config.edge_ngauss = 4;
+    config.multigrid_config.min_tree_level = 4;  // Coarsest = 16x16
+    config.multigrid_config.pre_smoothing = 1;
+    config.multigrid_config.post_smoothing = 1;
+    config.multigrid_config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.multigrid_config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+    return config;
+  };
+
+  std::vector<SolverVariant> solvers = {
+      // Baseline solvers
+      {"direct", create_direct},
+      {"iterative_lu", create_iterative_lu},
+      // Transfer/coarse strategy comparison (full levels, 2+2 smoothing)
+      {"iterative_mg_l2_galerkin", create_mg_l2_galerkin},
+      {"iterative_mg_l2_cached", create_mg_l2_cached},
+      {"iterative_mg_bezier_galerkin", create_mg_bezier_galerkin},
+      {"iterative_mg_bezier_cached", create_mg_bezier_cached},
+      // Coarsest level comparison (Bezier+Cached, 1+1 smoothing)
+      {"mg_coarse_4x4", create_mg_coarse_4x4},
+      {"mg_coarse_8x8", create_mg_coarse_8x8},
+      {"mg_coarse_16x16", create_mg_coarse_16x16},
+  };
+
+  // Table header for console output
+  std::cout << "\n========================================" << std::endl;
+  std::cout << "       SOLVER SCALING TEST" << std::endl;
+  std::cout << "========================================\n" << std::endl;
+
+  for (int N : grid_sizes) {
+    // Create mesh for this grid size
+    QuadtreeAdapter local_mesh;
+    local_mesh.build_uniform(0.0, L, 0.0, L, N, N);
+
+    int elements = N * N;
+    int dofs = (3 * N + 1) * (3 * N + 1); // Cubic Bezier: (3N+1)^2 DOFs
+    int tree_depth = static_cast<int>(std::log2(N));
+
+    std::cout << "--- Grid " << N << "x" << N << " (" << elements
+              << " elements, " << dofs << " DOFs, depth=" << tree_depth
+              << ") ---" << std::endl;
+
+    // Bathymetry function (same as fixture)
+    auto local_bathy = [this](Real x, Real y) {
+      return std::exp(std::sin(kx_ * x) * std::sin(ky_ * y));
+    };
+
+    for (const auto &solver : solvers) {
+      // Skip direct solver for large grids (too slow)
+      if (solver.name == "direct" && N > 32) {
+        std::cout << std::setw(30) << std::left << solver.name
+                  << " | SKIPPED (grid > 32x32)" << std::endl;
+        continue;
+      }
+
+      auto config = solver.create_config(tree_depth);
+
+      CGCubicBezierBathymetrySmoother smoother(local_mesh, config);
+      CGCubicSolveProfile solve_profile;
+      smoother.set_solve_profile(&solve_profile);
+      smoother.set_bathymetry_data(local_bathy);
+
+      auto start = std::chrono::high_resolution_clock::now();
+      smoother.solve();
+      auto end = std::chrono::high_resolution_clock::now();
+
+      double time_ms =
+          std::chrono::duration<double, std::milli>(end - start).count();
+      int iterations = solve_profile.outer_cg_iterations;
+
+      // Console output
+      std::cout << std::setw(30) << std::left << solver.name << " | "
+                << std::fixed << std::setprecision(1) << std::setw(8)
+                << std::right << time_ms << " ms | " << std::setw(4) << iterations
+                << " iters" << std::endl;
+
+      // CSV output
+      scaling_ofs << N << "," << elements << "," << dofs << "," << solver.name
+                  << "," << std::fixed << std::setprecision(2) << time_ms << ","
+                  << iterations << "\n";
+    }
+    std::cout << std::endl;
+  }
+
+  scaling_ofs.close();
+  std::cout << "Wrote: " << scaling_filename << std::endl;
+
+  // Basic sanity check: all solvers should complete
+  EXPECT_TRUE(true) << "Scaling test completed for all grid sizes";
 }

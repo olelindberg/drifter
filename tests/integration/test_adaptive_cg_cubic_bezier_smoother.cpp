@@ -427,7 +427,6 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   config.smoother_config.multigrid_config.smoother_type =
       SmootherType::MultiplicativeSchwarz;
   config.smoother_config.multigrid_config.verbose = true;
-  config.smoother_config.multigrid_config.num_levels = 100;
   config.smoother_config.multigrid_config.min_tree_level = 2;
   config.smoother_config.multigrid_config.coarse_grid_strategy =
       CoarseGridStrategy::CachedRediscretization;
@@ -514,7 +513,6 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
   //  config.smoother_config.multigrid_config.smoother_type =
   //      SmootherType::MultiplicativeSchwarz;
   //  config.smoother_config.multigrid_config.verbose = true;
-  //  config.smoother_config.multigrid_config.num_levels = 100;
   //  config.smoother_config.multigrid_config.min_tree_level = 2;
   //  config.smoother_config.multigrid_config.coarse_grid_strategy =
   //      CoarseGridStrategy::CachedRediscretization;
@@ -522,7 +520,6 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
   //      TransferOperatorStrategy::BezierSubdivision;
 
   config.smoother_config.multigrid_config.verbose = true;
-  config.smoother_config.multigrid_config.num_levels = 4;
   config.smoother_config.multigrid_config.min_tree_level = 0;
   config.smoother_config.multigrid_config.pre_smoothing = 2;
   config.smoother_config.multigrid_config.post_smoothing = 2;
@@ -605,7 +602,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     config.use_iterative_solver = true;
     config.use_multigrid = true;
     config.tolerance = 1e-10;
-    config.multigrid_config.num_levels = 3;
+    config.multigrid_config.min_tree_level = 2;  // 3 levels on 16x16 mesh
     config.multigrid_config.pre_smoothing = 1;
     config.multigrid_config.post_smoothing = 1;
     config.multigrid_config.smoother_type = smoother_type;
@@ -804,7 +801,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
   solver_config.use_iterative_solver = true;
   solver_config.use_multigrid = true;
   solver_config.tolerance = 1e-10;
-  solver_config.multigrid_config.num_levels = 3;
+  solver_config.multigrid_config.min_tree_level = 0;  // Full coarsening
   solver_config.multigrid_config.pre_smoothing = 1;
   solver_config.multigrid_config.post_smoothing = 1;
   solver_config.multigrid_config.smoother_type =
