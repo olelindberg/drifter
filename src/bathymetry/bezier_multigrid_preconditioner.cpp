@@ -348,10 +348,10 @@ void BezierMultigridPreconditioner::setup(
       levels_[level].smoother = IterativeMethodFactory::create(
           config_.smoother_type, levels_[level].Q,
           levels_[level].element_free_dofs, levels_[level].element_block_lu,
-          levels_[level].elements_by_color, config_.jacobi_omega);
+          levels_[level].elements_by_color);
     } else {
       levels_[level].smoother =
-          std::make_unique<JacobiMethod>(levels_[level].Q, config_.jacobi_omega);
+          std::make_unique<JacobiMethod>(levels_[level].Q);
     }
   }
 }

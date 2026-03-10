@@ -105,14 +105,8 @@ struct MultigridConfig {
   /// Post-smoothing iterations
   int post_smoothing = 1;
 
-  /// Damping parameter for weighted Jacobi smoother
-  Real jacobi_omega = 0.8;
-
   /// Smoother type (Jacobi, MultiplicativeSchwarz, or ColoredMultiplicativeSchwarz)
   SmootherType smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
-
-  /// Maximum DOFs on coarsest level before using direct solver
-  Index coarsest_direct_size = 200;
 
   /// Enable verbose logging during setup
   bool verbose = false;

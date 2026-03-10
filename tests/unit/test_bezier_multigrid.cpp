@@ -219,9 +219,7 @@ TEST_F(BezierMultigridTest, ConfigDefaults) {
     EXPECT_EQ(config.min_tree_level, 4);  // Coarsest level: 16x16 elements
     EXPECT_EQ(config.pre_smoothing, 1);
     EXPECT_EQ(config.post_smoothing, 1);
-    EXPECT_NEAR(config.jacobi_omega, 0.8, TOLERANCE);
     EXPECT_EQ(config.smoother_type, SmootherType::ColoredMultiplicativeSchwarz);
-    EXPECT_EQ(config.coarsest_direct_size, 200);
     EXPECT_FALSE(config.verbose);
 }
 
