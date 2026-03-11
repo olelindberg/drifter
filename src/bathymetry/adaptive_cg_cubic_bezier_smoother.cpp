@@ -270,21 +270,12 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::adapt_once() {
         return result;
     }
 
-    // Sort errors using configured error metric
-    std::sort(errors.begin(), errors.end(),
-              [this](const CGCubicElementErrorEstimate &a, const CGCubicElementErrorEstimate &b) {
-                  return error_metric(a) > error_metric(b);
-              });
+    // Select elements for refinement using Dorfler marking with symmetry preservation
+    std::vector<Index> candidates = select_elements_for_refinement(errors);
 
-    // Select top dorfler_theta fraction of elements for refinement
-    Index num_to_refine =
-        static_cast<Index>(std::ceil(config_.dorfler_theta * static_cast<Real>(errors.size())));
-    num_to_refine = std::max(Index(1), num_to_refine); // At least 1 element
-
-    // Collect elements to refine, filtering by refinement level limit and land mask
+    // Filter by refinement level limit and land mask
     std::vector<Index> valid_refine;
-    for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size()); ++i) {
-        Index elem = errors[i].element;
+    for (Index elem : candidates) {
         QuadLevel level = quadtree_->element_level(elem);
         if (level.max_level() < config_.max_refinement_level &&
             !is_element_on_land(elem)) {
@@ -402,13 +393,6 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
                 sum_err += metric;
             }
 
-            // Sort errors using configured error metric
-            std::sort(errors.begin(), errors.end(),
-                      [this](const CGCubicElementErrorEstimate &a,
-                             const CGCubicElementErrorEstimate &b) {
-                          return error_metric(a) > error_metric(b);
-                      });
-
             // Bootstrap: check if using coarsening metric with no previous solution
             bool is_coarsening_metric =
                 (config_.error_metric_type == ErrorMetricType::MeanDifference ||
@@ -425,16 +409,12 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
                     }
                 }
             } else {
-                // Normal Dorfler marking
-                Index num_to_refine = static_cast<Index>(
-                    std::ceil(config_.dorfler_theta * static_cast<Real>(errors.size())));
-                num_to_refine = std::max(Index(1), num_to_refine);
+                // Normal Dorfler marking with symmetry preservation
+                std::vector<Index> candidates = select_elements_for_refinement(errors);
 
-                for (Index i = 0; i < num_to_refine && i < static_cast<Index>(errors.size());
-                     ++i) {
-                    Index elem = errors[i].element;
+                // Filter by refinement level limit and land mask
+                for (Index elem : candidates) {
                     QuadLevel level = quadtree_->element_level(elem);
-                    // Skip elements at max level or entirely on land
                     if (level.max_level() < config_.max_refinement_level &&
                         !is_element_on_land(elem)) {
                         valid_refine.push_back(elem);
@@ -634,6 +614,73 @@ bool AdaptiveCGCubicBezierSmoother::is_element_on_land(Index elem) const {
     }
 
     return true; // All sample points are on land
+}
+
+// =============================================================================
+// Element selection strategies
+// =============================================================================
+
+std::vector<Index> AdaptiveCGCubicBezierSmoother::select_elements_for_refinement(
+    const std::vector<CGCubicElementErrorEstimate> &errors) const {
+    if (errors.empty())
+        return {};
+
+    // Dorfler bulk marking with symmetry extension:
+    // 1. Find cutoff via greedy accumulation of squared errors
+    // 2. Include ALL elements at or above the cutoff error
+    // This preserves symmetry when multiple elements have equal errors.
+
+    Real total_sq = 0.0;
+    for (const auto &err : errors) {
+        Real metric = error_metric(err);
+        total_sq += metric * metric;
+    }
+
+    // Sort copy by error descending (stable for deterministic ordering)
+    auto sorted = errors;
+    std::stable_sort(
+        sorted.begin(), sorted.end(),
+        [this](const CGCubicElementErrorEstimate &a, const CGCubicElementErrorEstimate &b) {
+            return error_metric(a) > error_metric(b);
+        });
+
+    // Greedy selection to find cutoff error
+    Real target = config_.dorfler_theta * total_sq;
+    Real accumulated = 0.0;
+    Real cutoff_error = 0.0;
+
+    for (const auto &err : sorted) {
+        if (accumulated >= target)
+            break;
+        Real metric = error_metric(err);
+        accumulated += metric * metric;
+        cutoff_error = metric;
+    }
+
+    // Symmetry extension: include ALL elements at or above cutoff
+    std::vector<Index> selected;
+    Real threshold_val = cutoff_error * (1.0 - config_.symmetry_tolerance);
+    for (const auto &err : errors) {
+        if (error_metric(err) >= threshold_val) {
+            selected.push_back(err.element);
+        }
+    }
+
+    // Ensure at least one element selected
+    if (selected.empty()) {
+        Real max_err = 0.0;
+        Index max_elem = errors[0].element;
+        for (const auto &err : errors) {
+            Real metric = error_metric(err);
+            if (metric > max_err) {
+                max_err = metric;
+                max_elem = err.element;
+            }
+        }
+        selected.push_back(max_elem);
+    }
+
+    return selected;
 }
 
 // =============================================================================

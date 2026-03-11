@@ -348,6 +348,12 @@ private:
   /// @return true if all sample points are on land
     bool is_element_on_land(Index elem) const;
 
+  /// @brief Select elements for refinement using Dorfler marking with symmetry preservation
+  /// @param errors Per-element error estimates
+  /// @return Element indices to refine (before filtering by level/land mask)
+    std::vector<Index> select_elements_for_refinement(
+        const std::vector<CGCubicElementErrorEstimate> &errors) const;
+
   /// @brief Print profiling report to stdout
     void print_profile_report() const;
 };
