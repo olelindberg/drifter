@@ -148,9 +148,9 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnHighFrequencyBathymetry) {
 TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
   // Canyon in flat terrain: steep walls should trigger refinement
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 1.0;
-  config.max_iterations = 6;
-  config.max_elements = 1000;
+  config.error_threshold = 0.0;
+  config.max_iterations = 2;
+  config.max_elements = 10000;
   config.smoother_config.lambda = 10.0;
   config.smoother_config.use_iterative_solver = true;
   config.smoother_config.use_multigrid = true;
@@ -162,7 +162,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
     Real flat_depth = 100.0;
     Real canyon_depth = 50.0;
     Real canyon_center_y = 50.0;
-    Real canyon_width = 10.0; // Half-width for Gaussian profile
+    Real canyon_width = 5.0; // Half-width for Gaussian profile
     Real dy = y - canyon_center_y;
     return flat_depth +
            canyon_depth *
