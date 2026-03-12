@@ -655,6 +655,53 @@ TEST_F(CGCubicBezierSmootherTest, SmoothingReducesVariation) {
   EXPECT_LT(var_high, var_low);
 }
 
+TEST_F(CGCubicBezierSmootherTest, CanyonBathymetry) {
+  // Canyon in flat terrain: test fitting of steep gradients
+  auto mesh = create_quadtree(32, 32);
+
+  CGCubicBezierSmootherConfig config;
+  config.lambda = 10.0;
+  config.use_iterative_solver = true;
+  config.use_multigrid = true;
+  config.multigrid_config.verbose = true;
+
+  // Canyon along x-axis centered at y=50
+  auto canyon = [](Real x, Real y) {
+    (void)x; // Canyon is uniform along x
+    Real flat_depth = 100.0;
+    Real canyon_depth = 50.0;
+    Real canyon_center_y = 50.0;
+    Real canyon_width = 10.0; // Half-width for Gaussian profile
+    Real dy = y - canyon_center_y;
+    return flat_depth +
+           canyon_depth *
+               std::exp(-(dy * dy) / (2.0 * canyon_width * canyon_width));
+  };
+
+  CGCubicBezierBathymetrySmoother smoother(mesh, config);
+  smoother.set_bathymetry_data(canyon);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check that canyon center has correct depth
+  Real center_value = smoother.evaluate(50.0, 50.0);
+  EXPECT_NEAR(center_value, 150.0, 5.0); // Allow some smoothing error
+
+  // Check flat regions away from canyon
+  Real flat_value = smoother.evaluate(50.0, 10.0);
+  EXPECT_NEAR(flat_value, 100.0, 2.0);
+
+  std::cout << "Canyon test: center=" << center_value
+            << " m, flat=" << flat_value << " m\n";
+
+  // Write VTK output
+  std::string output_file = "/tmp/cg_cubic_bezier_canyon";
+  smoother.write_vtk(output_file, 8);
+  std::cout << "Output written to: " << output_file << ".vtu\n";
+  EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+}
+
 // =============================================================================
 // Gradient Tests
 // =============================================================================
@@ -2082,8 +2129,8 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_IterativeSolverProfilingBenchmark) {
          "--------------|\n";
   for (const auto &r : results) {
     ofs << "| " << r.mesh_desc << " | " << r.vcycle_calls << " | "
-        << r.smoothing_iterations << " | "
-        << r.matvec_products << " | " << r.coarse_solves << " |\n";
+        << r.smoothing_iterations << " | " << r.matvec_products << " | "
+        << r.coarse_solves << " |\n";
   }
 
   // Analysis
@@ -2186,8 +2233,8 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_AdditiveSchwarzComparisonBenchmark) {
           std::chrono::duration<double, std::milli>(end - start).count();
       r.mult_cg_iters = solve_profile.outer_cg_iterations;
       r.mult_vcycles = mg_profile.vcycle_calls;
-      r.mult_smoothing_ms = mg_profile.vcycle_pre_smooth_ms +
-                            mg_profile.vcycle_post_smooth_ms;
+      r.mult_smoothing_ms =
+          mg_profile.vcycle_pre_smooth_ms + mg_profile.vcycle_post_smooth_ms;
     }
 
     // Test Additive Schwarz
@@ -2219,8 +2266,8 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_AdditiveSchwarzComparisonBenchmark) {
           std::chrono::duration<double, std::milli>(end - start).count();
       r.add_cg_iters = solve_profile.outer_cg_iterations;
       r.add_vcycles = mg_profile.vcycle_calls;
-      r.add_smoothing_ms = mg_profile.vcycle_pre_smooth_ms +
-                           mg_profile.vcycle_post_smooth_ms;
+      r.add_smoothing_ms =
+          mg_profile.vcycle_pre_smooth_ms + mg_profile.vcycle_post_smooth_ms;
     }
 
     results.push_back(r);
@@ -2348,8 +2395,8 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_ColoredSchwarzComparisonBenchmark) {
     SchwarzResult r;
     r.total_ms = std::chrono::duration<double, std::milli>(end - start).count();
     r.cg_iters = solve_profile.outer_cg_iterations;
-    r.smoothing_ms = mg_profile.vcycle_pre_smooth_ms +
-                     mg_profile.vcycle_post_smooth_ms;
+    r.smoothing_ms =
+        mg_profile.vcycle_pre_smooth_ms + mg_profile.vcycle_post_smooth_ms;
     return r;
   };
 
@@ -2409,8 +2456,10 @@ TEST_F(CGCubicBezierSmootherTest, DISABLED_ColoredSchwarzComparisonBenchmark) {
   }
 
   ofs << "\n## Smoothing Timing\n\n";
-  ofs << "| Mesh | Mult Smoothing (ms) | Colored Smoothing (ms) | Add Smoothing (ms) |\n";
-  ofs << "|------|---------------------|------------------------|--------------------|\n";
+  ofs << "| Mesh | Mult Smoothing (ms) | Colored Smoothing (ms) | Add "
+         "Smoothing (ms) |\n";
+  ofs << "|------|---------------------|------------------------|--------------"
+         "------|\n";
   for (const auto &r : results) {
     ofs << "| " << r.mesh_desc << " | " << std::fixed << std::setprecision(2)
         << r.mult.smoothing_ms << " | " << r.colored.smoothing_ms << " | "

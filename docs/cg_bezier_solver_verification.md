@@ -2,7 +2,7 @@
 
 This report documents the verification of the CG (Conjugate Gradient) Bezier bathymetry smoothers, comparing different solver strategies and iterative methods.
 
-*Generated: 2026-03-10 00:23*
+*Generated: 2026-03-10 21:31*
 
 ## Test Configuration
 
@@ -36,7 +36,7 @@ Multiple solver strategies are compared for the CG cubic Bezier smoother:
 | Objective value | 25.235 | 25.235 | 25.235 | 25.332 | 25.235 | 25.235 |
 | Schur CG iterations | 0 | 27 | 27 | 28 | 27 | 27 |
 | Q^-1 apply calls | 0 | 30 | 30 | 31 | 30 | 30 |
-| Solve time (ms) | 681 | 919 | 375 | 749 | 934 | 939 |
+| Solve time (ms) | 596 | 52 | 184 | 160 | 150 | 141 |
 
 All solvers achieve the same objective value and solution quality. The constraint violation is lower for the iterative solvers due to exact Schur complement handling. The direct solver is fastest for this problem size, while the multigrid preconditioners show promise for larger problems where direct factorization becomes prohibitive.
 
@@ -105,9 +105,9 @@ Four iterative methods are tested as standalone smoothers on a synthetic SPD sys
 
 | Method | Iterations | Rel. Residual | Sol. Error | Time (ms) | Avg Conv. Rate |
 |--------|------------|---------------|------------|-----------|----------------|
-| Jacobi | 43 | 8.15e-07 | 1.36e-06 | 0.9 | 0.73 |
+| Jacobi | 43 | 8.15e-07 | 1.36e-06 | 1.0 | 0.73 |
 | Multiplicative Schwarz | 6 | 6.16e-07 | 1.05e-06 | 0.5 | 0.09 |
-| Additive Schwarz | 156 | 9.51e-07 | 1.70e-06 | 9.8 | 0.91 |
+| Additive Schwarz | 156 | 9.51e-07 | 1.70e-06 | 10.4 | 0.91 |
 | Colored Schwarz | 6 | 3.16e-07 | 5.07e-07 | 0.6 | 0.08 |
 
 The colored Schwarz method achieves the best balance of fast convergence (6 iterations) and low solution error (5e-07), making it the recommended smoother for multigrid applications.
@@ -130,7 +130,61 @@ The first 20 iterations show the rapid initial convergence of the multiplicative
 
 The convergence rate (r_{k+1}/r_k) shows that multiplicative and colored Schwarz achieve rates well below 1.0 (fast convergence), while Jacobi maintains a steady rate around 0.7.
 
-## 3. Conclusions
+## 3. Scaling Analysis
+
+This section analyzes how solver performance scales with problem size, testing grid sizes from 8×8 to 64×64 (625 to 37,249 DOFs). The direct solver is skipped for grids larger than 32×32 due to prohibitive runtime.
+
+### CPU Time Scaling
+
+| Grid | DOFs | Direct | Iterative+LU | MG (L2+Galerkin) | MG (L2+Cached) | MG (Bezier+Galerkin) | MG (Bezier+Cached) | mg_coarse_16x16 | mg_coarse_4x4 | mg_coarse_8x8 |
+|------|------|----|----|----|----|----|----|----|----|----|
+| 8×8 | 625 | 44.2 | 9.3 | 53.5 | 42.4 | 41.4 | 36.7 | 10.5 | 19.8 | 10.2 |
+| 12×12 | 1369 | 756.5 | 117.8 | 607.7 | 315.4 | 569.6 | 248.7 | 68.4 | 302.9 | 157.8 |
+| 16×16 | 2401 | 874.8 | 108.0 | 525.3 | 308.9 | 722.1 | 545.6 | 71.4 | 372.1 | 197.8 |
+| 24×24 | 5329 | 13795.8 | 321.7 | 1350.2 | 1180.6 | 1015.0 | 749.4 | 326.5 | 560.6 | 510.5 |
+| 32×32 | 9409 | 12265.8 | 438.1 | 1574.6 | 1034.2 | 1062.2 | 791.4 | 525.6 | 576.9 | 518.6 |
+| 48×48 | 21025 | -- | 2547.0 | 5233.7 | 3861.4 | 3820.4 | 2752.9 | 1941.6 | 2043.4 | 1942.2 |
+| 64×64 | 37249 | -- | 2582.1 | 5210.6 | 3982.0 | 4047.0 | 2762.3 | 2059.6 | 2031.7 | 2013.0 |
+
+*CPU time in milliseconds*
+
+### Iteration Count Scaling
+
+| Grid | DOFs | Direct | Iterative+LU | MG (L2+Galerkin) | MG (L2+Cached) | MG (Bezier+Galerkin) | MG (Bezier+Cached) | mg_coarse_16x16 | mg_coarse_4x4 | mg_coarse_8x8 |
+|------|------|----|----|----|----|----|----|----|----|----|
+| 8×8 | 625 | 0 | 26 | 27 | 28 | 27 | 27 | 26 | 28 | 26 |
+| 12×12 | 1369 | 0 | 27 | 27 | 28 | 27 | 27 | 27 | 29 | 27 |
+| 16×16 | 2401 | 0 | 27 | 27 | 28 | 27 | 27 | 27 | 29 | 29 |
+| 24×24 | 5329 | 0 | 23 | 24 | 29 | 24 | 24 | 23 | 27 | 27 |
+| 32×32 | 9409 | 0 | 23 | 24 | 29 | 24 | 24 | 27 | 27 | 27 |
+| 48×48 | 21025 | -- | 22 | 23 | 29 | 23 | 23 | 26 | 26 | 26 |
+| 64×64 | 37249 | -- | 22 | 23 | 29 | 23 | 23 | 26 | 26 | 26 |
+
+*Schur CG iterations (0 for direct solver)*
+
+### Scaling Plots
+
+#### Multigrid Strategy Comparison
+
+![Strategy Comparison - CPU Time](figures/solver_scaling_strategy.png)
+
+Comparison of multigrid transfer operator strategies (L2 Projection vs Bezier Subdivision) and coarse grid assembly methods (Galerkin vs Cached Rediscretization). The Bezier+Cached combination achieves the best performance, being ~2× faster than L2+Galerkin at 64×64 grid size.
+
+![Strategy Comparison - Iterations](figures/solver_iterations_strategy.png)
+
+Iteration counts remain stable across problem sizes for all MG strategies, demonstrating grid-independent convergence.
+
+#### Coarsest Level Comparison
+
+![Coarsest Level Comparison - CPU Time](figures/solver_scaling_coarsest.png)
+
+Comparison of different coarsest level choices (4×4, 8×8, 16×16) using the optimal Bezier+Cached strategy with 1+1 smoothing. All three choices achieve similar performance at large grid sizes, all significantly faster than Iterative+LU.
+
+![Coarsest Level Comparison - Iterations](figures/solver_iterations_coarsest.png)
+
+The iteration count remains relatively stable across problem sizes for all coarsest level choices, demonstrating the effectiveness of the multigrid preconditioner.
+
+## 4. Conclusions
 
 ### Verified Properties
 

@@ -145,6 +145,51 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnHighFrequencyBathymetry) {
             << " elements, max_error=" << result.max_error << " m\n";
 }
 
+TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
+  // Canyon in flat terrain: steep walls should trigger refinement
+  AdaptiveCGCubicBezierConfig config;
+  config.error_threshold = 1.0;
+  config.max_iterations = 6;
+  config.max_elements = 1000;
+  config.smoother_config.lambda = 10.0;
+  config.smoother_config.use_iterative_solver = true;
+  config.smoother_config.use_multigrid = true;
+  config.smoother_config.multigrid_config.verbose = true;
+
+  // Canyon along x-axis centered at y=50
+  auto canyon = [](Real x, Real y) {
+    (void)x; // Canyon is uniform along x
+    Real flat_depth = 100.0;
+    Real canyon_depth = 50.0;
+    Real canyon_center_y = 50.0;
+    Real canyon_width = 10.0; // Half-width for Gaussian profile
+    Real dy = y - canyon_center_y;
+    return flat_depth +
+           canyon_depth *
+               std::exp(-(dy * dy) / (2.0 * canyon_width * canyon_width));
+  };
+
+  // Start with 16x16 mesh (256 elements)
+  AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 16, 16,
+                                         config);
+  smoother.set_bathymetry_data(canyon);
+
+  auto result = smoother.solve_adaptive();
+
+  EXPECT_TRUE(smoother.is_solved());
+  // Should have refined elements near canyon walls
+  EXPECT_GT(result.num_elements, 256);
+
+  std::cout << "Canyon test: " << result.num_elements
+            << " elements, max_error=" << result.max_error << " m\n";
+
+  // Write VTK output
+  std::string output_file = "/tmp/adaptive_cg_cubic_bezier_canyon";
+  smoother.write_vtk(output_file, 8);
+  std::cout << "Output written to: " << output_file << ".vtu\n";
+  EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+}
+
 // =============================================================================
 // Stopping Criteria Tests
 // =============================================================================
@@ -602,7 +647,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     config.use_iterative_solver = true;
     config.use_multigrid = true;
     config.tolerance = 1e-10;
-    config.multigrid_config.min_tree_level = 2;  // 3 levels on 16x16 mesh
+    config.multigrid_config.min_tree_level = 2; // 3 levels on 16x16 mesh
     config.multigrid_config.pre_smoothing = 1;
     config.multigrid_config.post_smoothing = 1;
     config.multigrid_config.smoother_type = smoother_type;
@@ -622,8 +667,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     double total_ms =
         std::chrono::duration<double, std::milli>(end - start).count();
 
-    double smoothing_total = mg_profile.vcycle_pre_smooth_ms +
-                              mg_profile.vcycle_post_smooth_ms;
+    double smoothing_total =
+        mg_profile.vcycle_pre_smooth_ms + mg_profile.vcycle_post_smooth_ms;
 
     std::cout << "\n" << name << " Schwarz (16x16 = 256 elements):\n";
     std::cout << "  Total solve time: " << std::fixed << std::setprecision(2)
@@ -632,8 +677,10 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
               << "\n";
     std::cout << "  Q^-1 calls: " << solve_profile.qinv_apply_calls << "\n";
     std::cout << "  Smoothing total: " << smoothing_total << " ms\n";
-    std::cout << "    Pre-smooth: " << mg_profile.vcycle_pre_smooth_ms << " ms\n";
-    std::cout << "    Post-smooth: " << mg_profile.vcycle_post_smooth_ms << " ms\n";
+    std::cout << "    Pre-smooth: " << mg_profile.vcycle_pre_smooth_ms
+              << " ms\n";
+    std::cout << "    Post-smooth: " << mg_profile.vcycle_post_smooth_ms
+              << " ms\n";
 
     EXPECT_TRUE(smoother.is_solved());
     EXPECT_GT(solve_profile.outer_cg_iterations, 0);
@@ -801,7 +848,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
   solver_config.use_iterative_solver = true;
   solver_config.use_multigrid = true;
   solver_config.tolerance = 1e-10;
-  solver_config.multigrid_config.min_tree_level = 0;  // Full coarsening
+  solver_config.multigrid_config.min_tree_level = 0; // Full coarsening
   solver_config.multigrid_config.pre_smoothing = 1;
   solver_config.multigrid_config.post_smoothing = 1;
   solver_config.multigrid_config.smoother_type =

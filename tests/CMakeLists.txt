@@ -46,8 +46,11 @@ set(INTEGRATION_TESTS
     integration/test_multi_source_bathymetry.cpp
     # Solver comparison verification
     integration/test_cg_cubic_bezier_solver_comparison.cpp
+    integration/test_adaptive_cg_cubic_bezier_solver_comparison.cpp
     # Standalone iterative methods
-    integration/test_standalone_iterative_methods.cpp)
+    integration/test_standalone_iterative_methods.cpp
+    # Uniform vs adaptive convergence comparison
+    integration/test_uniform_vs_adaptive_convergence.cpp)
 
 # Create unit test executable
 add_executable(drifter_unit_tests ${UNIT_TESTS})

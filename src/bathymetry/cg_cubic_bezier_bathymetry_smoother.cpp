@@ -300,6 +300,7 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
       Real tol_sq = config_.tolerance * config_.tolerance * b_norm * b_norm;
 
       for (int iter = 0; iter < config_.max_iterations; ++iter) {
+
         VecX Qp = sys.Q_reduced * p;
         Real pQp = p.dot(Qp);
 
@@ -354,8 +355,6 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
       solve_profile_->outer_cg_iterations = iterations;
     }
   } else {
-
-    std::cout << "Solving with edge constraints ..." << std::endl;
     // Setup solver for Q (either LU or multigrid)
     std::unique_ptr<SparseSolver> Q_solver;
     std::unique_ptr<BezierMultigridPreconditioner> mg_precond;

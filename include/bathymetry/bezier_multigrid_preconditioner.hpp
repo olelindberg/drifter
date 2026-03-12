@@ -81,8 +81,9 @@ struct MultigridProfile {
   int apply_calls = 0;          ///< Number of apply() invocations
   int vcycle_calls = 0;         ///< Total V-cycle calls (including recursive)
   int smoothing_iterations = 0; ///< Total smoothing iterations (all methods)
-  int matvec_products = 0;      ///< Total sparse mat-vec products
-  int coarse_solves = 0;        ///< Coarsest level direct solves
+  int matvec_products = 0;         ///< Total sparse mat-vec products
+  int coarse_solves = 0;           ///< Coarsest level direct solves
+  int converged_vcycle_count = 0;  ///< V-cycles needed for last convergence
 
   // =========================================================================
   // Helper methods
@@ -116,6 +117,12 @@ struct MultigridConfig {
 
   /// Strategy for building transfer operators (P and R)
   TransferOperatorStrategy transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+
+  /// Maximum number of V-cycles per apply() call
+  int max_vcycles = 100;
+
+  /// Relative residual tolerance for V-cycle convergence
+  Real vcycle_tolerance = 1e-6;
 };
 
 /// @brief Active node in a composite multigrid level

@@ -39,6 +39,13 @@ echo "=== Running iterative methods test ==="
     echo "Warning: Iterative methods test failed or not available"
 }
 
+# Run the scaling test (generates solver_scaling.csv to /tmp)
+echo ""
+echo "=== Running solver scaling test ==="
+"$PROJECT_ROOT/build/tests/drifter_integration_tests" --gtest_filter="*AllSolversScalingTest*" || {
+    echo "Warning: Solver scaling test failed or not available"
+}
+
 # Generate solver verification figures
 echo ""
 echo "=== Generating solver verification figures ==="
@@ -54,6 +61,11 @@ uv run iterative_methods.py /tmp --output "$FIGURES_DIR"
 echo ""
 echo "=== Generating surface plots ==="
 uv run surface_plots.py /tmp --output "$FIGURES_DIR"
+
+# Generate scaling plots
+echo ""
+echo "=== Generating scaling plots ==="
+uv run solver_scaling.py /tmp --output "$FIGURES_DIR"
 
 # Generate the markdown report from CSV data
 echo ""

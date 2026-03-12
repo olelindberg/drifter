@@ -685,7 +685,7 @@ void BezierMultigridPreconditioner::build_element_blocks(int level) {
   }
 }
 
-VecX BezierMultigridPreconditioner::apply(const VecX &r) const {
+VecX BezierMultigridPreconditioner::apply(const VecX &b) const {
   if (levels_.empty()) {
     throw std::runtime_error(
         "BezierMultigridPreconditioner::apply: setup() not called");
@@ -696,10 +696,36 @@ VecX BezierMultigridPreconditioner::apply(const VecX &r) const {
     profile_->apply_calls++;
   }
 
-  // Start V-cycle at finest level (highest index)
   int finest_level = static_cast<int>(levels_.size()) - 1;
-  VecX x = VecX::Zero(r.size());
-  v_cycle(finest_level, x, r);
+  VecX x = VecX::Zero(b.size());
+  const auto &Q = levels_[finest_level].Q;
+
+  // Compute initial RHS norm for relative tolerance
+  Real b_norm = b.norm();
+  if (b_norm < 1e-30) {
+    return x; // Zero RHS
+  }
+  Real tol_sq =
+      config_.vcycle_tolerance * config_.vcycle_tolerance * b_norm * b_norm;
+
+  int cycle = 0;
+  for (; cycle < config_.max_vcycles; ++cycle) {
+    v_cycle(finest_level, x, b); // V-cycle improves x toward solution of Q*x=b
+
+    // Check convergence: ||b - Q*x|| / ||b|| < tolerance
+    VecX residual = b - Q * x;
+    Real res_sq = residual.squaredNorm();
+
+    if (res_sq < tol_sq) {
+      ++cycle; // Count the final cycle
+      break;   // Converged
+    }
+  }
+
+  if (profile_) {
+    profile_->converged_vcycle_count = cycle;
+  }
+
   return x;
 }
 

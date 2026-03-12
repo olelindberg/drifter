@@ -98,6 +98,14 @@ def load_method_comparison(directory: Path) -> pd.DataFrame | None:
     return None
 
 
+def load_scaling_data(directory: Path) -> pd.DataFrame | None:
+    """Load solver_scaling.csv file."""
+    path = directory / "solver_scaling.csv"
+    if path.exists():
+        return pd.read_csv(path)
+    return None
+
+
 def compute_convergence_rate(residuals: np.ndarray) -> float:
     """Compute average convergence rate from residual history."""
     if len(residuals) < 2:
@@ -131,6 +139,7 @@ def generate_report(
     solver_comparison: pd.DataFrame | None,
     method_iterations: dict[str, pd.DataFrame],
     method_comparison: pd.DataFrame | None,
+    scaling_data: pd.DataFrame | None,
 ) -> str:
     """Generate the full markdown report."""
     lines = []
@@ -374,8 +383,121 @@ def generate_report(
     )
     lines.append("")
 
-    # Section 3: Conclusions
-    lines.append("## 3. Conclusions")
+    # Section 3: Scaling Analysis
+    lines.append("## 3. Scaling Analysis")
+    lines.append("")
+    lines.append(
+        "This section analyzes how solver performance scales with problem size, "
+        "testing grid sizes from 8×8 to 64×64 (625 to 37,249 DOFs). "
+        "The direct solver is skipped for grids larger than 32×32 due to prohibitive runtime."
+    )
+    lines.append("")
+
+    if scaling_data is not None and len(scaling_data) > 0:
+        # CPU Time Table
+        lines.append("### CPU Time Scaling")
+        lines.append("")
+
+        pivot_time = scaling_data.pivot_table(
+            index="grid_size", columns="solver", values="time_ms", aggfunc="first"
+        )
+        solvers = order_solvers(pivot_time.columns.tolist())
+        pivot_time = pivot_time[solvers]
+
+        # Build header
+        header = "| Grid | DOFs |"
+        for s in solvers:
+            header += f" {get_solver_display_name(s)} |"
+        lines.append(header)
+        lines.append("|------|------|" + "".join(["----|"] * len(solvers)))
+
+        for grid_size in pivot_time.index:
+            dofs = (3 * grid_size + 1) ** 2
+            row = f"| {grid_size}×{grid_size} | {dofs} |"
+            for solver in solvers:
+                val = pivot_time.loc[grid_size, solver]
+                if pd.isna(val):
+                    row += " -- |"
+                else:
+                    row += f" {val:.1f} |"
+            lines.append(row)
+
+        lines.append("")
+        lines.append("*CPU time in milliseconds*")
+        lines.append("")
+
+        # Iteration Count Table
+        lines.append("### Iteration Count Scaling")
+        lines.append("")
+
+        pivot_iter = scaling_data.pivot_table(
+            index="grid_size", columns="solver", values="iterations", aggfunc="first"
+        )
+        pivot_iter = pivot_iter[solvers]
+
+        lines.append(header)
+        lines.append("|------|------|" + "".join(["----|"] * len(solvers)))
+
+        for grid_size in pivot_iter.index:
+            dofs = (3 * grid_size + 1) ** 2
+            row = f"| {grid_size}×{grid_size} | {dofs} |"
+            for solver in solvers:
+                val = pivot_iter.loc[grid_size, solver]
+                if pd.isna(val):
+                    row += " -- |"
+                else:
+                    row += f" {int(val)} |"
+            lines.append(row)
+
+        lines.append("")
+        lines.append("*Schur CG iterations (0 for direct solver)*")
+        lines.append("")
+
+    # Scaling figures
+    lines.append("### Scaling Plots")
+    lines.append("")
+    lines.append("#### Multigrid Strategy Comparison")
+    lines.append("")
+    lines.append("![Strategy Comparison - CPU Time](figures/solver_scaling_strategy.png)")
+    lines.append("")
+    lines.append(
+        "Comparison of multigrid transfer operator strategies (L2 Projection vs Bezier Subdivision) "
+        "and coarse grid assembly methods (Galerkin vs Cached Rediscretization). "
+        "The Bezier+Cached combination achieves the best performance, being ~2× faster than "
+        "L2+Galerkin at 64×64 grid size."
+    )
+    lines.append("")
+
+    lines.append("![Strategy Comparison - Iterations](figures/solver_iterations_strategy.png)")
+    lines.append("")
+    lines.append(
+        "Iteration counts remain stable across problem sizes for all MG strategies, "
+        "demonstrating grid-independent convergence."
+    )
+    lines.append("")
+
+    lines.append("#### Coarsest Level Comparison")
+    lines.append("")
+    lines.append("![Coarsest Level Comparison - CPU Time](figures/solver_scaling_coarsest.png)")
+    lines.append("")
+    lines.append(
+        "Comparison of different coarsest level choices (4×4, 8×8, 16×16) using the optimal "
+        "Bezier+Cached strategy with 1+1 smoothing. All three choices achieve similar performance "
+        "at large grid sizes, all significantly faster than Iterative+LU."
+    )
+    lines.append("")
+
+    lines.append("![Coarsest Level Comparison - Iterations](figures/solver_iterations_coarsest.png)")
+    lines.append("")
+    lines.append(
+        "The iteration count remains relatively stable across problem sizes for "
+        "all coarsest level choices, demonstrating the effectiveness "
+        "of the multigrid preconditioner."
+    )
+    lines.append("")
+
+    # Section 4: Conclusions
+    lines.append("## 4. Conclusions")
     lines.append("")
     lines.append("### Verified Properties")
     lines.append("")
@@ -425,6 +547,7 @@ def main():
     solver_comparison = load_solver_comparison(directory)
     method_iterations = load_method_iterations(directory)
     method_comparison = load_method_comparison(directory)
+    scaling_data = load_scaling_data(directory)
 
     if not solver_metrics and not method_comparison:
         print(f"No CSV files found in {directory}")
@@ -437,6 +560,7 @@ def main():
         solver_comparison,
         method_iterations,
         method_comparison,
+        scaling_data,
     )
 
     # Write report
