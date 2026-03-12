@@ -108,6 +108,15 @@ struct CGCubicBezierSmootherConfig {
   /// Number of Gauss points per edge for C¹ edge constraints
     int edge_ngauss = 4;
 
+  /// Enable natural boundary conditions (zero normal curvature at domain edges)
+  /// Prevents oscillations near domain boundaries for steep gradients
+  /// Note: This adds hard constraints that may affect polynomial reproduction
+    bool enable_natural_bc = false;
+
+  /// Enable zero normal gradient boundary conditions (∂z/∂n = 0 at domain edges)
+  /// Creates symmetry boundaries where surface is flat at the boundary
+    bool enable_zero_gradient_bc = false;
+
   /// Use constraint condensation for hanging nodes (smaller KKT system)
   /// If false, uses original full KKT system with all constraints
     bool use_condensation = true;
@@ -137,6 +146,10 @@ struct CGCubicBezierSmootherConfig {
 
   /// Multigrid preconditioner configuration
     MultigridConfig multigrid_config;
+
+  /// Boundary relaxation zone configuration
+  /// Reduces data fitting weight near domain boundaries to eliminate oscillations
+    BoundaryRelaxationConfig boundary_relaxation;
 };
 
 /// @brief CG cubic Bezier bathymetry smoother with C¹ continuity
@@ -312,6 +325,24 @@ private:
   /// pairs
   /// @return Sparse matrix A of size (num_edge_constraints × num_free_dofs)
     SpMat assemble_A_edge_free(
+        const std::function<std::vector<std::pair<Index, Real>>(Index)>
+            &expand_dof) const;
+
+  /// @brief Assemble boundary curvature constraints on free DOFs
+  /// (natural BC: ∂²z/∂n² = 0 at domain boundaries)
+  /// @param expand_dof Function mapping global DOF to (free_index, weight)
+  /// pairs
+  /// @return Sparse matrix A of size (num_boundary_constraints × num_free_dofs)
+    SpMat assemble_A_boundary_free(
+        const std::function<std::vector<std::pair<Index, Real>>(Index)>
+            &expand_dof) const;
+
+  /// @brief Assemble boundary gradient constraints on free DOFs
+  /// (zero gradient BC: ∂z/∂n = 0 at domain boundaries)
+  /// @param expand_dof Function mapping global DOF to (free_index, weight)
+  /// pairs
+  /// @return Sparse matrix A of size (num_gradient_constraints × num_free_dofs)
+    SpMat assemble_A_gradient_free(
         const std::function<std::vector<std::pair<Index, Real>>(Index)>
             &expand_dof) const;
 };

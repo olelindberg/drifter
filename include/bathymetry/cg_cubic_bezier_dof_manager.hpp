@@ -38,6 +38,28 @@ struct CubicEdgeDerivativeConstraint {
     Real scale1, scale2;
 };
 
+/// @brief Natural boundary condition constraint (zero normal curvature)
+///
+/// Enforces ∂²z/∂n² = 0 at domain boundary edges to prevent oscillations.
+struct BoundaryCurvatureConstraint {
+    Index elem;   ///< The boundary element
+    int edge;     ///< Which edge is on domain boundary (0-3)
+    Real t;       ///< Parameter position along edge (0 to 1)
+    VecX coeffs;  ///< Basis second derivative coefficients (16 values)
+    Real scale;   ///< Physical scaling (1/dx² or 1/dy²)
+};
+
+/// @brief Zero normal gradient boundary condition constraint
+///
+/// Enforces ∂z/∂n = 0 at domain boundary edges (symmetry condition).
+struct BoundaryGradientConstraint {
+    Index elem;   ///< The boundary element
+    int edge;     ///< Which edge is on domain boundary (0-3)
+    Real t;       ///< Parameter position along edge (0 to 1)
+    VecX coeffs;  ///< Basis first derivative coefficients (16 values)
+    Real scale;   ///< Physical scaling (1/dx or 1/dy)
+};
+
 /// @brief CG DOF manager for cubic Bezier elements
 ///
 /// Manages global DOF numbering with sharing at element interfaces.
@@ -68,11 +90,35 @@ public:
         return static_cast<Index>(edge_derivative_constraints_.size());
     }
 
+    const std::vector<BoundaryCurvatureConstraint> &boundary_curvature_constraints() const {
+        return boundary_curvature_constraints_;
+    }
+    Index num_boundary_curvature_constraints() const {
+        return static_cast<Index>(boundary_curvature_constraints_.size());
+    }
+
+    const std::vector<BoundaryGradientConstraint> &boundary_gradient_constraints() const {
+        return boundary_gradient_constraints_;
+    }
+    Index num_boundary_gradient_constraints() const {
+        return static_cast<Index>(boundary_gradient_constraints_.size());
+    }
+
     /// Build C¹ edge derivative constraints
     /// Enforces: z_n matching at Gauss points along shared edges
     /// (both conforming and non-conforming 2:1 interfaces)
     /// @param ngauss Number of Gauss points per edge (default: 4)
     void build_edge_derivative_constraints(int ngauss = 4);
+
+    /// Build natural boundary condition constraints
+    /// Enforces: ∂²z/∂n² = 0 at domain boundary edges to prevent oscillations
+    /// @param ngauss Number of Gauss points per edge (default: 4)
+    void build_boundary_curvature_constraints(int ngauss = 4);
+
+    /// Build zero normal gradient boundary condition constraints
+    /// Enforces: ∂z/∂n = 0 at domain boundary edges (symmetry condition)
+    /// @param ngauss Number of Gauss points per edge (default: 4)
+    void build_boundary_gradient_constraints(int ngauss = 4);
 
     // =========================================================================
     // DOF classification helpers
@@ -96,6 +142,8 @@ private:
     CubicBezierBasis2D basis_;
     std::vector<CubicHangingNodeConstraint> constraints_;
     std::vector<CubicEdgeDerivativeConstraint> edge_derivative_constraints_;
+    std::vector<BoundaryCurvatureConstraint> boundary_curvature_constraints_;
+    std::vector<BoundaryGradientConstraint> boundary_gradient_constraints_;
 
     // DOF assignment (4-pass algorithm)
     void assign_vertex_dofs();

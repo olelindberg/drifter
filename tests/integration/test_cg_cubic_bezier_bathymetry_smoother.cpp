@@ -702,6 +702,63 @@ TEST_F(CGCubicBezierSmootherTest, CanyonBathymetry) {
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }
 
+TEST_F(CGCubicBezierSmootherTest, CanyonBathymetryWithSymmetryBC) {
+  // Canyon test with both natural BC (zero curvature) and zero gradient BC
+  // This creates symmetry boundaries where surface is flat and horizontal
+  auto mesh = create_quadtree(32, 32);
+
+  CGCubicBezierSmootherConfig config;
+  config.lambda = 10.0;
+  config.enable_natural_bc = true;
+  config.enable_zero_gradient_bc = true;
+  config.use_iterative_solver = true;
+  config.use_multigrid = true;
+  config.multigrid_config.verbose = true;
+
+  // Canyon along x-axis centered at y=50
+  auto canyon = [](Real x, Real y) {
+    (void)x;
+    Real flat_depth = 100.0;
+    Real canyon_depth = 50.0;
+    Real canyon_center_y = 50.0;
+    Real canyon_width = 10.0;
+    Real dy = y - canyon_center_y;
+    return flat_depth +
+           canyon_depth *
+               std::exp(-(dy * dy) / (2.0 * canyon_width * canyon_width));
+  };
+
+  CGCubicBezierBathymetrySmoother smoother(mesh, config);
+  smoother.set_bathymetry_data(canyon);
+  smoother.solve();
+
+  EXPECT_TRUE(smoother.is_solved());
+
+  // Check constraint counts
+  Index num_curvature = smoother.dof_manager().num_boundary_curvature_constraints();
+  Index num_gradient = smoother.dof_manager().num_boundary_gradient_constraints();
+  std::cout << "Symmetry BC test: curvature constraints=" << num_curvature
+            << ", gradient constraints=" << num_gradient << "\n";
+  EXPECT_GT(num_curvature, 0);
+  EXPECT_GT(num_gradient, 0);
+
+  // Check constraint violation is small (relaxed tolerance for iterative solver
+  // with many constraints)
+  Real violation = smoother.constraint_violation();
+  std::cout << "Constraint violation: " << violation << "\n";
+  EXPECT_LT(violation, 1e-4);
+
+  // Check that canyon center still has reasonable depth
+  Real center_value = smoother.evaluate(50.0, 50.0);
+  EXPECT_NEAR(center_value, 150.0, 10.0); // Allow more error due to BC constraints
+
+  // Write VTK output
+  std::string output_file = "/tmp/cg_cubic_bezier_canyon_symmetry_bc";
+  smoother.write_vtk(output_file, 8);
+  std::cout << "Output written to: " << output_file << ".vtu\n";
+  EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
+}
+
 // =============================================================================
 // Gradient Tests
 // =============================================================================

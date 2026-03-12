@@ -492,4 +492,116 @@ void CGCubicBezierDofManager::build_nonconforming_edge_derivative_constraints(
     }
 }
 
+void CGCubicBezierDofManager::build_boundary_curvature_constraints(int ngauss) {
+    boundary_curvature_constraints_.clear();
+
+    // Gauss points on [0, 1] (reuse same quadrature as edge constraints)
+    std::vector<Real> gauss_pts(ngauss);
+    if (ngauss == 2) {
+        gauss_pts[0] = 0.5 - 0.5 / std::sqrt(3.0);
+        gauss_pts[1] = 0.5 + 0.5 / std::sqrt(3.0);
+    } else if (ngauss == 3) {
+        gauss_pts[0] = 0.5 - 0.5 * std::sqrt(0.6);
+        gauss_pts[1] = 0.5;
+        gauss_pts[2] = 0.5 + 0.5 * std::sqrt(0.6);
+    } else if (ngauss >= 4) {
+        Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        gauss_pts.resize(4);
+        gauss_pts[0] = 0.5 * (1.0 - b);
+        gauss_pts[1] = 0.5 * (1.0 - a);
+        gauss_pts[2] = 0.5 * (1.0 + a);
+        gauss_pts[3] = 0.5 * (1.0 + b);
+    }
+
+    // Iterate over domain boundary edges
+    mesh_.for_each_boundary_edge([this, &gauss_pts](Index elem, int edge) {
+        const auto &bounds = mesh_.element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        // Natural BC: ∂²z/∂n² = 0 where n is normal to boundary
+        // Edge 0,1 (left/right): normal is u-direction → ∂²z/∂u² = 0
+        // Edge 2,3 (bottom/top): normal is v-direction → ∂²z/∂v² = 0
+        bool is_u_normal = (edge == 0 || edge == 1);
+
+        for (const Real &t : gauss_pts) {
+            Vec2 param = get_edge_param_cubic(edge, t);
+
+            BoundaryCurvatureConstraint c;
+            c.elem = elem;
+            c.edge = edge;
+            c.t = t;
+
+            if (is_u_normal) {
+                // ∂²z/∂u² at (u,v) where u=0 or u=1
+                c.coeffs = basis_.evaluate_d2u(param(0), param(1));
+                c.scale = 1.0 / (dx * dx);  // Convert from parametric to physical
+            } else {
+                // ∂²z/∂v² at (u,v) where v=0 or v=1
+                c.coeffs = basis_.evaluate_d2v(param(0), param(1));
+                c.scale = 1.0 / (dy * dy);  // Convert from parametric to physical
+            }
+
+            boundary_curvature_constraints_.push_back(c);
+        }
+    });
+}
+
+void CGCubicBezierDofManager::build_boundary_gradient_constraints(int ngauss) {
+    boundary_gradient_constraints_.clear();
+
+    // Gauss points on [0, 1] (reuse same quadrature as other constraints)
+    std::vector<Real> gauss_pts(ngauss);
+    if (ngauss == 2) {
+        gauss_pts[0] = 0.5 - 0.5 / std::sqrt(3.0);
+        gauss_pts[1] = 0.5 + 0.5 / std::sqrt(3.0);
+    } else if (ngauss == 3) {
+        gauss_pts[0] = 0.5 - 0.5 * std::sqrt(0.6);
+        gauss_pts[1] = 0.5;
+        gauss_pts[2] = 0.5 + 0.5 * std::sqrt(0.6);
+    } else if (ngauss >= 4) {
+        Real a = std::sqrt(3.0 / 7.0 - 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        Real b = std::sqrt(3.0 / 7.0 + 2.0 / 7.0 * std::sqrt(6.0 / 5.0));
+        gauss_pts.resize(4);
+        gauss_pts[0] = 0.5 * (1.0 - b);
+        gauss_pts[1] = 0.5 * (1.0 - a);
+        gauss_pts[2] = 0.5 * (1.0 + a);
+        gauss_pts[3] = 0.5 * (1.0 + b);
+    }
+
+    // Iterate over domain boundary edges
+    mesh_.for_each_boundary_edge([this, &gauss_pts](Index elem, int edge) {
+        const auto &bounds = mesh_.element_bounds(elem);
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        // Zero gradient BC: ∂z/∂n = 0 where n is normal to boundary
+        // Edge 0,1 (left/right): normal is u-direction → ∂z/∂u = 0
+        // Edge 2,3 (bottom/top): normal is v-direction → ∂z/∂v = 0
+        bool is_u_normal = (edge == 0 || edge == 1);
+
+        for (const Real &t : gauss_pts) {
+            Vec2 param = get_edge_param_cubic(edge, t);
+
+            BoundaryGradientConstraint c;
+            c.elem = elem;
+            c.edge = edge;
+            c.t = t;
+
+            if (is_u_normal) {
+                // ∂z/∂u at (u,v) where u=0 or u=1
+                c.coeffs = basis_.evaluate_du(param(0), param(1));
+                c.scale = 1.0 / dx;  // Convert from parametric to physical
+            } else {
+                // ∂z/∂v at (u,v) where v=0 or v=1
+                c.coeffs = basis_.evaluate_dv(param(0), param(1));
+                c.scale = 1.0 / dy;  // Convert from parametric to physical
+            }
+
+            boundary_gradient_constraints_.push_back(c);
+        }
+    });
+}
+
 } // namespace drifter
