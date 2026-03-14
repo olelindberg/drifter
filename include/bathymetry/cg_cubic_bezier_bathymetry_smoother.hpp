@@ -13,6 +13,7 @@
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "bathymetry/cubic_thin_plate_hessian.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
+#include "bathymetry/schur_preconditioner_types.hpp"
 #include "core/types.hpp"
 #include "mesh/seabed_surface.hpp"
 #include <functional>
@@ -31,10 +32,11 @@ struct CGCubicIterationProfile;
 /// @brief Per-iteration metrics for CG convergence tracking
 struct CGIterationMetrics {
     int iteration;
-    Real schur_residual_norm;  ///< ||r||_2 (Schur complement residual)
-    Real relative_residual;    ///< ||r||_2 / ||b||_2
-    Real alpha;                ///< CG step size
-    Real pSp;                  ///< p^T S p (curvature)
+    Real schur_residual_norm;   ///< ||r||_2 (Schur complement residual)
+    Real precond_residual_norm; ///< ||r||_{M^{-1}} = sqrt(r^T z) (preconditioned)
+    Real relative_residual;     ///< ||r||_2 / ||b||_2 or ||r||_{M^{-1}} / ||r_0||_{M^{-1}}
+    Real alpha;                 ///< CG step size
+    Real pSp;                   ///< p^T S p (curvature)
 };
 
 /// @brief Timing profile for solve phase (all times in milliseconds)
@@ -69,6 +71,13 @@ struct CGCubicSolveProfile {
   // Q^{-1} application breakdown (accumulated over all calls)
     double qinv_apply_total_ms = 0.0; ///< Total time in apply_Qinv
     int qinv_apply_calls = 0;         ///< Number of Q^{-1} applications
+
+  // =========================================================================
+  // Schur preconditioner profiling
+  // =========================================================================
+    double schur_precond_setup_ms = 0.0;      ///< Preconditioner setup time
+    double schur_precond_apply_total_ms = 0.0; ///< Total preconditioner apply time
+    int schur_precond_apply_calls = 0;         ///< Number of preconditioner applications
 
   // =========================================================================
   // Multigrid profiling (when use_multigrid=true)
@@ -146,6 +155,25 @@ struct CGCubicBezierSmootherConfig {
 
   /// Multigrid preconditioner configuration
     MultigridConfig multigrid_config;
+
+  /// Schur complement preconditioner type
+  /// Options: None (unpreconditioned), Diagonal, PhysicsBased, MultigridVCycle
+  /// PhysicsBased is recommended for mesh-independent convergence
+  /// MultigridVCycle requires use_multigrid=true and uses FCG instead of CG
+    SchurPreconditionerType schur_preconditioner = SchurPreconditionerType::None;
+
+  /// Use exact Q^{-1} (LU) for Schur matvec when MG preconditioner is used
+  /// When true (default): schur_matvec uses exact LU factorization, MG only for preconditioner
+  /// When false: schur_matvec uses MG V-cycle (may diverge for ill-conditioned problems)
+  /// Only relevant when schur_preconditioner = MultigridVCycle
+    bool use_exact_schur_matvec = true;
+
+  /// Number of Schwarz iterations for SchwarzAdditive/SchwarzColored Schur preconditioners
+  /// Higher values give better Q^{-1} approximation but cost more per outer iteration
+    int schwarz_schur_iterations = 10;
+
+  /// Enable verbose logging of CG iterations to stdout
+    bool verbose = false;
 
   /// Boundary relaxation zone configuration
   /// Reduces data fitting weight near domain boundaries to eliminate oscillations

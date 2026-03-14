@@ -165,6 +165,12 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/schwarz_method.cpp
     src/bathymetry/iterative_solver.cpp
     src/bathymetry/iterative_method_factory.cpp
+    # Schur complement preconditioners for constrained CG
+    src/bathymetry/diagonal_schur_preconditioner.cpp
+    src/bathymetry/physics_based_schur_preconditioner.cpp
+    src/bathymetry/multigrid_schur_preconditioner.cpp
+    src/bathymetry/schwarz_schur_preconditioner.cpp
+    src/bathymetry/flexible_cg.cpp
 )
 
 set(DG_SOURCES
