@@ -86,11 +86,13 @@ FCGResult FlexibleCG::solve(VecX& x, const VecX& b) {
 
         // Preconditioned residual norm: ||r_{k+1}||_{M^{-1}} = sqrt(r^T z)
         Real precond_res_norm = std::sqrt(rz_new);
+        Real unprecond_res_norm = r.norm();
         result.residual_history.push_back(precond_res_norm);
 
         if (verbose_) {
-            std::cout << "[FCG] iter=" << (iter + 1)
-                      << " ||r||_{M^{-1}}=" << precond_res_norm
+            std::cout << "[SchurFCG] iter=" << (iter + 1)
+                      << " ||r||_2=" << unprecond_res_norm
+                      << " ||r||_{M^-1}=" << precond_res_norm
                       << " relative=" << (precond_res_norm / result.initial_residual)
                       << " alpha=" << alpha << "\n";
         }
