@@ -2,13 +2,14 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
 #include "bathymetry/constraint_condenser.hpp"
+#include "bathymetry/diagonal_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_schur_preconditioner.hpp"
 #include "bathymetry/flexible_cg.hpp"
+#include "bathymetry/gauss_seidel_schur_preconditioner.hpp"
 #include "bathymetry/multigrid_schur_preconditioner.hpp"
+#include "bathymetry/schwarz_colored_schur_preconditioner.hpp"
 #include "bathymetry/physics_based_schur_preconditioner.hpp"
 #include "bathymetry/schur_preconditioner.hpp"
-#include "bathymetry/schwarz_method.hpp"
-#include "bathymetry/schwarz_schur_preconditioner.hpp"
 #include "core/scoped_timer.hpp"
 #include "dg/basis_hexahedron.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
@@ -449,40 +450,24 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
           *mg_precond, sys.Q_reduced, sys.A_edge);
       break;
 
-    case SchurPreconditionerType::SchwarzAdditive:
-    case SchurPreconditionerType::SchwarzColored: {
-      // Schwarz-based Schur preconditioners use Schwarz smoothers directly
-      // (without multigrid hierarchy) to approximate Q^{-1}.
-      // This is a diagnostic tool to verify smoothers work as Schur preconditioners.
-      if (!mg_precond) {
-        throw std::runtime_error(
-            "CGCubicBezierBathymetrySmoother: Schwarz Schur preconditioner "
-            "requires use_multigrid=true for element block setup");
-      }
+    case SchurPreconditionerType::GaussSeidel:
+      schur_precond =
+          std::make_unique<GaussSeidelSchurPreconditioner>(schur_matvec, m);
+      break;
 
-      // Get element blocks from finest MG level
-      int finest = mg_precond->num_levels() - 1;
-      const auto &finest_level = mg_precond->level(finest);
-      const auto &element_free_dofs = finest_level.element_free_dofs;
-      const auto &element_block_lu = finest_level.element_block_lu;
-
-      // Create appropriate Schwarz smoother
-      std::unique_ptr<IIterativeMethod> smoother;
-      if (config_.schur_preconditioner == SchurPreconditionerType::SchwarzAdditive) {
-        smoother = std::make_unique<AdditiveSchwarzMethod>(
-            sys.Q_reduced, element_free_dofs, element_block_lu, 0.8);
-      } else {
-        // ColoredSchwarz
-        const auto &elements_by_color = finest_level.elements_by_color;
-        smoother = std::make_unique<ColoredSchwarzMethod>(
-            sys.Q_reduced, element_free_dofs, element_block_lu, elements_by_color);
-      }
-
-      schur_precond = std::make_unique<SchwarzSchurPreconditioner>(
-          std::move(smoother), sys.Q_reduced, sys.A_edge,
+    case SchurPreconditionerType::SchwarzColored:
+      schur_precond = std::make_unique<SchwarzColoredSchurPreconditioner>(
+          schur_matvec, m, dof_manager_->edge_derivative_constraints(),
+          dof_manager_->boundary_curvature_constraints(),
+          dof_manager_->boundary_gradient_constraints(),
           config_.schwarz_schur_iterations);
       break;
-    }
+
+    case SchurPreconditionerType::DiagonalApproxCG:
+      schur_precond = std::make_unique<DiagonalApproxCGSchurPreconditioner>(
+          sys.Q_reduced, sys.A_edge, config_.inner_tolerance,
+          config_.inner_max_iterations);
+      break;
 
     case SchurPreconditionerType::None:
     default:
@@ -549,7 +534,7 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
     Real rhs_norm = rhs.norm();
 
     // Handle zero RHS
-    if (rz_init < 1e-30) {
+    if (std::abs(rz_init) < 1e-30) {
       iterations = 0;
     } else {
       Real tol_sq = config_.tolerance * config_.tolerance;

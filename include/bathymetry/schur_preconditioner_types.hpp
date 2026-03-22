@@ -15,15 +15,17 @@ namespace drifter {
 /// - Diagonal: M_S = diag(S), cheap but weak
 /// - PhysicsBased: M_S = C * K^{-1} * C^T where K = smoothness Hessian
 /// - MultigridVCycle: M_S^{-1} v = C * A_mg^{-1} * C^T * v (variable, requires FCG)
-/// - SchwarzAdditive: Additive Schwarz as Q^{-1} approximation (diagnostic)
-/// - SchwarzColored: Colored multiplicative Schwarz as Q^{-1} approximation (diagnostic)
+/// - GaussSeidel: Symmetric Gauss-Seidel on assembled S
+/// - SchwarzColored: Colored multiplicative Schwarz on assembled S
+/// - DiagonalApproxCG: M_S = C * diag(Q)^{-1} * C^T, inner CG solve (variable, requires FCG)
 enum class SchurPreconditionerType {
-    None,           ///< Unpreconditioned CG (current default behavior)
-    Diagonal,       ///< Diagonal scaling M_S = diag(S)
-    PhysicsBased,   ///< Physics-based M_S = C * K^{-1} * C^T (recommended)
+    None,            ///< Unpreconditioned CG (current default behavior)
+    Diagonal,        ///< Diagonal scaling M_S = diag(S)
+    PhysicsBased,    ///< Physics-based M_S = C * K^{-1} * C^T (recommended)
     MultigridVCycle, ///< MG V-cycle as approximate A^{-1} (variable, requires FCG)
-    SchwarzAdditive, ///< Additive Schwarz smoother as Q^{-1} (diagnostic)
-    SchwarzColored   ///< Colored Schwarz smoother as Q^{-1} (diagnostic)
+    GaussSeidel,     ///< Symmetric Gauss-Seidel on assembled S
+    SchwarzColored,  ///< Colored multiplicative Schwarz on assembled S
+    DiagonalApproxCG ///< M_S = C * diag(Q)^{-1} * C^T, inner CG solve (variable)
 };
 
 } // namespace drifter

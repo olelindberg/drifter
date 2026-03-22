@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "bathymetry/bezier_multigrid_preconditioner.hpp"
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/diagonal_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_schur_preconditioner.hpp"
 #include "bathymetry/flexible_cg.hpp"
 #include "bathymetry/multigrid_schur_preconditioner.hpp"
@@ -156,6 +157,99 @@ TEST_F(SchurPreconditionerTest, PhysicsBasedPreconditioner_ApplyGivesCorrectResu
 TEST_F(SchurPreconditionerTest, PhysicsBasedPreconditioner_IsNotVariable) {
     PhysicsBasedSchurPreconditioner precond(K_, C_);
     EXPECT_FALSE(precond.is_variable());
+}
+
+// =============================================================================
+// DiagonalApproxCGSchurPreconditioner tests
+// =============================================================================
+
+TEST_F(SchurPreconditionerTest, DiagonalApproxCG_ConstructsSuccessfully) {
+    // Should not throw for valid K and C
+    DiagonalApproxCGSchurPreconditioner precond(K_, C_);
+    EXPECT_EQ(precond.num_constraints(), n_constraints_);
+}
+
+TEST_F(SchurPreconditionerTest, DiagonalApproxCG_AssembledMatrixIsSPD) {
+    DiagonalApproxCGSchurPreconditioner precond(K_, C_);
+
+    // M_S = C * diag(K)^{-1} * C^T should be SPD
+    const SpMat& M_S = precond.assembled_matrix();
+    EXPECT_EQ(M_S.rows(), n_constraints_);
+    EXPECT_EQ(M_S.cols(), n_constraints_);
+
+    // Check symmetry
+    SpMat M_S_diff = M_S - SpMat(M_S.transpose());
+    EXPECT_LT(M_S_diff.norm(), TOLERANCE);
+
+    // Check positive definiteness: all eigenvalues > 0
+    Eigen::MatrixXd M_S_dense = M_S;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(M_S_dense);
+    for (Index i = 0; i < n_constraints_; ++i) {
+        EXPECT_GT(eig.eigenvalues()(i), 0.0);
+    }
+}
+
+TEST_F(SchurPreconditionerTest, DiagonalApproxCG_ApplyGivesCorrectResult) {
+    DiagonalApproxCGSchurPreconditioner precond(K_, C_, 1e-10, 100);
+
+    VecX r = VecX::Ones(n_constraints_);
+    VecX z = precond.apply(r);
+
+    // z should be M_S^{-1} * r
+    // Check by computing M_S * z ≈ r
+    const SpMat& M_S = precond.assembled_matrix();
+    VecX M_S_z = M_S * z;
+
+    for (Index i = 0; i < n_constraints_; ++i) {
+        EXPECT_NEAR(M_S_z(i), r(i), LOOSE_TOLERANCE);
+    }
+}
+
+TEST_F(SchurPreconditionerTest, DiagonalApproxCG_IsVariable) {
+    DiagonalApproxCGSchurPreconditioner precond(K_, C_);
+    EXPECT_TRUE(precond.is_variable());
+}
+
+TEST_F(SchurPreconditionerTest, DiagonalApproxCG_HandlesZeroRHS) {
+    DiagonalApproxCGSchurPreconditioner precond(K_, C_);
+
+    VecX r = VecX::Zero(n_constraints_);
+    VecX z = precond.apply(r);
+
+    // Should return zero for zero input
+    EXPECT_LT(z.norm(), TOLERANCE);
+}
+
+TEST_F(SchurPreconditionerTest, FlexibleCG_ConvergesWithDiagonalApproxCG) {
+    // Create Schur complement matvec: S = C * K^{-1} * C^T
+    Eigen::SparseLU<SpMat> K_solver;
+    K_solver.compute(K_);
+    ASSERT_EQ(K_solver.info(), Eigen::Success);
+
+    auto schur_matvec = [&](const VecX& v) -> VecX {
+        VecX Ct_v = C_.transpose() * v;
+        VecX K_inv_Ct_v = K_solver.solve(Ct_v);
+        return C_ * K_inv_Ct_v;
+    };
+
+    // Create DiagonalApproxCG preconditioner (requires FCG since it's variable)
+    DiagonalApproxCGSchurPreconditioner precond(K_, C_, 1e-10, 100);
+
+    // Create RHS
+    VecX rhs = VecX::Ones(n_constraints_);
+
+    // Solve with FCG
+    FlexibleCG fcg(schur_matvec, precond, 1e-10, 100);
+    VecX x = VecX::Zero(n_constraints_);
+    FCGResult result = fcg.solve(x, rhs);
+
+    EXPECT_TRUE(result.converged);
+    EXPECT_LT(result.relative_residual, 1e-9);
+
+    // Check solution: S * x ≈ rhs
+    VecX Sx = schur_matvec(x);
+    VecX error = Sx - rhs;
+    EXPECT_LT(error.norm() / rhs.norm(), 1e-8);
 }
 
 // =============================================================================

@@ -163,13 +163,17 @@ set(BATHYMETRY_SOURCES
     # Standalone iterative methods for smoothing/solving
     src/bathymetry/jacobi_method.cpp
     src/bathymetry/schwarz_method.cpp
+    src/bathymetry/schwarz_block_builder.cpp
     src/bathymetry/iterative_solver.cpp
     src/bathymetry/iterative_method_factory.cpp
     # Schur complement preconditioners for constrained CG
     src/bathymetry/diagonal_schur_preconditioner.cpp
+    src/bathymetry/diagonal_approx_cg_schur_preconditioner.cpp
     src/bathymetry/physics_based_schur_preconditioner.cpp
     src/bathymetry/multigrid_schur_preconditioner.cpp
     src/bathymetry/schwarz_schur_preconditioner.cpp
+    src/bathymetry/gauss_seidel_schur_preconditioner.cpp
+    src/bathymetry/schwarz_colored_schur_preconditioner.cpp
     src/bathymetry/flexible_cg.cpp
 )
 
