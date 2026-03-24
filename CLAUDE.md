@@ -163,8 +163,7 @@ Solved via KKT system with constraint projection for exact satisfaction.
 **Key Configuration (`CGCubicBezierSmootherConfig`):**
 - `lambda` - Data fitting weight
 - `enable_edge_constraints` / `edge_ngauss` - C¹ edge derivative constraints
-- `enable_natural_bc` - Zero normal curvature at boundaries (default, preferred)
-- `enable_boundary_dirichlet` - Pin corners to data (can cause oscillations)
+- `enable_natural_bc` - Zero normal curvature at boundaries (default: true, prevents boundary oscillations)
 
 **Non-conforming meshes:** Hanging node constraints via de Casteljau subdivision ensure continuity at 2:1 T-junctions.
 
