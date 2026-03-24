@@ -80,6 +80,7 @@ private:
     Real inner_tol_;                             ///< Inner CG tolerance
     int inner_max_iter_;                         ///< Max inner CG iterations
     Real drop_tolerance_;                        ///< Threshold for dropping small inverse entries
+    mutable Real initial_outer_norm_ = -1.0;     ///< Initial outer residual norm (for adaptive tolerance)
 
     /// @brief Build element blocks with owned DOFs and LU factorizations
     void build_element_blocks(const SpMat& Q, const CGCubicBezierDofManager& dof_manager);
