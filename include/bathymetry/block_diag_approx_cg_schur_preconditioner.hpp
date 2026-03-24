@@ -49,10 +49,12 @@ public:
     /// @param dof_manager DOF manager for edge enumeration and DOF mappings
     /// @param inner_tolerance CG tolerance for M_S^{-1} solve (default: 1e-6)
     /// @param inner_max_iterations Max inner CG iterations (default: 100)
+    /// @param drop_tolerance Threshold for dropping small entries in block inverse (default: 1e-14)
     BlockDiagApproxCGSchurPreconditioner(const SpMat& Q, const SpMat& C,
                                          const CGCubicBezierDofManager& dof_manager,
                                          Real inner_tolerance = 1e-6,
-                                         int inner_max_iterations = 100);
+                                         int inner_max_iterations = 100,
+                                         Real drop_tolerance = 1e-14);
 
     /// @brief Apply preconditioner: z = M_S^{-1} * r via inner CG
     VecX apply(const VecX& r) const override;
@@ -71,11 +73,13 @@ public:
 
 private:
     SpMat M_S_;                                  ///< Assembled C * blockdiag(Q)^{-1} * C^T
+    SpMat C_T_;                                  ///< Cached transpose of C (for future matrix-free mode)
     VecX diag_M_S_inv_;                          ///< 1/diag(M_S) for inner CG preconditioning
     std::vector<ElementBlockData> element_blocks_; ///< LU factorizations for each element
     Index n_c_;                                  ///< Number of constraints
     Real inner_tol_;                             ///< Inner CG tolerance
     int inner_max_iter_;                         ///< Max inner CG iterations
+    Real drop_tolerance_;                        ///< Threshold for dropping small inverse entries
 
     /// @brief Build element blocks with owned DOFs and LU factorizations
     void build_element_blocks(const SpMat& Q, const CGCubicBezierDofManager& dof_manager);

@@ -8,10 +8,12 @@ BlockDiagApproxCGSchurPreconditioner::BlockDiagApproxCGSchurPreconditioner(
     const SpMat& C,
     const CGCubicBezierDofManager& dof_manager,
     Real inner_tolerance,
-    int inner_max_iterations)
+    int inner_max_iterations,
+    Real drop_tolerance)
     : n_c_(C.rows())
     , inner_tol_(inner_tolerance)
     , inner_max_iter_(inner_max_iterations)
+    , drop_tolerance_(drop_tolerance)
 {
     // Step 1: Build element blocks with LU factorizations (non-overlapping DOF ownership)
     build_element_blocks(Q, dof_manager);
@@ -20,8 +22,9 @@ BlockDiagApproxCGSchurPreconditioner::BlockDiagApproxCGSchurPreconditioner(
     SpMat D = build_block_diagonal_inverse(Q.rows());
 
     // Step 3: M_S = C * D * C^T (sparse matrix multiplication)
+    C_T_ = C.transpose();  // Cache for future matrix-free mode
     SpMat CD = C * D;
-    M_S_ = CD * C.transpose();
+    M_S_ = CD * C_T_;
 
     // Step 4: Extract diagonal of M_S for inner CG preconditioning
     VecX diag_M_S = M_S_.diagonal();
@@ -114,11 +117,11 @@ SpMat BlockDiagApproxCGSchurPreconditioner::build_block_diagonal_inverse(Index n
         // Compute block inverse via LU solve: inv = LU.solve(I)
         MatX block_inv = block.block_lu.solve(MatX::Identity(block_size, block_size));
 
-        // Add entries to sparse matrix
+        // Add entries to sparse matrix (drop small values for sparsity)
         for (int i = 0; i < block_size; ++i) {
             for (int j = 0; j < block_size; ++j) {
                 Real val = block_inv(i, j);
-                if (std::abs(val) > 1e-14) {
+                if (std::abs(val) > drop_tolerance_) {
                     triplets.emplace_back(block.free_dofs[i], block.free_dofs[j], val);
                 }
             }
