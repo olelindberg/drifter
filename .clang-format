@@ -1,11 +1,18 @@
 ---
 Language: Cpp
 BasedOnStyle: LLVM
-IndentWidth: 4
+IndentWidth: 2
 PointerAlignment: Left
 ReferenceAlignment: Right
-ColumnLimit: 0
+ColumnLimit: 1000
 AccessModifierOffset: -4
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignCompound: true
+  PadOperators: true
+PenaltyBreakAssignment: 1000000
 AlignTrailingComments:
   Kind: Leave
 AllowShortFunctionsOnASingleLine: All
