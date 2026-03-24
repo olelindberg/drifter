@@ -18,6 +18,7 @@ namespace drifter {
 /// - GaussSeidel: Symmetric Gauss-Seidel on assembled S
 /// - SchwarzColored: Colored multiplicative Schwarz on assembled S
 /// - DiagonalApproxCG: M_S = C * diag(Q)^{-1} * C^T, inner CG solve (variable, requires FCG)
+/// - BlockDiagApproxCG: M_S = C * blockdiag(Q)^{-1} * C^T, edge-based blocks (variable, requires FCG)
 enum class SchurPreconditionerType {
     None,            ///< Unpreconditioned CG (current default behavior)
     Diagonal,        ///< Diagonal scaling M_S = diag(S)
@@ -25,7 +26,8 @@ enum class SchurPreconditionerType {
     MultigridVCycle, ///< MG V-cycle as approximate A^{-1} (variable, requires FCG)
     GaussSeidel,     ///< Symmetric Gauss-Seidel on assembled S
     SchwarzColored,  ///< Colored multiplicative Schwarz on assembled S
-    DiagonalApproxCG ///< M_S = C * diag(Q)^{-1} * C^T, inner CG solve (variable)
+    DiagonalApproxCG, ///< M_S = C * diag(Q)^{-1} * C^T, inner CG solve (variable)
+    BlockDiagApproxCG ///< M_S = C * blockdiag(Q)^{-1} * C^T, edge blocks (variable)
 };
 
 } // namespace drifter

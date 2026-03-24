@@ -337,10 +337,14 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
             Real u = gauss_pts[qi];
             for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
                 Real v = gauss_pts[qj];
-                Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian;
 
                 Real x = bounds.xmin + u * dx;
                 Real y = bounds.ymin + v * dy;
+
+                // Apply boundary relaxation to reduce data fitting near boundaries
+                Real relaxation = compute_relaxation_factor(x, y);
+                Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian * relaxation;
+
                 Real d = bathy_func(x, y);
 
                 dTWd_global_ += weight * d * d;
@@ -432,6 +436,41 @@ void CGBezierSmootherBase::cache_element_matrix(Index elem, const MatX &Q_local)
     const QuadtreeNode* node = quadtree_->elements()[static_cast<size_t>(elem)];
     auto key = std::make_tuple(node->morton, node->level.x, node->level.y);
     (*element_matrix_cache_)[key] = Q_local;
+}
+
+// =============================================================================
+// Boundary relaxation
+// =============================================================================
+
+Real CGBezierSmootherBase::compute_relaxation_factor(Real x, Real y) const {
+    if (!relaxation_config_.enabled || relaxation_config_.width <= 0.0) {
+        return 1.0;
+    }
+
+    const auto &domain = quadtree_->domain_bounds();
+    Real width = relaxation_config_.width;
+
+    // Compute minimum distance to any enabled boundary
+    Real dist = std::numeric_limits<Real>::max();
+    const auto &edges = relaxation_config_.edge_enabled;
+    if (edges[0]) dist = std::min(dist, x - domain.xmin);         // left
+    if (edges[1]) dist = std::min(dist, domain.xmax - x);         // right
+    if (edges[2]) dist = std::min(dist, y - domain.ymin);         // bottom
+    if (edges[3]) dist = std::min(dist, domain.ymax - y);         // top
+
+    // If outside relaxation zone, full data fitting
+    if (dist >= width) {
+        return 1.0;
+    }
+
+    // Smoothstep interpolation: f(t) = 3t^2 - 2t^3
+    // Maps t in [0,1] to [0,1] with zero derivative at both ends (C1 continuity)
+    Real t = std::clamp(dist / width, 0.0, 1.0);
+    Real factor = t * t * (3.0 - 2.0 * t);
+
+    // Scale to [min_factor, 1.0]
+    return relaxation_config_.min_factor +
+           (1.0 - relaxation_config_.min_factor) * factor;
 }
 
 } // namespace drifter

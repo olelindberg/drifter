@@ -316,11 +316,13 @@ void BezierMultigridPreconditioner::setup(
   }
 
   // Build element blocks for Schwarz smoother on all levels (if configured)
+  // Note: Always build for finest level (even level 0) for SchwarzSchur preconditioner
   finest_level = static_cast<int>(levels_.size()) - 1;
   if (config_.smoother_type != SmootherType::Jacobi) {
     OptionalScopedTimer t(profile_ ? &profile_->setup_element_blocks_ms
                                    : nullptr);
-    for (int level = 1; level <= finest_level; ++level) {
+    // Start from 0 to ensure finest level has element blocks (needed for SchwarzSchur)
+    for (int level = 0; level <= finest_level; ++level) {
       build_element_blocks(level);
 
       if (config_.smoother_type == SmootherType::ColoredMultiplicativeSchwarz) {
@@ -1000,6 +1002,21 @@ void collect_nodes_at_depth(const QuadtreeNode *node, int target_depth,
     collect_nodes_at_depth(child.get(), target_depth, result);
   }
 }
+
+/// Check if a node has any descendants (including itself) in the fine grid
+bool has_descendants_in_fine_grid(
+    const QuadtreeNode *node,
+    const std::set<const QuadtreeNode *> &fine_grid_nodes) {
+  if (fine_grid_nodes.count(node) > 0) {
+    return true;
+  }
+  for (const auto &child : node->children) {
+    if (has_descendants_in_fine_grid(child.get(), fine_grid_nodes)) {
+      return true;
+    }
+  }
+  return false;
+}
 } // namespace
 
 void BezierMultigridPreconditioner::build_composite_level_from_finer(
@@ -1036,6 +1053,12 @@ void BezierMultigridPreconditioner::build_composite_level_from_finer(
   for (const QuadtreeNode *tree_node : nodes_at_depth) {
     CompositeGridNode node;
     node.tree_node = tree_node;
+
+    // Skip nodes that have no relation to the fine grid
+    // (neither in fine grid nor have descendants there)
+    if (!has_descendants_in_fine_grid(tree_node, fine_grid_nodes)) {
+      continue;
+    }
 
     if (fine_grid_nodes.count(tree_node) > 0) {
       // This node IS in the fine grid - pass-through (identity prolongation)
@@ -1121,21 +1144,24 @@ void BezierMultigridPreconditioner::add_recursive_prolongation(
     const CompositeGridLevel &fine_grid, const MatX &P_accumulated,
     const std::array<MatX, 4> &P_local,
     std::vector<Eigen::Triplet<Real>> &triplets,
-    const QuadtreeNode *parent) const {
+    const QuadtreeNode *parent,
+    const std::set<Index> &passthrough_fine_dofs) const {
 
   // Check if this tree node is in the fine grid (i.e., it's a leaf at fine
   // level)
   auto it = fine_grid.node_index_map.find(tree_node);
   if (it != fine_grid.node_index_map.end()) {
     // Found in fine grid - add prolongation entries
-    // Note: We allow duplicate triplets for the same (fine_dof, coarse_dof)
-    // pair. setFromTriplets() will sum them, and we normalize P rows
-    // afterwards.
     const auto &fine_node = fine_grid.nodes[it->second];
 
     for (int fine_local = 0; fine_local < 16; ++fine_local) {
       Index fine_dof = fine_node.dof_indices[fine_local];
       if (fine_dof < 0)
+        continue;
+
+      // Skip DOFs already claimed by pass-through (identity mapping)
+      // This prevents conflicting contributions at interface DOFs
+      if (passthrough_fine_dofs.count(fine_dof) > 0)
         continue;
 
       for (int coarse_local = 0; coarse_local < 16; ++coarse_local) {
@@ -1163,7 +1189,8 @@ void BezierMultigridPreconditioner::add_recursive_prolongation(
     int child_quadrant = get_child_quadrant(child.get(), tree_node);
     MatX P_new = P_local[child_quadrant] * P_accumulated;
     add_recursive_prolongation(child.get(), coarse_node, fine_grid, P_new,
-                               P_local, triplets, tree_node);
+                               P_local, triplets, tree_node,
+                               passthrough_fine_dofs);
   }
 }
 
@@ -1185,23 +1212,14 @@ SpMat BezierMultigridPreconditioner::build_prolongation_composite(
   std::vector<Eigen::Triplet<Real>> triplets;
   triplets.reserve(coarse_grid.nodes.size() * 16 * 16);
 
-  // Part 1: Subdivision contributions
-  // For each coarse subdivision node, map to all descendant leaves in fine grid
-  for (Index coarse_idx : levels_[mg_level].subdivision_node_indices) {
-    const auto &coarse_node = coarse_grid.nodes[coarse_idx];
-    const QuadtreeNode *parent = coarse_node.tree_node;
+  // Track which fine DOFs are claimed by pass-through (identity mapping).
+  // These DOFs should NOT receive subdivision contributions to avoid
+  // conflicting interpolation at interface DOFs.
+  std::set<Index> passthrough_fine_dofs;
 
-    // Recursively process all 4 children (whether they're leaves or refined)
-    for (const auto &tree_child : parent->children) {
-      int child_quadrant = get_child_quadrant(tree_child.get(), parent);
-      MatX P_child = P_local[child_quadrant]; // Start with single subdivision
-      add_recursive_prolongation(tree_child.get(), coarse_node, fine_grid,
-                                 P_child, P_local, triplets, parent);
-    }
-  }
-
-  // Part 2: Pass-through (identity) contributions
-  // Nodes that appear at both levels map identically
+  // Part 1: Pass-through (identity) contributions FIRST
+  // Nodes that appear at both levels map identically.
+  // Process these first to claim their DOFs before subdivision.
   for (Index coarse_idx : levels_[mg_level].passthrough_node_indices) {
     const auto &coarse_node = coarse_grid.nodes[coarse_idx];
 
@@ -1214,15 +1232,31 @@ SpMat BezierMultigridPreconditioner::build_prolongation_composite(
     const auto &fine_node = fine_grid.nodes[fine_idx];
 
     // Identity mapping: P(fine_dof[k], coarse_dof[k]) = 1
-    // Note: setFromTriplets sums duplicate entries, so interface DOFs that
-    // receive contributions from both subdivision and pass-through will
-    // accumulate and be normalized below.
     for (int local = 0; local < 16; ++local) {
       Index fine_dof = fine_node.dof_indices[local];
       Index coarse_dof = coarse_node.dof_indices[local];
       if (fine_dof >= 0 && coarse_dof >= 0) {
         triplets.emplace_back(fine_dof, coarse_dof, 1.0);
+        passthrough_fine_dofs.insert(fine_dof); // Claim this DOF
       }
+    }
+  }
+
+  // Part 2: Subdivision contributions
+  // For each coarse subdivision node, map to all descendant leaves in fine grid.
+  // Skip fine DOFs already claimed by pass-through to avoid conflicting
+  // contributions at interface DOFs.
+  for (Index coarse_idx : levels_[mg_level].subdivision_node_indices) {
+    const auto &coarse_node = coarse_grid.nodes[coarse_idx];
+    const QuadtreeNode *parent = coarse_node.tree_node;
+
+    // Recursively process all 4 children (whether they're leaves or refined)
+    for (const auto &tree_child : parent->children) {
+      int child_quadrant = get_child_quadrant(tree_child.get(), parent);
+      MatX P_child = P_local[child_quadrant]; // Start with single subdivision
+      add_recursive_prolongation(tree_child.get(), coarse_node, fine_grid,
+                                 P_child, P_local, triplets, parent,
+                                 passthrough_fine_dofs);
     }
   }
 

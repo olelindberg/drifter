@@ -157,9 +157,10 @@ struct CGCubicBezierSmootherConfig {
     MultigridConfig multigrid_config;
 
   /// Schur complement preconditioner type
-  /// Options: None (unpreconditioned), Diagonal, PhysicsBased, MultigridVCycle
+  /// Options: None, Diagonal, PhysicsBased, MultigridVCycle, GaussSeidel, SchwarzColored
   /// PhysicsBased is recommended for mesh-independent convergence
   /// MultigridVCycle requires use_multigrid=true and uses FCG instead of CG
+  /// SchwarzColored uses edge-based blocks with graph coloring
     SchurPreconditionerType schur_preconditioner = SchurPreconditionerType::None;
 
   /// Use exact Q^{-1} (LU) for Schur matvec when MG preconditioner is used

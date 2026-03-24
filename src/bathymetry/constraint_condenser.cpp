@@ -84,4 +84,36 @@ void condense_matrix_and_rhs(
     Q_reduced.setFromTriplets(triplets.begin(), triplets.end());
 }
 
+SpMat condense_matrix(
+    const SpMat &M,
+    const std::function<std::vector<std::pair<Index, Real>>(Index)> &expand_dof,
+    Index num_free) {
+
+    std::vector<Eigen::Triplet<Real>> triplets;
+    triplets.reserve(M.nonZeros());
+
+    // Condense matrix: for each entry M(I, J), expand both I and J to free DOF indices
+    // and add contributions weighted by the expansion weights
+    for (int k = 0; k < M.outerSize(); ++k) {
+        for (SpMat::InnerIterator it(M, k); it; ++it) {
+            Index I = it.row();
+            Index J = it.col();
+            Real val = it.value();
+
+            auto I_expanded = expand_dof(I);
+            auto J_expanded = expand_dof(J);
+
+            for (const auto &[If, Iw] : I_expanded) {
+                for (const auto &[Jf, Jw] : J_expanded) {
+                    triplets.emplace_back(If, Jf, val * Iw * Jw);
+                }
+            }
+        }
+    }
+
+    SpMat M_reduced(num_free, num_free);
+    M_reduced.setFromTriplets(triplets.begin(), triplets.end());
+    return M_reduced;
+}
+
 } // namespace drifter

@@ -155,6 +155,14 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
   config.smoother_config.use_iterative_solver = true;
   config.smoother_config.use_multigrid = true;
   config.smoother_config.multigrid_config.verbose = true;
+  config.smoother_config.multigrid_config.max_vcycles = 100;
+  config.smoother_config.schur_preconditioner =
+      SchurPreconditionerType::DiagonalApproxCG;
+  config.smoother_config.verbose = true;
+  config.verbose = true;
+
+  config.smoother_config.enable_natural_bc = true;
+  config.smoother_config.enable_zero_gradient_bc = true;
 
   // Canyon along x-axis centered at y=50
   auto canyon = [](Real x, Real y) {

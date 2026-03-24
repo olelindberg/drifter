@@ -51,6 +51,20 @@ void condense_matrix_and_rhs(
     const std::function<std::vector<std::pair<Index, Real>>(Index)> &expand_dof, Index num_free,
     SpMat &Q_reduced, VecX &c_reduced);
 
+/// @brief Condense sparse matrix only (no RHS) by eliminating slave DOFs
+///
+/// Same as condense_matrix_and_rhs but for matrix-only condensation.
+/// Useful for assembling preconditioner matrices like K = alpha * H.
+///
+/// @param M Input sparse matrix (num_global x num_global)
+/// @param expand_dof Callable: Index -> vector<pair<Index, Real>> mapping global to free DOFs
+/// @param num_free Number of free (non-slave) DOFs
+/// @return Condensed matrix (num_free x num_free)
+SpMat condense_matrix(
+    const SpMat &M,
+    const std::function<std::vector<std::pair<Index, Real>>(Index)> &expand_dof,
+    Index num_free);
+
 /// @brief Back-substitute to recover slave DOF values from masters
 ///
 /// Template to work with both LinearHangingNodeConstraint and CubicHangingNodeConstraint.

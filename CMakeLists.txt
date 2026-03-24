@@ -169,6 +169,7 @@ set(BATHYMETRY_SOURCES
     # Schur complement preconditioners for constrained CG
     src/bathymetry/diagonal_schur_preconditioner.cpp
     src/bathymetry/diagonal_approx_cg_schur_preconditioner.cpp
+    src/bathymetry/block_diag_approx_cg_schur_preconditioner.cpp
     src/bathymetry/physics_based_schur_preconditioner.cpp
     src/bathymetry/multigrid_schur_preconditioner.cpp
     src/bathymetry/schwarz_schur_preconditioner.cpp

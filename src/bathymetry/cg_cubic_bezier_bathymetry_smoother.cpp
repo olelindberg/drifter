@@ -2,6 +2,7 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
 #include "bathymetry/constraint_condenser.hpp"
+#include "bathymetry/block_diag_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_schur_preconditioner.hpp"
 #include "bathymetry/flexible_cg.hpp"
@@ -466,6 +467,12 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
     case SchurPreconditionerType::DiagonalApproxCG:
       schur_precond = std::make_unique<DiagonalApproxCGSchurPreconditioner>(
           sys.Q_reduced, sys.A_edge, config_.inner_tolerance,
+          config_.inner_max_iterations);
+      break;
+
+    case SchurPreconditionerType::BlockDiagApproxCG:
+      schur_precond = std::make_unique<BlockDiagApproxCGSchurPreconditioner>(
+          sys.Q_reduced, sys.A_edge, *dof_manager_, config_.inner_tolerance,
           config_.inner_max_iterations);
       break;
 

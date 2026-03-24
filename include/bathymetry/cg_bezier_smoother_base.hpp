@@ -11,6 +11,7 @@
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/seabed_surface.hpp"
+#include <array>
 #include <functional>
 #include <limits>
 #include <map>
@@ -26,6 +27,25 @@ class BathymetrySource;
 struct BathymetryPoint;
 class BezierHessianBase;
 class BezierBasis2DBase;
+
+/// @brief Configuration for boundary relaxation zone
+///
+/// Gradually reduces data fitting weight near domain boundaries to eliminate
+/// oscillations. Uses smoothstep interpolation for C1 smooth transition.
+struct BoundaryRelaxationConfig {
+    /// Enable boundary relaxation
+    bool enabled = false;
+
+    /// Relaxation zone width in physical units
+    Real width = 0.0;
+
+    /// Minimum relaxation factor at boundary (0 = full relaxation, no data fitting)
+    Real min_factor = 0.0;
+
+    /// Enable relaxation per edge: [left, right, bottom, top]
+    /// Edge IDs: 0=left (x=xmin), 1=right (x=xmax), 2=bottom (y=ymin), 3=top (y=ymax)
+    std::array<bool, 4> edge_enabled = {true, true, true, true};
+};
 
 /// @brief Abstract base class for CG Bezier bathymetry smoothers
 ///
@@ -149,6 +169,9 @@ protected:
     /// Populated in assemble_hessian_global(), completed in assemble_data_fitting_global()
     std::vector<MatX> element_matrix_cache_temp_;
 
+    /// Boundary relaxation zone configuration
+    BoundaryRelaxationConfig relaxation_config_;
+
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes
     // =========================================================================
@@ -253,6 +276,15 @@ protected:
     /// @param elem Element index
     /// @param Q_local Element matrix to cache
     void cache_element_matrix(Index elem, const MatX &Q_local);
+
+    /// @brief Compute boundary relaxation factor at physical point
+    ///
+    /// Returns a factor in [min_factor, 1.0] based on distance to enabled boundaries.
+    /// Uses smoothstep interpolation for C1 continuity.
+    ///
+    /// @param x, y Physical coordinates
+    /// @return Factor where 1.0 = full data fitting, min_factor = relaxed (at boundary)
+    Real compute_relaxation_factor(Real x, Real y) const;
 };
 
 } // namespace drifter

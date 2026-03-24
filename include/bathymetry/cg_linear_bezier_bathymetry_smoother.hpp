@@ -53,6 +53,10 @@ struct CGLinearBezierSmootherConfig {
 
     /// Tolerance for bound constraint satisfaction
     Real bound_tolerance = 1e-10;
+
+    /// Boundary relaxation zone configuration
+    /// Reduces data fitting weight near domain boundaries to eliminate oscillations
+    BoundaryRelaxationConfig boundary_relaxation;
 };
 
 /// @brief CG linear Bezier bathymetry smoother with Laplacian energy

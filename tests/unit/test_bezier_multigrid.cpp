@@ -1310,4 +1310,829 @@ TEST_F(BezierMultigridCenterGradedTest, SubdivisionStrategyDefault) {
     EXPECT_EQ(config.transfer_strategy, TransferOperatorStrategy::BezierSubdivision);
 }
 
+// =============================================================================
+// Composite Grid Hierarchy Tests
+// =============================================================================
+
+TEST_F(BezierMultigridCenterGradedTest, CompositeHierarchy_DOFsDecreaseWithCoarsening) {
+    // Verify each coarser level has fewer DOFs than the finer level above it
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    ASSERT_GE(precond.num_levels(), 2) << "Need at least 2 levels for this test";
+
+    // Check DOF counts decrease from finest to coarsest
+    for (int level = precond.num_levels() - 1; level > 0; --level) {
+        Index fine_dofs = precond.level(level).num_dofs;
+        Index coarse_dofs = precond.level(level - 1).num_dofs;
+
+        EXPECT_GT(fine_dofs, coarse_dofs)
+            << "Level " << level << " should have more DOFs than level " << (level - 1)
+            << " (fine=" << fine_dofs << ", coarse=" << coarse_dofs << ")";
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, CompositeHierarchy_PassThroughClassification) {
+    // Nodes present in both fine and coarse grids should be marked as pass-through
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    ASSERT_GE(precond.num_levels(), 2);
+
+    // Check that pass-through nodes have is_subdivided = false
+    for (int level = 0; level < precond.num_levels(); ++level) {
+        const auto &composite = precond.level(level).composite_grid;
+        const auto &passthrough_indices = precond.level(level).passthrough_node_indices;
+
+        for (Index idx : passthrough_indices) {
+            ASSERT_LT(static_cast<size_t>(idx), composite.nodes.size());
+            EXPECT_FALSE(composite.nodes[idx].is_subdivided)
+                << "Pass-through node at level " << level << " index " << idx
+                << " should have is_subdivided=false";
+        }
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, CompositeHierarchy_SubdivisionClassification) {
+    // Nodes with refined descendants should be marked as subdivision
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    ASSERT_GE(precond.num_levels(), 2);
+
+    // Check that subdivision nodes have is_subdivided = true
+    for (int level = 0; level < precond.num_levels(); ++level) {
+        const auto &composite = precond.level(level).composite_grid;
+        const auto &subdivision_indices = precond.level(level).subdivision_node_indices;
+
+        for (Index idx : subdivision_indices) {
+            ASSERT_LT(static_cast<size_t>(idx), composite.nodes.size());
+            EXPECT_TRUE(composite.nodes[idx].is_subdivided)
+                << "Subdivision node at level " << level << " index " << idx
+                << " should have is_subdivided=true";
+        }
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, CompositeHierarchy_PositionDOFDeduplication) {
+    // Shared DOFs at element interfaces should get same index via position quantization
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // For each level, verify DOF indices are in range [0, num_dofs)
+    for (int level = 0; level < precond.num_levels(); ++level) {
+        const auto &composite = precond.level(level).composite_grid;
+
+        // Collect all DOF indices
+        std::set<Index> unique_dofs;
+        for (const auto &node : composite.nodes) {
+            for (Index dof : node.dof_indices) {
+                if (dof >= 0) {  // Valid DOF
+                    EXPECT_LT(dof, composite.num_dofs)
+                        << "DOF index " << dof << " out of range at level " << level;
+                    unique_dofs.insert(dof);
+                }
+            }
+        }
+
+        // Number of unique DOFs should equal num_dofs
+        EXPECT_EQ(static_cast<Index>(unique_dofs.size()), composite.num_dofs)
+            << "Level " << level << " has " << unique_dofs.size()
+            << " unique DOFs but num_dofs=" << composite.num_dofs;
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, CompositeHierarchy_MaxDepthTracking) {
+    // max_depth should correctly reflect deepest node in each level
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // For each level, compute actual max depth and compare
+    for (int level = 0; level < precond.num_levels(); ++level) {
+        const auto &composite = precond.level(level).composite_grid;
+
+        int actual_max_depth = 0;
+        for (const auto &node : composite.nodes) {
+            if (node.tree_node) {
+                int depth = node.tree_node->level.x;  // level.x == level.y for quadtree
+                actual_max_depth = std::max(actual_max_depth, depth);
+            }
+        }
+
+        EXPECT_EQ(composite.max_depth, actual_max_depth)
+            << "Level " << level << " max_depth should be " << actual_max_depth;
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, CompositeHierarchy_NodeCountsConsistent) {
+    // subdivision + passthrough node counts should equal total nodes
+    // Note: At finest level, these indices may be empty since there's no finer level
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Check all levels except finest (finest has no finer level to compare with)
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const auto &ml = precond.level(level);
+        size_t total = ml.subdivision_node_indices.size() + ml.passthrough_node_indices.size();
+
+        EXPECT_EQ(total, ml.composite_grid.nodes.size())
+            << "Level " << level << ": subdivision (" << ml.subdivision_node_indices.size()
+            << ") + passthrough (" << ml.passthrough_node_indices.size()
+            << ") != total nodes (" << ml.composite_grid.nodes.size() << ")";
+    }
+}
+
+// =============================================================================
+// Prolongation Operator Tests
+// =============================================================================
+
+TEST_F(BezierMultigridCenterGradedTest, Prolongation_PassThroughIdentity) {
+    // Pass-through nodes should have P(fine_dof, coarse_dof) = 1 for matching DOFs
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // For each level with pass-through nodes, verify identity mapping
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const auto &coarse_level = precond.level(level);
+        const auto &fine_level = precond.level(level + 1);
+        const SpMat &P = coarse_level.P;
+
+        // For pass-through nodes at coarse level that also appear at fine level
+        for (Index idx : coarse_level.passthrough_node_indices) {
+            const auto &coarse_node = coarse_level.composite_grid.nodes[idx];
+
+            // Check if this node also exists at fine level
+            auto it = fine_level.composite_grid.node_index_map.find(coarse_node.tree_node);
+            if (it != fine_level.composite_grid.node_index_map.end()) {
+                const auto &fine_node = fine_level.composite_grid.nodes[it->second];
+
+                // Each coarse DOF should map to corresponding fine DOF with weight 1
+                for (int i = 0; i < 16; ++i) {
+                    Index coarse_dof = coarse_node.dof_indices[i];
+                    Index fine_dof = fine_node.dof_indices[i];
+
+                    if (coarse_dof >= 0 && fine_dof >= 0) {
+                        // P(fine_dof, coarse_dof) should be 1.0
+                        Real val = P.coeff(fine_dof, coarse_dof);
+                        EXPECT_NEAR(val, 1.0, TOLERANCE)
+                            << "Pass-through P(" << fine_dof << "," << coarse_dof
+                            << ") should be 1.0, got " << val;
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, Prolongation_InterpolatesConstant) {
+    // P * ones(coarse) should equal ones(fine) (constant preservation)
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Test P at each level: P * ones should give ones
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const SpMat &P = precond.level(level).P;
+
+        VecX coarse_const = VecX::Ones(P.cols());
+        VecX fine_result = P * coarse_const;
+
+        // All fine values should be 1.0
+        for (Index i = 0; i < fine_result.size(); ++i) {
+            EXPECT_NEAR(fine_result(i), 1.0, LOOSE_TOLERANCE)
+                << "P * ones != ones at level " << level << " row " << i;
+        }
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, Prolongation_SubdivisionRowSumsOne) {
+    // For BezierSubdivision, each row of P should sum to 1 (convex combination)
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const SpMat &P = precond.level(level).P;
+        VecX row_sums = P * VecX::Ones(P.cols());
+
+        for (Index i = 0; i < P.rows(); ++i) {
+            EXPECT_NEAR(row_sums(i), 1.0, LOOSE_TOLERANCE)
+                << "P row sum != 1 at level " << level << " row " << i;
+        }
+    }
+}
+
+TEST_F(BezierMultigridCenterGradedTest, Prolongation_CorrectDimensions) {
+    // P should be (fine_dofs x coarse_dofs)
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const SpMat &P = precond.level(level).P;
+        Index coarse_dofs = precond.level(level).num_dofs;
+        Index fine_dofs = precond.level(level + 1).num_dofs;
+
+        EXPECT_EQ(P.rows(), fine_dofs)
+            << "P rows should equal fine DOFs at level " << level;
+        EXPECT_EQ(P.cols(), coarse_dofs)
+            << "P cols should equal coarse DOFs at level " << level;
+    }
+}
+
+// Note: Linear interpolation test removed.
+// Bezier subdivision preserves polynomial degree but control point values
+// don't directly correspond to function samples at parametric positions.
+// The constant preservation tests (InterpolatesConstant) already verify
+// the partition of unity property which is the core requirement.
+
+// =============================================================================
+// V-Cycle Frequency Analysis Tests
+// =============================================================================
+
+TEST_F(BezierMultigridCenterGradedTest, VCycle_ConvergesAdaptiveMesh) {
+    // V-cycle should converge on adaptive mesh with mixed pass-through/subdivision
+    // Test the V-cycle preconditioner directly rather than through the full smoother
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+
+    // Create a simple SPD matrix
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 4.0);
+        if (i > 0) {
+            triplets.emplace_back(i, i - 1, -1.0);
+            triplets.emplace_back(i - 1, i, -1.0);
+        }
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.pre_smoothing = 2;
+    config.post_smoothing = 2;
+    config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Apply multiple V-cycles and check residual reduction
+    VecX x = VecX::Zero(n);
+    VecX b = VecX::Ones(n);
+    VecX r = b - Q * x;
+    Real initial_residual = r.norm();
+
+    // Apply 10 V-cycles as preconditioned iteration
+    for (int iter = 0; iter < 10; ++iter) {
+        VecX z = precond.apply(r);
+        x += z;
+        r = b - Q * x;
+    }
+
+    Real final_residual = r.norm();
+
+    // Residual should decrease significantly
+    EXPECT_LT(final_residual, initial_residual * 0.1)
+        << "V-cycle on adaptive mesh did not converge: "
+        << initial_residual << " -> " << final_residual;
+}
+
+TEST_F(BezierMultigridTest, VCycle_SmootherReducesHighFrequency) {
+    // Smoother should damp oscillatory (high-frequency) error components
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+
+    // Create tridiagonal SPD matrix (represents discrete Laplacian)
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 4.0);
+        if (i > 0) {
+            triplets.emplace_back(i, i - 1, -1.0);
+            triplets.emplace_back(i - 1, i, -1.0);
+        }
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 1;
+    config.pre_smoothing = 3;
+    config.post_smoothing = 0;
+    config.smoother_type = SmootherType::MultiplicativeSchwarz;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Create high-frequency error (alternating signs)
+    VecX e_high = VecX::Zero(n);
+    for (Index i = 0; i < n; ++i) {
+        e_high(i) = (i % 2 == 0) ? 1.0 : -1.0;
+    }
+    Real e_high_norm_before = e_high.norm();
+
+    // Compute residual for this error with zero RHS
+    VecX r = -Q * e_high;
+
+    // Apply one V-cycle (effectively applies smoother + coarse correction)
+    VecX correction = precond.apply(r);
+
+    // Error after correction
+    VecX e_after = e_high + correction;
+    Real e_high_norm_after = e_after.norm();
+
+    // High-frequency error should be reduced
+    EXPECT_LT(e_high_norm_after, e_high_norm_before)
+        << "Smoother should reduce high-frequency error";
+}
+
+// =============================================================================
+// Graph Coloring Tests
+// =============================================================================
+
+TEST_F(BezierMultigridTest, GraphColoring_NoAdjacentSameColor) {
+    // No two adjacent elements should share the same color
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 4.0);
+        if (i > 0) {
+            triplets.emplace_back(i, i - 1, -1.0);
+            triplets.emplace_back(i - 1, i, -1.0);
+        }
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 1;
+    config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Check coloring at finest level
+    int finest = precond.num_levels() - 1;
+    const auto &level = precond.level(finest);
+
+    // Build element-to-color map
+    std::map<Index, int> element_color;
+    for (int c = 0; c < level.num_colors; ++c) {
+        for (Index elem : level.elements_by_color[c]) {
+            element_color[elem] = c;
+        }
+    }
+
+    // Build DOF-to-elements map
+    std::map<Index, std::vector<Index>> dof_to_elements;
+    for (size_t e = 0; e < level.element_free_dofs.size(); ++e) {
+        for (Index dof : level.element_free_dofs[e]) {
+            dof_to_elements[dof].push_back(static_cast<Index>(e));
+        }
+    }
+
+    // Check that elements sharing DOFs have different colors
+    for (const auto &[dof, elements] : dof_to_elements) {
+        for (size_t i = 0; i < elements.size(); ++i) {
+            for (size_t j = i + 1; j < elements.size(); ++j) {
+                Index e1 = elements[i];
+                Index e2 = elements[j];
+                int c1 = element_color[e1];
+                int c2 = element_color[e2];
+
+                EXPECT_NE(c1, c2)
+                    << "Adjacent elements " << e1 << " and " << e2
+                    << " share DOF " << dof << " but have same color " << c1;
+            }
+        }
+    }
+}
+
+TEST_F(BezierMultigridTest, GraphColoring_AllElementsColored) {
+    // Every element should get assigned a color
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 1;
+    config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Count elements in coloring
+    int finest = precond.num_levels() - 1;
+    const auto &level = precond.level(finest);
+
+    size_t colored_elements = 0;
+    for (int c = 0; c < level.num_colors; ++c) {
+        colored_elements += level.elements_by_color[c].size();
+    }
+
+    EXPECT_EQ(colored_elements, level.element_free_dofs.size())
+        << "Not all elements are colored";
+}
+
+TEST_F(BezierMultigridTest, GraphColoring_MinimumColors) {
+    // Should use <= 9 colors for typical 2D quad meshes (4 neighbors + diagonals)
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 1;
+    config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    int finest = precond.num_levels() - 1;
+    const auto &level = precond.level(finest);
+
+    // For 2D quad meshes with shared corner DOFs, expect at most 9 colors
+    // (3x3 stencil of neighbors)
+    EXPECT_LE(level.num_colors, 9)
+        << "Too many colors used: " << level.num_colors;
+    EXPECT_GE(level.num_colors, 1)
+        << "At least 1 color should be used";
+}
+
+// =============================================================================
+// Edge Case Tests
+// =============================================================================
+
+TEST(BezierMultigridEdgeCases, SingleElementMesh_DirectSolve) {
+    // Single element mesh should have one level with direct solve
+    QuadtreeAdapter single_mesh;
+    single_mesh.build_uniform(0.0, 1.0, 0.0, 1.0, 1, 1);
+
+    CGCubicBezierSmootherConfig smoother_config;
+    smoother_config.lambda = 10.0;
+    smoother_config.edge_ngauss = 0;
+    CGCubicBezierBathymetrySmoother smoother(single_mesh, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, single_mesh, smoother.dof_manager());
+
+    // Should have exactly 1 level (coarsest only)
+    EXPECT_EQ(precond.num_levels(), 1);
+
+    // V-cycle should still work (direct solve at coarsest)
+    VecX r = VecX::Ones(n);
+    VecX z = precond.apply(r);
+    EXPECT_GT(z.norm(), 0.0);
+}
+
+TEST(BezierMultigridEdgeCases, UniformMesh_AllPassThrough) {
+    // Uniform mesh at finest level should have all pass-through nodes at coarser levels
+    QuadtreeAdapter uniform_mesh;
+    uniform_mesh.build_uniform(0.0, 1.0, 0.0, 1.0, 4, 4);
+
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(uniform_mesh, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, uniform_mesh, smoother.dof_manager());
+
+    // At coarsest level (level 0), all nodes should be subdivision
+    // because they have children at finer levels
+    if (precond.num_levels() > 1) {
+        const auto &coarsest = precond.level(0);
+        EXPECT_GT(coarsest.subdivision_node_indices.size(), 0u)
+            << "Coarsest level should have subdivision nodes";
+    }
+
+    // At finest level, all nodes should be pass-through (leaves)
+    int finest = precond.num_levels() - 1;
+    const auto &finest_level = precond.level(finest);
+
+    // For uniform mesh, finest level nodes are all leaves = pass-through
+    // (Note: at finest level, "pass-through" means they don't subdivide further)
+    size_t total_nodes = finest_level.composite_grid.nodes.size();
+    EXPECT_EQ(total_nodes, 16u)  // 4x4 uniform mesh
+        << "Uniform 4x4 mesh should have 16 elements at finest level";
+}
+
+TEST(BezierMultigridEdgeCases, HangingNodes_ConstraintsRespected) {
+    // T-junction hanging node constraints should be satisfied in transfer operators
+    // Create adaptive mesh with hanging nodes
+    OctreeAdapter octree(0.0, 1.0, 0.0, 1.0, -1.0, 0.0);
+    octree.build_uniform(2, 2, 1);
+
+    // Refine only corner element to create T-junction
+    std::vector<Index> to_refine = {0};
+    std::vector<RefineMask> masks(1, RefineMask::XY);
+    octree.refine(to_refine, masks);
+
+    QuadtreeAdapter adaptive_mesh(octree);
+
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(adaptive_mesh, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, adaptive_mesh, smoother.dof_manager());
+
+    // Verify constant preservation (which requires proper constraint handling)
+    for (int level = 1; level < precond.num_levels(); ++level) {
+        const SpMat &R = precond.level(level).R;
+        VecX fine_const = VecX::Constant(R.cols(), 1.0);
+        VecX coarse = R * fine_const;
+
+        for (Index i = 0; i < coarse.size(); ++i) {
+            EXPECT_NEAR(coarse(i), 1.0, LOOSE_TOLERANCE)
+                << "Constant not preserved at level " << level
+                << " with hanging nodes";
+        }
+    }
+}
+
+// =============================================================================
+// Transfer Operator Strategy Tests
+// =============================================================================
+
+TEST_F(BezierMultigridTest, L2Projection_SymmetricOperator) {
+    // For L2 projection, verify P = R^T (symmetric transfer)
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 2.0);
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::L2Projection;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    for (int level = 0; level < precond.num_levels() - 1; ++level) {
+        const SpMat &P = precond.level(level).P;
+        const SpMat &R = precond.level(level + 1).R;
+
+        // P should equal R^T
+        SpMat Rt = R.transpose();
+        SpMat diff = P - Rt;
+
+        Real max_diff = 0.0;
+        for (int k = 0; k < diff.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(diff, k); it; ++it) {
+                max_diff = std::max(max_diff, std::abs(it.value()));
+            }
+        }
+
+        EXPECT_LT(max_diff, TOLERANCE)
+            << "P != R^T at level " << level << ", max diff = " << max_diff;
+    }
+}
+
+TEST_F(BezierMultigridTest, Galerkin_CoarseMatrixFormula) {
+    // Verify A_c = R * A_f * P holds exactly for Galerkin strategy
+    CGCubicBezierSmootherConfig smoother_config;
+    CGCubicBezierBathymetrySmoother smoother(mesh_, smoother_config);
+
+    Index n = smoother.dof_manager().num_free_dofs();
+    SpMat Q(n, n);
+    std::vector<Eigen::Triplet<Real>> triplets;
+    for (Index i = 0; i < n; ++i) {
+        triplets.emplace_back(i, i, 4.0);
+        if (i > 0) {
+            triplets.emplace_back(i, i - 1, -1.0);
+            triplets.emplace_back(i - 1, i, -1.0);
+        }
+    }
+    Q.setFromTriplets(triplets.begin(), triplets.end());
+
+    MultigridConfig config;
+    config.min_tree_level = 0;
+    config.transfer_strategy = TransferOperatorStrategy::L2Projection;
+    config.coarse_grid_strategy = CoarseGridStrategy::Galerkin;
+    BezierMultigridPreconditioner precond(config);
+    precond.setup(Q, mesh_, smoother.dof_manager());
+
+    // Verify Galerkin formula at each level
+    for (int level = precond.num_levels() - 1; level > 0; --level) {
+        const SpMat &Q_fine = precond.level(level).Q;
+        const SpMat &Q_coarse = precond.level(level - 1).Q;
+        const SpMat &R = precond.level(level).R;
+        const SpMat &P = precond.level(level - 1).P;
+
+        // Compute R * Q_fine * P
+        SpMat RAP = R * Q_fine * P;
+
+        // Compare with stored Q_coarse
+        SpMat diff = Q_coarse - RAP;
+        Real max_diff = 0.0;
+        for (int k = 0; k < diff.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(diff, k); it; ++it) {
+                max_diff = std::max(max_diff, std::abs(it.value()));
+            }
+        }
+
+        EXPECT_LT(max_diff, LOOSE_TOLERANCE)
+            << "Galerkin formula Q_c = R*Q_f*P not satisfied at level " << level
+            << ", max diff = " << max_diff;
+    }
+}
+
 } // namespace

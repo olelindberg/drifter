@@ -103,7 +103,7 @@ struct AdaptiveCGCubicBezierConfig {
   int max_refinement_level = 10; ///< Maximum refinement level per axis
 
   /// @brief Which error metric to use for refinement decisions
-  ErrorMetricType error_metric_type = ErrorMetricType::VolumeChange;
+  ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
 
   // Dorfler marking parameters
   Real dorfler_theta = 0.5; ///< Fraction of total squared error to capture

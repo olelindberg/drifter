@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "bathymetry/bezier_multigrid_preconditioner.hpp"
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/block_diag_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_schur_preconditioner.hpp"
 #include "bathymetry/flexible_cg.hpp"
@@ -1158,6 +1159,159 @@ TEST_F(MultigridSchurTest, SchwarzSchur_MoreIterationsImprove) {
     // Final error should be significantly smaller than initial
     EXPECT_LT(errors.back(), errors.front() * 0.5)
         << "20 iterations should reduce error vs 1 iteration";
+}
+
+// =============================================================================
+// BlockDiagApproxCGSchurPreconditioner tests
+// =============================================================================
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_ConstructsSuccessfully) {
+    // Should not throw for valid Q, C, and DOF manager
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager());
+    EXPECT_EQ(precond.num_constraints(), n_constraints_);
+}
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_CountsElementBlocks) {
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager());
+
+    // For a 4x4 uniform mesh, expect 16 element blocks (one per element)
+    Index num_blocks = precond.num_element_blocks();
+    EXPECT_GT(num_blocks, 0) << "Should have at least some element blocks";
+    std::cout << "BlockDiagApproxCG: num_element_blocks = " << num_blocks << "\n";
+
+    // For 4x4 mesh, should have exactly 16 elements
+    EXPECT_EQ(num_blocks, 16) << "4x4 mesh should have 16 element blocks";
+}
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_AssembledMatrixIsSPD) {
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager());
+
+    // M_S = C * blockdiag(Q)^{-1} * C^T should be SPD
+    const SpMat& M_S = precond.assembled_matrix();
+    EXPECT_EQ(M_S.rows(), n_constraints_);
+    EXPECT_EQ(M_S.cols(), n_constraints_);
+
+    // Check symmetry
+    SpMat M_S_diff = M_S - SpMat(M_S.transpose());
+    EXPECT_LT(M_S_diff.norm(), TOLERANCE);
+
+    // Check positive definiteness: all eigenvalues > 0
+    Eigen::MatrixXd M_S_dense = M_S;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(M_S_dense);
+    for (Index i = 0; i < n_constraints_; ++i) {
+        EXPECT_GT(eig.eigenvalues()(i), 0.0)
+            << "M_S should be positive definite";
+    }
+}
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_ApplyGivesCorrectResult) {
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager(),
+                                                  1e-10, 100);
+
+    VecX r = VecX::Ones(n_constraints_);
+    VecX z = precond.apply(r);
+
+    // z should be M_S^{-1} * r
+    // Check by computing M_S * z ≈ r
+    const SpMat& M_S = precond.assembled_matrix();
+    VecX M_S_z = M_S * z;
+
+    for (Index i = 0; i < n_constraints_; ++i) {
+        EXPECT_NEAR(M_S_z(i), r(i), LOOSE_TOLERANCE);
+    }
+}
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_IsVariable) {
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager());
+    EXPECT_TRUE(precond.is_variable());
+}
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_HandlesZeroRHS) {
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager());
+
+    VecX r = VecX::Zero(n_constraints_);
+    VecX z = precond.apply(r);
+
+    // Should return zero for zero input
+    EXPECT_LT(z.norm(), TOLERANCE);
+}
+
+TEST_F(MultigridSchurTest, FlexibleCG_ConvergesWithBlockDiagApproxCG) {
+    // Create Schur complement matvec: S = C * Q^{-1} * C^T
+    Eigen::SparseLU<SpMat> Q_solver;
+    Q_solver.compute(Q_);
+    ASSERT_EQ(Q_solver.info(), Eigen::Success);
+
+    auto schur_matvec = [&](const VecX& v) -> VecX {
+        VecX Ct_v = C_.transpose() * v;
+        VecX Q_inv_Ct_v = Q_solver.solve(Ct_v);
+        return C_ * Q_inv_Ct_v;
+    };
+
+    // Create BlockDiagApproxCG preconditioner
+    BlockDiagApproxCGSchurPreconditioner precond(Q_, C_, smoother_->dof_manager(),
+                                                  1e-10, 100);
+
+    VecX rhs = VecX::Ones(n_constraints_);
+    FlexibleCG fcg(schur_matvec, precond, 1e-8, 100);
+    VecX x = VecX::Zero(n_constraints_);
+    FCGResult result = fcg.solve(x, rhs);
+
+    EXPECT_TRUE(result.converged);
+    EXPECT_LT(result.relative_residual, 1e-7);
+
+    // Verify solution: S * x ≈ rhs
+    VecX Sx = schur_matvec(x);
+    Real sol_error = (Sx - rhs).norm() / rhs.norm();
+    EXPECT_LT(sol_error, 1e-6);
+}
+
+TEST_F(MultigridSchurTest, BlockDiagApproxCG_VsDiagonalApproxCG_Comparison) {
+    // Compare iteration counts between DiagonalApproxCG and BlockDiagApproxCG
+    // BlockDiag should generally need fewer or equal iterations
+
+    // Use data-fitting Q for a more challenging problem
+    SpMat Q = create_data_fitting_Q(10.0);
+
+    // Exact Schur matvec
+    Eigen::SparseLU<SpMat> Q_solver;
+    Q_solver.compute(Q);
+    ASSERT_EQ(Q_solver.info(), Eigen::Success);
+
+    auto schur_matvec = [&](const VecX& v) -> VecX {
+        VecX Ct_v = C_.transpose() * v;
+        VecX Q_inv_Ct_v = Q_solver.solve(Ct_v);
+        return C_ * Q_inv_Ct_v;
+    };
+
+    VecX rhs = VecX::Ones(n_constraints_);
+
+    // Test with DiagonalApproxCG
+    DiagonalApproxCGSchurPreconditioner diag_precond(Q, C_, 1e-10, 100);
+    FlexibleCG fcg_diag(schur_matvec, diag_precond, 1e-8, 200);
+    VecX x_diag = VecX::Zero(n_constraints_);
+    FCGResult result_diag = fcg_diag.solve(x_diag, rhs);
+
+    // Test with BlockDiagApproxCG
+    BlockDiagApproxCGSchurPreconditioner block_precond(Q, C_, smoother_->dof_manager(),
+                                                        1e-10, 100);
+    FlexibleCG fcg_block(schur_matvec, block_precond, 1e-8, 200);
+    VecX x_block = VecX::Zero(n_constraints_);
+    FCGResult result_block = fcg_block.solve(x_block, rhs);
+
+    std::cout << "DiagonalApproxCG: converged=" << result_diag.converged
+              << ", iterations=" << result_diag.iterations << "\n";
+    std::cout << "BlockDiagApproxCG: converged=" << result_block.converged
+              << ", iterations=" << result_block.iterations << "\n";
+
+    // Both should converge
+    EXPECT_TRUE(result_diag.converged);
+    EXPECT_TRUE(result_block.converged);
+
+    // BlockDiag should not be significantly worse than Diagonal
+    // (it captures more coupling, so should be at least as good)
+    EXPECT_LE(result_block.iterations, result_diag.iterations + 5)
+        << "BlockDiagApproxCG should not be significantly worse than DiagonalApproxCG";
 }
 
 } // namespace

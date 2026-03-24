@@ -58,6 +58,9 @@ void CGLinearBezierBathymetrySmoother::init_components() {
 
 void CGLinearBezierBathymetrySmoother::set_bathymetry_data_impl(
     std::function<Real(Real, Real)> bathy_func) {
+    // Pass boundary relaxation config to base class
+    relaxation_config_ = config_.boundary_relaxation;
+
     {
         OptionalScopedTimer t(profile_ ? &profile_->hessian_assembly_ms : nullptr);
         assemble_hessian_global(*dirichlet_hessian_);

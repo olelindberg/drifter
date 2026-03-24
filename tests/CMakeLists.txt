@@ -26,7 +26,8 @@ set(UNIT_TESTS
     unit/test_bezier_basis_2d.cpp
     unit/test_thin_plate_hessian.cpp
     unit/test_bezier_multigrid.cpp
-    unit/test_area_of_interest.cpp)
+    unit/test_area_of_interest.cpp
+    unit/test_schur_preconditioner.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS

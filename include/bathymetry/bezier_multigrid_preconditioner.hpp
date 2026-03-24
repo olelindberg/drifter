@@ -22,6 +22,7 @@
 #include <Eigen/SparseLU>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 #include <vector>
 
@@ -78,12 +79,12 @@ struct MultigridProfile {
   // =========================================================================
   // Operation counters
   // =========================================================================
-  int apply_calls = 0;          ///< Number of apply() invocations
-  int vcycle_calls = 0;         ///< Total V-cycle calls (including recursive)
-  int smoothing_iterations = 0; ///< Total smoothing iterations (all methods)
-  int matvec_products = 0;         ///< Total sparse mat-vec products
-  int coarse_solves = 0;           ///< Coarsest level direct solves
-  int converged_vcycle_count = 0;  ///< V-cycles needed for last convergence
+  int apply_calls = 0;            ///< Number of apply() invocations
+  int vcycle_calls = 0;           ///< Total V-cycle calls (including recursive)
+  int smoothing_iterations = 0;   ///< Total smoothing iterations (all methods)
+  int matvec_products = 0;        ///< Total sparse mat-vec products
+  int coarse_solves = 0;          ///< Coarsest level direct solves
+  int converged_vcycle_count = 0; ///< V-cycles needed for last convergence
 
   // =========================================================================
   // Helper methods
@@ -95,10 +96,10 @@ struct MultigridProfile {
 
 /// @brief Configuration for geometric multigrid preconditioner
 struct MultigridConfig {
-  /// Minimum tree level for coarsest multigrid level (0 = 1x1, 1 = 2x2, 2 = 4x4,
-  /// 3 = 8x8, 4 = 16x16 elements). Number of V-cycle levels is computed
+  /// Minimum tree level for coarsest multigrid level (0 = 1x1, 1 = 2x2, 2 =
+  /// 4x4, 3 = 8x8, 4 = 16x16 elements). Number of V-cycle levels is computed
   /// automatically as max_tree_depth - min_tree_level + 1.
-  int min_tree_level = 4;
+  int min_tree_level = 3;
 
   /// Pre-smoothing iterations
   int pre_smoothing = 1;
@@ -106,17 +107,20 @@ struct MultigridConfig {
   /// Post-smoothing iterations
   int post_smoothing = 1;
 
-  /// Smoother type (Jacobi, MultiplicativeSchwarz, or ColoredMultiplicativeSchwarz)
+  /// Smoother type (Jacobi, MultiplicativeSchwarz, or
+  /// ColoredMultiplicativeSchwarz)
   SmootherType smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
 
   /// Enable verbose logging during setup
   bool verbose = false;
 
   /// Strategy for building coarse-level system matrices
-  CoarseGridStrategy coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
+  CoarseGridStrategy coarse_grid_strategy =
+      CoarseGridStrategy::CachedRediscretization;
 
   /// Strategy for building transfer operators (P and R)
-  TransferOperatorStrategy transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
+  TransferOperatorStrategy transfer_strategy =
+      TransferOperatorStrategy::BezierSubdivision;
 
   /// Maximum number of V-cycles per apply() call
   int max_vcycles = 100;
@@ -442,13 +446,14 @@ private:
   /// @param P_local Subdivision matrices for each quadrant
   /// @param triplets Output triplet list for prolongation matrix
   /// @param parent Parent of tree_node (for quadrant determination)
-  void add_recursive_prolongation(const QuadtreeNode *tree_node,
-                                  const CompositeGridNode &coarse_node,
-                                  const CompositeGridLevel &fine_grid,
-                                  const MatX &P_accumulated,
-                                  const std::array<MatX, 4> &P_local,
-                                  std::vector<Eigen::Triplet<Real>> &triplets,
-                                  const QuadtreeNode *parent) const;
+  /// @param passthrough_fine_dofs Fine DOFs claimed by pass-through (skip
+  /// these)
+  void add_recursive_prolongation(
+      const QuadtreeNode *tree_node, const CompositeGridNode &coarse_node,
+      const CompositeGridLevel &fine_grid, const MatX &P_accumulated,
+      const std::array<MatX, 4> &P_local,
+      std::vector<Eigen::Triplet<Real>> &triplets, const QuadtreeNode *parent,
+      const std::set<Index> &passthrough_fine_dofs) const;
 };
 
 } // namespace drifter
