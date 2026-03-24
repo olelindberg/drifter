@@ -157,7 +157,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
   config.smoother_config.multigrid_config.verbose = true;
   config.smoother_config.multigrid_config.max_vcycles = 100;
   config.smoother_config.schur_preconditioner =
-      SchurPreconditionerType::DiagonalApproxCG;
+      SchurPreconditionerType::BlockDiagApproxCG;
   config.smoother_config.verbose = true;
   config.verbose = true;
 
@@ -462,25 +462,40 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   // Kattegat test area
   Real center_x = 4095238.0; // EPSG:3034
   Real center_y = 3344695.0; // EPSG:3034
-  Real domain_size = 100000.0;
+  Real domain_size = 2000000.0;
 
   AdaptiveCGCubicBezierConfig config;
   config.error_threshold = 1.0;
   config.error_metric_type = ErrorMetricType::VolumeChange;
-  config.max_iterations = 5;
-  config.max_elements = 2500;
-  config.smoother_config.lambda = 10.0;
+  config.max_iterations = 1;
+  config.max_elements = 10000;
   config.max_refinement_level = 12;
   config.verbose = true;
   config.ngauss_error = 6;
   config.error_output_dir = "/tmp/adaptive_cg_cubic_errors";
+
+  // Smoother config:
+  config.smoother_config.lambda = 10.0;
   config.smoother_config.edge_ngauss = 4;
   config.smoother_config.use_iterative_solver = true;
   config.smoother_config.use_multigrid = true;
+  config.smoother_config.schur_preconditioner =
+      SchurPreconditionerType::BlockDiagApproxCG;
+  config.smoother_config.verbose = true;
+  //  config.smoother_config.enable_natural_bc = true;
+  //  config.smoother_config.enable_zero_gradient_bc = true;
+
+  // Multigrid config:
   config.smoother_config.multigrid_config.smoother_type =
       SmootherType::MultiplicativeSchwarz;
   config.smoother_config.multigrid_config.verbose = true;
   config.smoother_config.multigrid_config.min_tree_level = 2;
+  config.smoother_config.multigrid_config.pre_smoothing = 2;
+  config.smoother_config.multigrid_config.post_smoothing = 2;
+  config.smoother_config.multigrid_config.smoother_type =
+      SmootherType::MultiplicativeSchwarz;
+  config.smoother_config.multigrid_config.transfer_strategy =
+      TransferOperatorStrategy::BezierSubdivision;
   config.smoother_config.multigrid_config.coarse_grid_strategy =
       CoarseGridStrategy::CachedRediscretization;
 
