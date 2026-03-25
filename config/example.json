@@ -1,0 +1,60 @@
+{
+  "data": {
+    "data_dir": "/home/ole/Projects/drifter/data/input/",
+    "primary_file": "ddm_50m.dybde-emodnet.tif",
+    "tile_files": [
+      "C4_2024.tif",
+      "C5_2024.tif",
+      "C6_2024.tif",
+      "C7_2024.tif",
+      "D4_2024.tif",
+      "D5_2024.tif",
+      "D6_2024.tif",
+      "D7_2024.tif",
+      "E4_2024.tif",
+      "E5_2024.tif",
+      "E6_2024.tif",
+      "E7_2024.tif"
+    ]
+  },
+  "domain": {
+    "center_x": 4095238.0,
+    "center_y": 3344695.0,
+    "domain_size": 100000.0
+  },
+  "initial_grid": {
+    "nx": 4,
+    "ny": 4
+  },
+  "adaptive": {
+    "error_threshold": 1.0,
+    "error_metric_type": "VolumeChange",
+    "max_iterations": 4,
+    "max_elements": 10000,
+    "max_refinement_level": 12,
+    "verbose": true,
+    "ngauss_error": 6,
+    "error_output_dir": "/tmp/adaptive_cg_cubic_errors"
+  },
+  "smoother": {
+    "lambda": 10.0,
+    "edge_ngauss": 4,
+    "use_iterative_solver": true,
+    "use_multigrid": true,
+    "schur_preconditioner": "BlockDiagApproxCG",
+    "verbose": true,
+    "multigrid": {
+      "smoother_type": "MultiplicativeSchwarz",
+      "verbose": true,
+      "min_tree_level": 2,
+      "pre_smoothing": 2,
+      "post_smoothing": 2,
+      "transfer_strategy": "BezierSubdivision",
+      "coarse_grid_strategy": "CachedRediscretization"
+    }
+  },
+  "output": {
+    "output_file": "/tmp/drifter_bathymetry",
+    "vtk_subdivision": 8
+  }
+}

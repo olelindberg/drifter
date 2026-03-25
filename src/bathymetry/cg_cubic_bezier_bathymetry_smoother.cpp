@@ -18,8 +18,8 @@
 #include <Eigen/IterativeLinearSolvers>
 #include <Eigen/SparseLU>
 #ifdef DRIFTER_USE_METIS
-#include <Eigen/MetisSupport>
 #include <iostream> // Required before Eigen/MetisSupport (Eigen bug)
+#include <Eigen/MetisSupport>
 #endif
 #include <algorithm>
 #include <fstream>

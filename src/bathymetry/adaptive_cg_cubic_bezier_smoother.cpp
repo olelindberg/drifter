@@ -348,12 +348,22 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
         invalidate_error_cache();
 
         if (current_profile_) {
+            // Direct solver fields
             profile.matrix_build_ms = solve_profile.matrix_build_ms;
             profile.constraint_build_ms = solve_profile.constraint_build_ms;
             profile.kkt_assembly_ms = solve_profile.kkt_assembly_ms;
             profile.sparse_lu_compute_ms = solve_profile.sparse_lu_compute_ms;
             profile.sparse_lu_solve_ms = solve_profile.sparse_lu_solve_ms;
             profile.constraint_projection_ms = solve_profile.constraint_projection_ms;
+            // Iterative solver fields
+            profile.inner_cg_setup_ms = solve_profile.inner_cg_setup_ms;
+            profile.outer_cg_iterations = solve_profile.outer_cg_iterations;
+            profile.outer_cg_total_ms = solve_profile.outer_cg_total_ms;
+            profile.schur_matvec_total_ms = solve_profile.schur_matvec_total_ms;
+            profile.schur_precond_setup_ms = solve_profile.schur_precond_setup_ms;
+            profile.schur_precond_apply_total_ms = solve_profile.schur_precond_apply_total_ms;
+            profile.qinv_apply_total_ms = solve_profile.qinv_apply_total_ms;
+            profile.solution_recovery_ms = solve_profile.solution_recovery_ms;
             smoother_->set_solve_profile(nullptr);
 
             preprocess_profile_.quadtree_build_ms += profile.quadtree_build_ms;
@@ -546,12 +556,22 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
 
         // Copy solve breakdown to iteration profile
         if (current_profile_) {
+            // Direct solver fields
             profile.matrix_build_ms = solve_profile.matrix_build_ms;
             profile.constraint_build_ms = solve_profile.constraint_build_ms;
             profile.kkt_assembly_ms = solve_profile.kkt_assembly_ms;
             profile.sparse_lu_compute_ms = solve_profile.sparse_lu_compute_ms;
             profile.sparse_lu_solve_ms = solve_profile.sparse_lu_solve_ms;
             profile.constraint_projection_ms = solve_profile.constraint_projection_ms;
+            // Iterative solver fields
+            profile.inner_cg_setup_ms = solve_profile.inner_cg_setup_ms;
+            profile.outer_cg_iterations = solve_profile.outer_cg_iterations;
+            profile.outer_cg_total_ms = solve_profile.outer_cg_total_ms;
+            profile.schur_matvec_total_ms = solve_profile.schur_matvec_total_ms;
+            profile.schur_precond_setup_ms = solve_profile.schur_precond_setup_ms;
+            profile.schur_precond_apply_total_ms = solve_profile.schur_precond_apply_total_ms;
+            profile.qinv_apply_total_ms = solve_profile.qinv_apply_total_ms;
+            profile.solution_recovery_ms = solve_profile.solution_recovery_ms;
             smoother_->set_solve_profile(nullptr);
             iteration_profiles_.push_back(profile);
         }
@@ -717,49 +737,85 @@ void AdaptiveCGCubicBezierSmoother::print_profile_report() const {
             cumulative.smoother_init_ms += p.smoother_init_ms;
             cumulative.hessian_assembly_ms += p.hessian_assembly_ms;
             cumulative.data_fitting_ms += p.data_fitting_ms;
+            // Direct solver fields
             cumulative.matrix_build_ms += p.matrix_build_ms;
             cumulative.constraint_build_ms += p.constraint_build_ms;
             cumulative.kkt_assembly_ms += p.kkt_assembly_ms;
             cumulative.sparse_lu_compute_ms += p.sparse_lu_compute_ms;
             cumulative.sparse_lu_solve_ms += p.sparse_lu_solve_ms;
             cumulative.constraint_projection_ms += p.constraint_projection_ms;
+            // Iterative solver fields
+            cumulative.inner_cg_setup_ms += p.inner_cg_setup_ms;
+            cumulative.outer_cg_iterations += p.outer_cg_iterations;
+            cumulative.outer_cg_total_ms += p.outer_cg_total_ms;
+            cumulative.schur_matvec_total_ms += p.schur_matvec_total_ms;
+            cumulative.schur_precond_setup_ms += p.schur_precond_setup_ms;
+            cumulative.schur_precond_apply_total_ms += p.schur_precond_apply_total_ms;
+            cumulative.qinv_apply_total_ms += p.qinv_apply_total_ms;
+            cumulative.solution_recovery_ms += p.solution_recovery_ms;
         }
+
+        // Detect if iterative solver was used (check first iteration)
+        bool iterative = iteration_profiles_[0].outer_cg_iterations > 0;
 
         double iterations_total = cumulative.total_ms();
 
         std::string sep(175, '-');
         std::cout << "Per-iteration:\n";
+
+        // Print header based on solver type
         std::cout << std::setw(4) << "Iter" << std::setw(7) << "Elems" << std::setw(7) << "DOFs"
                   << std::setw(6) << "Cstr" << std::setw(8) << "Qtree" << std::setw(8) << "SmInit"
                   << std::setw(8) << "Hess" << std::setw(9) << "DataFit" << std::setw(8) << "MatBld"
-                  << std::setw(8) << "CstBld" << std::setw(10) << "KKT" << std::setw(9) << "LUComp"
-                  << std::setw(8) << "LUSolv" << std::setw(8) << "CstPrj" << std::setw(8) << "Errors"
-                  << std::setw(7) << "Mark" << std::setw(8) << "Refine" << std::setw(10) << "Total"
-                  << "  [ms]\n";
+                  << std::setw(8) << "CstBld";
+        if (iterative) {
+            std::cout << std::setw(9) << "CGSetup" << std::setw(6) << "CGIt"
+                      << std::setw(9) << "CGTotal" << std::setw(9) << "SchurMV"
+                      << std::setw(8) << "QinvApp";
+        } else {
+            std::cout << std::setw(10) << "KKT" << std::setw(9) << "LUComp"
+                      << std::setw(8) << "LUSolv" << std::setw(8) << "CstPrj";
+        }
+        std::cout << std::setw(8) << "Errors" << std::setw(7) << "Mark" << std::setw(8) << "Refine"
+                  << std::setw(10) << "Total" << "  [ms]\n";
         std::cout << sep << "\n";
 
+        // Print data rows
         for (size_t i = 0; i < iteration_profiles_.size(); ++i) {
             const auto &p = iteration_profiles_[i];
             std::cout << std::setw(4) << i << std::setw(7) << p.num_elements << std::setw(7)
                       << p.num_dofs << std::setw(6) << p.num_constraints << std::setw(8)
                       << p.quadtree_build_ms << std::setw(8) << p.smoother_init_ms << std::setw(8)
                       << p.hessian_assembly_ms << std::setw(9) << p.data_fitting_ms << std::setw(8)
-                      << p.matrix_build_ms << std::setw(8) << p.constraint_build_ms << std::setw(10)
-                      << p.kkt_assembly_ms << std::setw(9) << p.sparse_lu_compute_ms << std::setw(8)
-                      << p.sparse_lu_solve_ms << std::setw(8) << p.constraint_projection_ms
-                      << std::setw(8) << p.error_estimation_ms << std::setw(7) << p.marking_ms
+                      << p.matrix_build_ms << std::setw(8) << p.constraint_build_ms;
+            if (iterative) {
+                std::cout << std::setw(9) << p.inner_cg_setup_ms << std::setw(6) << p.outer_cg_iterations
+                          << std::setw(9) << p.outer_cg_total_ms << std::setw(9) << p.schur_matvec_total_ms
+                          << std::setw(8) << p.qinv_apply_total_ms;
+            } else {
+                std::cout << std::setw(10) << p.kkt_assembly_ms << std::setw(9) << p.sparse_lu_compute_ms
+                          << std::setw(8) << p.sparse_lu_solve_ms << std::setw(8) << p.constraint_projection_ms;
+            }
+            std::cout << std::setw(8) << p.error_estimation_ms << std::setw(7) << p.marking_ms
                       << std::setw(8) << p.refinement_ms << std::setw(10) << p.total_ms() << "\n";
         }
 
+        // Print cumulative row
         std::cout << sep << "\n";
         std::cout << std::setw(24) << "Cumulative:" << std::setw(8) << cumulative.quadtree_build_ms
                   << std::setw(8) << cumulative.smoother_init_ms << std::setw(8)
                   << cumulative.hessian_assembly_ms << std::setw(9) << cumulative.data_fitting_ms
                   << std::setw(8) << cumulative.matrix_build_ms << std::setw(8)
-                  << cumulative.constraint_build_ms << std::setw(10) << cumulative.kkt_assembly_ms
-                  << std::setw(9) << cumulative.sparse_lu_compute_ms << std::setw(8)
-                  << cumulative.sparse_lu_solve_ms << std::setw(8) << cumulative.constraint_projection_ms
-                  << std::setw(8) << cumulative.error_estimation_ms << std::setw(7)
+                  << cumulative.constraint_build_ms;
+        if (iterative) {
+            std::cout << std::setw(9) << cumulative.inner_cg_setup_ms << std::setw(6) << cumulative.outer_cg_iterations
+                      << std::setw(9) << cumulative.outer_cg_total_ms << std::setw(9) << cumulative.schur_matvec_total_ms
+                      << std::setw(8) << cumulative.qinv_apply_total_ms;
+        } else {
+            std::cout << std::setw(10) << cumulative.kkt_assembly_ms << std::setw(9) << cumulative.sparse_lu_compute_ms
+                      << std::setw(8) << cumulative.sparse_lu_solve_ms << std::setw(8) << cumulative.constraint_projection_ms;
+        }
+        std::cout << std::setw(8) << cumulative.error_estimation_ms << std::setw(7)
                   << cumulative.marking_ms << std::setw(8) << cumulative.refinement_ms << std::setw(10)
                   << iterations_total << "\n";
         std::cout << "\n";
@@ -791,16 +847,26 @@ void AdaptiveCGCubicBezierSmoother::print_profile_report() const {
         double rebuild_total = preprocess_profile_.total_ms() + cumulative.quadtree_build_ms +
                                cumulative.smoother_init_ms + cumulative.hessian_assembly_ms +
                                cumulative.data_fitting_ms;
-        double solve_total = cumulative.matrix_build_ms + cumulative.constraint_build_ms +
-                             cumulative.kkt_assembly_ms + cumulative.sparse_lu_compute_ms +
-                             cumulative.sparse_lu_solve_ms + cumulative.constraint_projection_ms +
-                             postprocess_ms_;
+        double solve_total;
+        const char* solve_name;
+        if (iterative) {
+            solve_total = cumulative.matrix_build_ms + cumulative.constraint_build_ms +
+                          cumulative.inner_cg_setup_ms + cumulative.outer_cg_total_ms +
+                          cumulative.solution_recovery_ms + postprocess_ms_;
+            solve_name = "Solve (MatBld+CstBld+CGSetup+CGTotal+Recov + postprocess)";
+        } else {
+            solve_total = cumulative.matrix_build_ms + cumulative.constraint_build_ms +
+                          cumulative.kkt_assembly_ms + cumulative.sparse_lu_compute_ms +
+                          cumulative.sparse_lu_solve_ms + cumulative.constraint_projection_ms +
+                          postprocess_ms_;
+            solve_name = "Solve (MatBld+CstBld+KKT+LU+CstPrj + postprocess)";
+        }
         struct Phase {
             const char* name;
             double ms;
         };
         Phase phases[] = {{"Rebuild (preprocess + Qtree+SmInit+Hess+DataFit)", rebuild_total},
-                          {"Solve (MatBld+CstBld+KKT+LU+CstPrj + postprocess)", solve_total},
+                          {solve_name, solve_total},
                           {"Error estimation", cumulative.error_estimation_ms},
                           {"Marking", cumulative.marking_ms},
                           {"Refinement", cumulative.refinement_ms}};

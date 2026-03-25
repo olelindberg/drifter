@@ -17,8 +17,8 @@ using namespace drifter;
 using namespace drifter::testing;
 
 class AdaptiveCGCubicBezierSmootherTest : public ::testing::Test {
-protected:
-  static constexpr Real TOLERANCE = 1e-10;
+  protected:
+  static constexpr Real TOLERANCE       = 1e-10;
   static constexpr Real LOOSE_TOLERANCE = 1e-4;
 };
 
@@ -50,8 +50,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ConstructFromOctree) {
 TEST_F(AdaptiveCGCubicBezierSmootherTest, ConvergesOnConstantBathymetry) {
   // Constant bathymetry should converge immediately (no refinement needed)
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 0.01;
-  config.max_iterations = 5;
+  config.error_threshold        = 0.01;
+  config.max_iterations         = 5;
   config.smoother_config.lambda = 100.0; // Strong data fitting
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
@@ -70,11 +70,10 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ConvergesOnConstantBathymetry) {
 TEST_F(AdaptiveCGCubicBezierSmootherTest, ConvergesOnLinearBathymetry) {
   // Linear bathymetry: cubic Bezier can represent exactly
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 0.01;
-  config.max_iterations = 5;
-  config.smoother_config.lambda = 100.0;
-  config.smoother_config.ridge_epsilon =
-      0.0; // No ridge for exact polynomial reproduction
+  config.error_threshold               = 0.01;
+  config.max_iterations                = 5;
+  config.smoother_config.lambda        = 100.0;
+  config.smoother_config.ridge_epsilon = 0.0; // No ridge for exact polynomial reproduction
 
   auto linear = [](Real x, Real y) { return 10.0 + 0.5 * x + 0.3 * y; };
 
@@ -96,13 +95,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ConvergesOnLinearBathymetry) {
 TEST_F(AdaptiveCGCubicBezierSmootherTest, ConvergesOnQuadraticBathymetry) {
   // Quadratic bathymetry: cubic Bezier can represent exactly
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 0.1;
-  config.max_iterations = 5;
+  config.error_threshold        = 0.1;
+  config.max_iterations         = 5;
   config.smoother_config.lambda = 100.0;
 
-  auto quadratic = [](Real x, Real y) {
-    return 100.0 + 0.001 * x * x + 0.002 * y * y;
-  };
+  auto quadratic = [](Real x, Real y) { return 100.0 + 0.001 * x * x + 0.002 * y * y; };
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
   smoother.set_bathymetry_data(quadratic);
@@ -113,16 +110,15 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ConvergesOnQuadraticBathymetry) {
 
   // Should represent quadratic well
   Real rel_tol = 0.01; // 1% relative tolerance
-  EXPECT_NEAR(smoother.evaluate(50.0, 50.0), quadratic(50.0, 50.0),
-              std::abs(quadratic(50.0, 50.0)) * rel_tol);
+  EXPECT_NEAR(smoother.evaluate(50.0, 50.0), quadratic(50.0, 50.0), std::abs(quadratic(50.0, 50.0)) * rel_tol);
 }
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnHighFrequencyBathymetry) {
   // High-frequency bathymetry should trigger refinement
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 1.0; // 1 meter threshold
-  config.max_iterations = 5;
-  config.max_elements = 200;
+  config.error_threshold        = 1.0; // 1 meter threshold
+  config.max_iterations         = 5;
+  config.max_elements           = 200;
   config.smoother_config.lambda = 10.0;
 
   // Gaussian bump
@@ -141,45 +137,40 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnHighFrequencyBathymetry) {
   // Should have refined some elements
   EXPECT_GT(result.num_elements, 4);
 
-  std::cout << "High-frequency test: " << result.num_elements
-            << " elements, max_error=" << result.max_error << " m\n";
+  std::cout << "High-frequency test: " << result.num_elements << " elements, max_error=" << result.max_error << " m\n";
 }
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
   // Canyon in flat terrain: steep walls should trigger refinement
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 0.0;
-  config.max_iterations = 2;
-  config.max_elements = 10000;
-  config.smoother_config.lambda = 10.0;
-  config.smoother_config.use_iterative_solver = true;
-  config.smoother_config.use_multigrid = true;
-  config.smoother_config.multigrid_config.verbose = true;
+  config.error_threshold                              = 0.0;
+  config.max_iterations                               = 2;
+  config.max_elements                                 = 10000;
+  config.smoother_config.lambda                       = 10.0;
+  config.smoother_config.use_iterative_solver         = true;
+  config.smoother_config.use_multigrid                = true;
+  config.smoother_config.multigrid_config.verbose     = true;
   config.smoother_config.multigrid_config.max_vcycles = 100;
-  config.smoother_config.schur_preconditioner =
-      SchurPreconditionerType::BlockDiagApproxCG;
-  config.smoother_config.verbose = true;
-  config.verbose = true;
+  config.smoother_config.schur_preconditioner         = SchurPreconditionerType::BlockDiagApproxCG;
+  config.smoother_config.verbose                      = true;
+  config.verbose                                      = true;
 
-  config.smoother_config.enable_natural_bc = true;
+  config.smoother_config.enable_natural_bc       = true;
   config.smoother_config.enable_zero_gradient_bc = true;
 
   // Canyon along x-axis centered at y=50
   auto canyon = [](Real x, Real y) {
     (void)x; // Canyon is uniform along x
-    Real flat_depth = 100.0;
-    Real canyon_depth = 50.0;
+    Real flat_depth      = 100.0;
+    Real canyon_depth    = 50.0;
     Real canyon_center_y = 50.0;
-    Real canyon_width = 5.0; // Half-width for Gaussian profile
-    Real dy = y - canyon_center_y;
-    return flat_depth +
-           canyon_depth *
-               std::exp(-(dy * dy) / (2.0 * canyon_width * canyon_width));
+    Real canyon_width    = 5.0; // Half-width for Gaussian profile
+    Real dy              = y - canyon_center_y;
+    return flat_depth + canyon_depth * std::exp(-(dy * dy) / (2.0 * canyon_width * canyon_width));
   };
 
   // Start with 16x16 mesh (256 elements)
-  AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 16, 16,
-                                         config);
+  AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 16, 16, config);
   smoother.set_bathymetry_data(canyon);
 
   auto result = smoother.solve_adaptive();
@@ -188,8 +179,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
   // Should have refined elements near canyon walls
   EXPECT_GT(result.num_elements, 256);
 
-  std::cout << "Canyon test: " << result.num_elements
-            << " elements, max_error=" << result.max_error << " m\n";
+  std::cout << "Canyon test: " << result.num_elements << " elements, max_error=" << result.max_error << " m\n";
 
   // Write VTK output
   std::string output_file = "/tmp/adaptive_cg_cubic_bezier_canyon";
@@ -204,15 +194,13 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RefinesOnCanyonBathymetry) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, RespectsMaxIterations) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 0.001; // Very tight threshold
-  config.max_iterations = 3;
-  config.max_elements = 10000;
+  config.error_threshold        = 0.001; // Very tight threshold
+  config.max_iterations         = 3;
+  config.max_elements           = 10000;
   config.smoother_config.lambda = 10.0;
 
   // Function that needs refinement
-  auto wavy = [](Real x, Real y) {
-    return 50.0 + 10.0 * std::sin(0.1 * x) * std::cos(0.1 * y);
-  };
+  auto wavy = [](Real x, Real y) { return 50.0 + 10.0 * std::sin(0.1 * x) * std::cos(0.1 * y); };
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 2, 2, config);
   smoother.set_bathymetry_data(wavy);
@@ -225,14 +213,12 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RespectsMaxIterations) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, RespectsMaxElements) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 0.001; // Very tight threshold
-  config.max_iterations = 20;
-  config.max_elements = 50; // Low element limit
+  config.error_threshold        = 0.001; // Very tight threshold
+  config.max_iterations         = 20;
+  config.max_elements           = 50; // Low element limit
   config.smoother_config.lambda = 10.0;
 
-  auto wavy = [](Real x, Real y) {
-    return 50.0 + 10.0 * std::sin(0.1 * x) * std::cos(0.1 * y);
-  };
+  auto wavy = [](Real x, Real y) { return 50.0 + 10.0 * std::sin(0.1 * x) * std::cos(0.1 * y); };
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
   smoother.set_bathymetry_data(wavy);
@@ -252,13 +238,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, RespectsMaxElements) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, ErrorEstimationAfterSolve) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 10.0;
-  config.max_iterations = 1;
+  config.error_threshold        = 10.0;
+  config.max_iterations         = 1;
   config.smoother_config.lambda = 10.0;
 
-  auto bathy = [](Real x, Real y) {
-    return 100.0 + 20.0 * std::sin(0.05 * x) * std::cos(0.05 * y);
-  };
+  auto bathy = [](Real x, Real y) { return 100.0 + 20.0 * std::sin(0.05 * x) * std::cos(0.05 * y); };
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
   smoother.set_bathymetry_data(bathy);
@@ -270,7 +254,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ErrorEstimationAfterSolve) {
   EXPECT_EQ(static_cast<Index>(errors.size()), smoother.mesh().num_elements());
 
   // max_error and mean_error should work
-  Real max_err = smoother.max_error();
+  Real max_err  = smoother.max_error();
   Real mean_err = smoother.mean_error();
 
   EXPECT_GE(max_err, mean_err);
@@ -283,13 +267,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ErrorEstimationAfterSolve) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, MaintainsContinuityAfterRefinement) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0;
-  config.max_iterations = 3;
+  config.error_threshold        = 5.0;
+  config.max_iterations         = 3;
   config.smoother_config.lambda = 10.0;
 
-  auto smooth_bathy = [](Real x, Real y) {
-    return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y);
-  };
+  auto smooth_bathy = [](Real x, Real y) { return 100.0 + 20.0 * std::sin(0.03 * x) * std::cos(0.03 * y); };
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
   smoother.set_bathymetry_data(smooth_bathy);
@@ -297,7 +279,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, MaintainsContinuityAfterRefinement) {
 
   // Check C0 continuity by evaluating nearby points
   Real max_jump = 0.0;
-  Real step = 0.01;
+  Real step     = 0.01;
 
   for (Real x = 10.0; x < 90.0; x += 10.0) {
     for (Real y = 10.0; y < 90.0; y += 10.0) {
@@ -322,8 +304,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, MaintainsContinuityAfterRefinement) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, WritesVTKOutput) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0;
-  config.max_iterations = 2;
+  config.error_threshold        = 5.0;
+  config.max_iterations         = 2;
   config.smoother_config.lambda = 10.0;
 
   auto bathy = [](Real x, Real y) { return 100.0 + 10.0 * std::sin(0.05 * x); };
@@ -340,8 +322,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, WritesVTKOutput) {
 
   // Check file has content
   std::ifstream file(output_file);
-  std::string content((std::istreambuf_iterator<char>(file)),
-                      std::istreambuf_iterator<char>());
+  std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
   EXPECT_GT(content.size(), 1000u);
 }
 
@@ -351,8 +332,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, WritesVTKOutput) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, TracksAdaptationHistory) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 1.0;
-  config.max_iterations = 5;
+  config.error_threshold        = 1.0;
+  config.max_iterations         = 5;
   config.smoother_config.lambda = 10.0;
 
   auto bump = [](Real x, Real y) {
@@ -379,8 +360,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, TracksAdaptationHistory) {
   // Print history summary
   std::cout << "\nAdaptation history:\n";
   for (const auto &h : history) {
-    std::cout << "  Iter " << h.iteration << ": " << h.num_elements
-              << " elements, "
+    std::cout << "  Iter " << h.iteration << ": " << h.num_elements << " elements, "
               << "max_err=" << h.max_error << " m, "
               << "refined=" << h.elements_refined << "\n";
   }
@@ -392,8 +372,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, TracksAdaptationHistory) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, CGHasFewerDOFsThanDG) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0;
-  config.max_iterations = 2;
+  config.error_threshold        = 5.0;
+  config.max_iterations         = 2;
   config.smoother_config.lambda = 10.0;
 
   auto bathy = [](Real x, Real y) { return 50.0 + x * 0.5; };
@@ -402,14 +382,13 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, CGHasFewerDOFsThanDG) {
   smoother.set_bathymetry_data(bathy);
   smoother.solve_adaptive();
 
-  Index num_dofs = smoother.smoother().num_global_dofs();
+  Index num_dofs     = smoother.smoother().num_global_dofs();
   Index num_elements = smoother.mesh().num_elements();
 
   // DG would have num_elements * 16 DOFs (cubic: 4x4 = 16 per element)
   Index dg_dofs = num_elements * 16;
 
-  std::cout << "CG cubic DOFs: " << num_dofs << " vs DG equivalent: " << dg_dofs
-            << "\n";
+  std::cout << "CG cubic DOFs: " << num_dofs << " vs DG equivalent: " << dg_dofs << "\n";
 
   EXPECT_LT(num_dofs, dg_dofs);
 }
@@ -420,14 +399,12 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, CGHasFewerDOFsThanDG) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0;
-  config.max_iterations = 3;
-  config.smoother_config.lambda = 10.0;
+  config.error_threshold             = 5.0;
+  config.max_iterations              = 3;
+  config.smoother_config.lambda      = 10.0;
   config.smoother_config.edge_ngauss = 4;
 
-  auto bathy = [](Real x, Real y) {
-    return 100.0 + 20.0 * std::sin(0.04 * x) * std::cos(0.04 * y);
-  };
+  auto bathy = [](Real x, Real y) { return 100.0 + 20.0 * std::sin(0.04 * x) * std::cos(0.04 * y); };
 
   AdaptiveCGCubicBezierSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
   smoother.set_bathymetry_data(bathy);
@@ -440,8 +417,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
   Real violation = smoother.smoother().constraint_violation();
   EXPECT_LT(violation, 1e-5);
 
-  std::cout << "Adaptive with C1 constraints: " << result.num_elements
-            << " elements, constraint_violation=" << violation << "\n";
+  std::cout << "Adaptive with C1 constraints: " << result.num_elements << " elements, constraint_violation=" << violation << "\n";
 }
 
 // =============================================================================
@@ -449,8 +425,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, AdaptiveWithC1Constraints) {
 // =============================================================================
 
 class AdaptiveCGCubicBezierSmootherGeoTiffTest : public BathymetryTestFixture {
-protected:
-  static constexpr Real TOLERANCE = 1e-10;
+  protected:
+  static constexpr Real TOLERANCE       = 1e-10;
   static constexpr Real LOOSE_TOLERANCE = 1e-6;
 };
 
@@ -460,44 +436,39 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   }
 
   // Kattegat test area
-  Real center_x = 4095238.0; // EPSG:3034
-  Real center_y = 3344695.0; // EPSG:3034
-  Real domain_size = 2000000.0;
+  Real center_x    = 4095238.0; // EPSG:3034
+  Real center_y    = 3344695.0; // EPSG:3034
+  Real domain_size = 100000.0;
 
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 1.0;
-  config.error_metric_type = ErrorMetricType::VolumeChange;
-  config.max_iterations = 1;
-  config.max_elements = 10000;
+  config.error_threshold      = 1.0;
+  config.error_metric_type    = ErrorMetricType::VolumeChange;
+  config.max_iterations       = 10;
+  config.max_elements         = 10000;
   config.max_refinement_level = 12;
-  config.verbose = true;
-  config.ngauss_error = 6;
-  config.error_output_dir = "/tmp/adaptive_cg_cubic_errors";
+  config.verbose              = true;
+  config.ngauss_error         = 6;
+  config.error_output_dir     = "/tmp/adaptive_cg_cubic_errors";
 
   // Smoother config:
-  config.smoother_config.lambda = 10.0;
-  config.smoother_config.edge_ngauss = 4;
+  config.smoother_config.lambda               = 10.0;
+  config.smoother_config.edge_ngauss          = 4;
   config.smoother_config.use_iterative_solver = true;
-  config.smoother_config.use_multigrid = true;
-  config.smoother_config.schur_preconditioner =
-      SchurPreconditionerType::BlockDiagApproxCG;
-  config.smoother_config.verbose = true;
+  config.smoother_config.use_multigrid        = true;
+  config.smoother_config.schur_preconditioner = SchurPreconditionerType::BlockDiagApproxCG;
+  config.smoother_config.verbose              = true;
   //  config.smoother_config.enable_natural_bc = true;
   //  config.smoother_config.enable_zero_gradient_bc = true;
 
   // Multigrid config:
-  config.smoother_config.multigrid_config.smoother_type =
-      SmootherType::MultiplicativeSchwarz;
-  config.smoother_config.multigrid_config.verbose = true;
-  config.smoother_config.multigrid_config.min_tree_level = 2;
-  config.smoother_config.multigrid_config.pre_smoothing = 2;
-  config.smoother_config.multigrid_config.post_smoothing = 2;
-  config.smoother_config.multigrid_config.smoother_type =
-      SmootherType::MultiplicativeSchwarz;
-  config.smoother_config.multigrid_config.transfer_strategy =
-      TransferOperatorStrategy::BezierSubdivision;
-  config.smoother_config.multigrid_config.coarse_grid_strategy =
-      CoarseGridStrategy::CachedRediscretization;
+  config.smoother_config.multigrid_config.smoother_type        = SmootherType::MultiplicativeSchwarz;
+  config.smoother_config.multigrid_config.verbose              = true;
+  config.smoother_config.multigrid_config.min_tree_level       = 2;
+  config.smoother_config.multigrid_config.pre_smoothing        = 2;
+  config.smoother_config.multigrid_config.post_smoothing       = 2;
+  config.smoother_config.multigrid_config.smoother_type        = SmootherType::MultiplicativeSchwarz;
+  config.smoother_config.multigrid_config.transfer_strategy    = TransferOperatorStrategy::BezierSubdivision;
+  config.smoother_config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
@@ -507,8 +478,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   auto depth_func = create_depth_function();
 
   std::cout << "=== Adaptive CG Cubic Bezier GeoTIFF Test ===" << std::endl;
-  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
-            << ymax << "]" << std::endl;
+  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]" << std::endl;
 
   AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(depth_func);
@@ -516,19 +486,17 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   // Set land mask to skip refinement on land-only elements
   smoother.set_land_mask(create_land_mask());
 
-  auto start = std::chrono::high_resolution_clock::now();
+  auto start  = std::chrono::high_resolution_clock::now();
   auto result = smoother.solve_adaptive();
-  auto end = std::chrono::high_resolution_clock::now();
+  auto end    = std::chrono::high_resolution_clock::now();
 
-  double time_ms =
-      std::chrono::duration<double, std::milli>(end - start).count();
+  double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
   std::cout << "\nFinal result:" << std::endl;
   std::cout << "  Elements: " << result.num_elements << std::endl;
   std::cout << "  Max error: " << result.max_error << " m" << std::endl;
   std::cout << "  Mean error: " << result.mean_error << " m" << std::endl;
-  std::cout << "  Converged: " << (result.converged ? "yes" : "no")
-            << std::endl;
+  std::cout << "  Converged: " << (result.converged ? "yes" : "no") << std::endl;
   std::cout << "  Time: " << time_ms << " ms" << std::endl;
 
   EXPECT_TRUE(smoother.is_solved());
@@ -536,9 +504,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   // Compute final refinement statistics
   Real max_level = 0.0;
   for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
-    max_level = std::max(
-        max_level,
-        static_cast<Real>(smoother.mesh().element_level(i).max_level()));
+    max_level = std::max(max_level, static_cast<Real>(smoother.mesh().element_level(i).max_level()));
   }
   auto element_size_min = domain_size / std::pow(2.0, max_level);
 
@@ -548,36 +514,34 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffRefinement) {
   // Write final result
   std::string output_file = "/tmp/adaptive_cg_cubic_bezier_kattegat";
   smoother.write_vtk(output_file, 8);
-  std::cout << "Output written to        : " << output_file << ".vtu"
-            << std::endl;
+  std::cout << "Output written to        : " << output_file << ".vtu" << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }
 
-TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
-       AdaptiveGeoTiffWithBezierSubdivisionMG) {
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveGeoTiffWithBezierSubdivisionMG) {
   if (!data_files_exist()) {
     GTEST_SKIP() << "Bathymetry data not available";
   }
 
   // Kattegat test area
-  Real center_x = 4095238.0; // EPSG:3034
-  Real center_y = 3344695.0; // EPSG:3034
+  Real center_x    = 4095238.0; // EPSG:3034
+  Real center_y    = 3344695.0; // EPSG:3034
   Real domain_size = 100000.0;
 
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 1.0;
-  config.error_metric_type = ErrorMetricType::VolumeChange;
-  config.max_iterations = 4;
-  config.max_elements = 2500;
-  config.smoother_config.lambda = 10.0;
-  config.max_refinement_level = 12;
-  config.verbose = true;
-  config.ngauss_error = 6;
-  config.error_output_dir = "/tmp/adaptive_cg_cubic_errors_subdivision";
-  config.smoother_config.edge_ngauss = 4;
+  config.error_threshold                      = 1.0;
+  config.error_metric_type                    = ErrorMetricType::VolumeChange;
+  config.max_iterations                       = 4;
+  config.max_elements                         = 2500;
+  config.smoother_config.lambda               = 10.0;
+  config.max_refinement_level                 = 12;
+  config.verbose                              = true;
+  config.ngauss_error                         = 6;
+  config.error_output_dir                     = "/tmp/adaptive_cg_cubic_errors_subdivision";
+  config.smoother_config.edge_ngauss          = 4;
   config.smoother_config.use_iterative_solver = true;
-  config.smoother_config.use_multigrid = true;
+  config.smoother_config.use_multigrid        = true;
   //  config.smoother_config.multigrid_config.smoother_type =
   //      SmootherType::MultiplicativeSchwarz;
   //  config.smoother_config.multigrid_config.verbose = true;
@@ -587,29 +551,24 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
   //  config.smoother_config.multigrid_config.transfer_strategy =
   //      TransferOperatorStrategy::BezierSubdivision;
 
-  config.smoother_config.multigrid_config.verbose = true;
-  config.smoother_config.multigrid_config.min_tree_level = 0;
-  config.smoother_config.multigrid_config.pre_smoothing = 2;
-  config.smoother_config.multigrid_config.post_smoothing = 2;
-  config.smoother_config.multigrid_config.smoother_type =
-      SmootherType::MultiplicativeSchwarz;
-  config.smoother_config.multigrid_config.transfer_strategy =
-      TransferOperatorStrategy::BezierSubdivision;
-  config.smoother_config.multigrid_config.coarse_grid_strategy =
-      CoarseGridStrategy::CachedRediscretization;
+  config.smoother_config.multigrid_config.verbose              = true;
+  config.smoother_config.multigrid_config.min_tree_level       = 0;
+  config.smoother_config.multigrid_config.pre_smoothing        = 2;
+  config.smoother_config.multigrid_config.post_smoothing       = 2;
+  config.smoother_config.multigrid_config.smoother_type        = SmootherType::MultiplicativeSchwarz;
+  config.smoother_config.multigrid_config.transfer_strategy    = TransferOperatorStrategy::BezierSubdivision;
+  config.smoother_config.multigrid_config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
 
   Real xmin = center_x - domain_size / 2;
   Real xmax = center_x + domain_size / 2;
   Real ymin = center_y - domain_size / 2;
   Real ymax = center_y + domain_size / 2;
 
-  std::cout << "=== Adaptive CG Cubic Bezier with BezierSubdivision MG ==="
-            << std::endl;
-  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", "
-            << ymax << "]" << std::endl;
+  std::cout << "=== Adaptive CG Cubic Bezier with BezierSubdivision MG ===" << std::endl;
+  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]" << std::endl;
 
   auto depth_func = create_depth_function();
-  auto land_mask = create_land_mask();
+  auto land_mask  = create_land_mask();
 
   AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(depth_func);
@@ -617,31 +576,27 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
 
   auto result = smoother.solve_adaptive();
 
-  std::cout << "Final elements           : " << smoother.mesh().num_elements()
-            << std::endl;
+  std::cout << "Final elements           : " << smoother.mesh().num_elements() << std::endl;
   std::cout << "Iteration                : " << result.iteration << std::endl;
   std::cout << "Max error (final)        : " << result.max_error << std::endl;
   std::cout << "Mean error (final)       : " << result.mean_error << std::endl;
 
   // Write final result
-  std::string output_file =
-      "/tmp/adaptive_cg_cubic_bezier_kattegat_subdivision";
+  std::string output_file = "/tmp/adaptive_cg_cubic_bezier_kattegat_subdivision";
   smoother.write_vtk(output_file, 8);
-  std::cout << "Output written to        : " << output_file << ".vtu"
-            << std::endl;
+  std::cout << "Output written to        : " << output_file << ".vtu" << std::endl;
 
   EXPECT_TRUE(std::filesystem::exists(output_file + ".vtu"));
 }
 
-TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
-       DISABLED_ColoredSchwarzGeoTiffProfiling) {
+TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, DISABLED_ColoredSchwarzGeoTiffProfiling) {
   if (!data_files_exist()) {
     GTEST_SKIP() << "Bathymetry data not available";
   }
 
   // Kattegat test area - same as AdaptiveGeoTiffRefinement
-  Real center_x = 4095238.0;
-  Real center_y = 3344695.0;
+  Real center_x    = 4095238.0;
+  Real center_y    = 3344695.0;
   Real domain_size = 100000.0;
 
   Real xmin = center_x - domain_size / 2;
@@ -651,13 +606,10 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
 
   auto depth_func = create_depth_function();
 
-  std::cout << "\n=== Colored Schwarz Profiling on GeoTIFF Data ==="
-            << std::endl;
+  std::cout << "\n=== Colored Schwarz Profiling on GeoTIFF Data ===" << std::endl;
 
   // Test both multiplicative and colored Schwarz on a uniform grid first
-  std::vector<std::pair<std::string, SmootherType>> smoother_types = {
-      {"Multiplicative", SmootherType::MultiplicativeSchwarz},
-      {"Colored", SmootherType::ColoredMultiplicativeSchwarz}};
+  std::vector<std::pair<std::string, SmootherType>> smoother_types = {{"Multiplicative", SmootherType::MultiplicativeSchwarz}, {"Colored", SmootherType::ColoredMultiplicativeSchwarz}};
 
   for (const auto &[name, smoother_type] : smoother_types) {
     // Build a uniform mesh with moderate refinement
@@ -665,15 +617,15 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     mesh.build_uniform(xmin, xmax, ymin, ymax, 16, 16); // 256 elements
 
     CGCubicBezierSmootherConfig config;
-    config.lambda = 10.0;
-    config.edge_ngauss = 4;
-    config.use_iterative_solver = true;
-    config.use_multigrid = true;
-    config.tolerance = 1e-10;
+    config.lambda                          = 10.0;
+    config.edge_ngauss                     = 4;
+    config.use_iterative_solver            = true;
+    config.use_multigrid                   = true;
+    config.tolerance                       = 1e-10;
     config.multigrid_config.min_tree_level = 2; // 3 levels on 16x16 mesh
-    config.multigrid_config.pre_smoothing = 1;
+    config.multigrid_config.pre_smoothing  = 1;
     config.multigrid_config.post_smoothing = 1;
-    config.multigrid_config.smoother_type = smoother_type;
+    config.multigrid_config.smoother_type  = smoother_type;
 
     MultigridProfile mg_profile;
     CGCubicSolveProfile solve_profile;
@@ -687,23 +639,17 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
     smoother.solve();
     auto end = std::chrono::high_resolution_clock::now();
 
-    double total_ms =
-        std::chrono::duration<double, std::milli>(end - start).count();
+    double total_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
-    double smoothing_total =
-        mg_profile.vcycle_pre_smooth_ms + mg_profile.vcycle_post_smooth_ms;
+    double smoothing_total = mg_profile.vcycle_pre_smooth_ms + mg_profile.vcycle_post_smooth_ms;
 
     std::cout << "\n" << name << " Schwarz (16x16 = 256 elements):\n";
-    std::cout << "  Total solve time: " << std::fixed << std::setprecision(2)
-              << total_ms << " ms\n";
-    std::cout << "  CG iterations: " << solve_profile.outer_cg_iterations
-              << "\n";
+    std::cout << "  Total solve time: " << std::fixed << std::setprecision(2) << total_ms << " ms\n";
+    std::cout << "  CG iterations: " << solve_profile.outer_cg_iterations << "\n";
     std::cout << "  Q^-1 calls: " << solve_profile.qinv_apply_calls << "\n";
     std::cout << "  Smoothing total: " << smoothing_total << " ms\n";
-    std::cout << "    Pre-smooth: " << mg_profile.vcycle_pre_smooth_ms
-              << " ms\n";
-    std::cout << "    Post-smooth: " << mg_profile.vcycle_post_smooth_ms
-              << " ms\n";
+    std::cout << "    Pre-smooth: " << mg_profile.vcycle_pre_smooth_ms << " ms\n";
+    std::cout << "    Post-smooth: " << mg_profile.vcycle_post_smooth_ms << " ms\n";
 
     EXPECT_TRUE(smoother.is_solved());
     EXPECT_GT(solve_profile.outer_cg_iterations, 0);
@@ -713,31 +659,28 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest,
   std::cout << "\n=== Adaptive Refinement with Colored Schwarz ===\n";
 
   AdaptiveCGCubicBezierConfig adaptive_config;
-  adaptive_config.error_threshold = 1.0;
-  adaptive_config.error_metric_type = ErrorMetricType::VolumeChange;
-  adaptive_config.max_iterations = 3;
-  adaptive_config.max_elements = 1000;
-  adaptive_config.smoother_config.lambda = 10.0;
-  adaptive_config.max_refinement_level = 10;
-  adaptive_config.verbose = true;
-  adaptive_config.ngauss_error = 6;
-  adaptive_config.smoother_config.edge_ngauss = 4;
-  adaptive_config.smoother_config.use_iterative_solver = true;
-  adaptive_config.smoother_config.use_multigrid = true;
-  adaptive_config.smoother_config.multigrid_config.smoother_type =
-      SmootherType::ColoredMultiplicativeSchwarz;
+  adaptive_config.error_threshold                                = 1.0;
+  adaptive_config.error_metric_type                              = ErrorMetricType::VolumeChange;
+  adaptive_config.max_iterations                                 = 3;
+  adaptive_config.max_elements                                   = 1000;
+  adaptive_config.smoother_config.lambda                         = 10.0;
+  adaptive_config.max_refinement_level                           = 10;
+  adaptive_config.verbose                                        = true;
+  adaptive_config.ngauss_error                                   = 6;
+  adaptive_config.smoother_config.edge_ngauss                    = 4;
+  adaptive_config.smoother_config.use_iterative_solver           = true;
+  adaptive_config.smoother_config.use_multigrid                  = true;
+  adaptive_config.smoother_config.multigrid_config.smoother_type = SmootherType::ColoredMultiplicativeSchwarz;
 
-  AdaptiveCGCubicBezierSmoother adaptive_smoother(xmin, xmax, ymin, ymax, 4, 4,
-                                                  adaptive_config);
+  AdaptiveCGCubicBezierSmoother adaptive_smoother(xmin, xmax, ymin, ymax, 4, 4, adaptive_config);
   adaptive_smoother.set_bathymetry_data(depth_func);
   adaptive_smoother.set_land_mask(create_land_mask());
 
-  auto start = std::chrono::high_resolution_clock::now();
+  auto start  = std::chrono::high_resolution_clock::now();
   auto result = adaptive_smoother.solve_adaptive();
-  auto end = std::chrono::high_resolution_clock::now();
+  auto end    = std::chrono::high_resolution_clock::now();
 
-  double time_ms =
-      std::chrono::duration<double, std::milli>(end - start).count();
+  double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
   std::cout << "\nAdaptive result (Colored Schwarz):\n";
   std::cout << "  Elements: " << result.num_elements << "\n";
@@ -754,8 +697,8 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveWithC1Constraints) {
     GTEST_SKIP() << "Bathymetry data not available";
   }
 
-  Real center_x = 4095238.0;
-  Real center_y = 3344695.0;
+  Real center_x    = 4095238.0;
+  Real center_y    = 3344695.0;
   Real domain_size = 30000.0;
 
   Real xmin = center_x - domain_size / 2;
@@ -765,30 +708,27 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveWithC1Constraints) {
 
   auto depth_func = create_depth_function();
 
-  std::cout << "\n=== Adaptive CG Cubic Bezier with C¹ Constraints ==="
-            << std::endl;
+  std::cout << "\n=== Adaptive CG Cubic Bezier with C¹ Constraints ===" << std::endl;
 
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0;
-  config.max_iterations = 4;
-  config.max_elements = 200;
-  config.smoother_config.lambda = 10.0;
+  config.error_threshold             = 5.0;
+  config.max_iterations              = 4;
+  config.max_elements                = 200;
+  config.smoother_config.lambda      = 10.0;
   config.smoother_config.edge_ngauss = 4;
 
   AdaptiveCGCubicBezierSmoother smoother(xmin, xmax, ymin, ymax, 4, 4, config);
   smoother.set_bathymetry_data(std::function<Real(Real, Real)>(depth_func));
 
-  auto start = std::chrono::high_resolution_clock::now();
+  auto start  = std::chrono::high_resolution_clock::now();
   auto result = smoother.solve_adaptive();
-  auto end = std::chrono::high_resolution_clock::now();
+  auto end    = std::chrono::high_resolution_clock::now();
 
-  double time_ms =
-      std::chrono::duration<double, std::milli>(end - start).count();
+  double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
   std::cout << "Elements: " << result.num_elements << std::endl;
   std::cout << "DOFs: " << smoother.smoother().num_global_dofs() << std::endl;
-  std::cout << "Constraints: " << smoother.smoother().num_constraints()
-            << std::endl;
+  std::cout << "Constraints: " << smoother.smoother().num_constraints() << std::endl;
   std::cout << "Max error: " << result.max_error << " m" << std::endl;
   std::cout << "Time: " << time_ms << " ms" << std::endl;
 
@@ -805,10 +745,10 @@ TEST_F(AdaptiveCGCubicBezierSmootherGeoTiffTest, AdaptiveWithC1Constraints) {
 
 TEST_F(AdaptiveCGCubicBezierSmootherTest, VerboseMode) {
   AdaptiveCGCubicBezierConfig config;
-  config.error_threshold = 5.0;
-  config.max_iterations = 3;
+  config.error_threshold        = 5.0;
+  config.max_iterations         = 3;
   config.smoother_config.lambda = 10.0;
-  config.verbose = true; // Enable verbose output
+  config.verbose                = true; // Enable verbose output
 
   auto bump = [](Real x, Real y) {
     Real cx = 50.0, cy = 50.0, sigma = 15.0;
@@ -846,8 +786,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest, ThrowsIfEvaluateBeforeSolve) {
 // Multigrid Convergence Analysis: Uniform vs Adaptive Meshes
 // =============================================================================
 
-TEST_F(AdaptiveCGCubicBezierSmootherTest,
-       DISABLED_MultigridConvergenceUniformVsAdaptive) {
+TEST_F(AdaptiveCGCubicBezierSmootherTest, DISABLED_MultigridConvergenceUniformVsAdaptive) {
   // Investigate whether mixed-size elements at coarse levels affect MG
   // convergence
 
@@ -866,16 +805,15 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
 
   // Common solver config
   CGCubicBezierSmootherConfig solver_config;
-  solver_config.lambda = 10.0;
-  solver_config.edge_ngauss = 4;
-  solver_config.use_iterative_solver = true;
-  solver_config.use_multigrid = true;
-  solver_config.tolerance = 1e-10;
+  solver_config.lambda                          = 10.0;
+  solver_config.edge_ngauss                     = 4;
+  solver_config.use_iterative_solver            = true;
+  solver_config.use_multigrid                   = true;
+  solver_config.tolerance                       = 1e-10;
   solver_config.multigrid_config.min_tree_level = 0; // Full coarsening
-  solver_config.multigrid_config.pre_smoothing = 1;
+  solver_config.multigrid_config.pre_smoothing  = 1;
   solver_config.multigrid_config.post_smoothing = 1;
-  solver_config.multigrid_config.smoother_type =
-      SmootherType::ColoredMultiplicativeSchwarz;
+  solver_config.multigrid_config.smoother_type  = SmootherType::ColoredMultiplicativeSchwarz;
 
   // Store results for comparison
   struct TestResult {
@@ -909,19 +847,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
     smoother.solve();
     auto end = std::chrono::high_resolution_clock::now();
 
-    double time_ms =
-        std::chrono::duration<double, std::milli>(end - start).count();
+    double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
-    results.push_back({std::to_string(n) + "x" + std::to_string(n) + " uniform",
-                       mesh.num_elements(), smoother.num_free_dofs(),
-                       solve_profile.outer_cg_iterations,
-                       mg_profile.vcycle_calls, time_ms});
+    results.push_back({std::to_string(n) + "x" + std::to_string(n) + " uniform", mesh.num_elements(), smoother.num_free_dofs(), solve_profile.outer_cg_iterations, mg_profile.vcycle_calls, time_ms});
 
-    std::cout << std::setw(12) << results.back().name << ": " << std::setw(5)
-              << results.back().num_elements << " elems, " << std::setw(6)
-              << results.back().num_dofs << " DOFs, " << std::setw(3)
-              << results.back().cg_iterations << " CG iters, " << std::fixed
-              << std::setprecision(1) << std::setw(8) << time_ms << " ms\n";
+    std::cout << std::setw(12) << results.back().name << ": " << std::setw(5) << results.back().num_elements << " elems, " << std::setw(6) << results.back().num_dofs << " DOFs, " << std::setw(3) << results.back().cg_iterations << " CG iters, " << std::fixed << std::setprecision(1) << std::setw(8) << time_ms << " ms\n";
   }
 
   // =========================================================================
@@ -932,12 +862,11 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
   for (double threshold : {5.0, 2.0, 1.0, 0.3}) {
     AdaptiveCGCubicBezierConfig adaptive_config;
     adaptive_config.error_threshold = threshold;
-    adaptive_config.max_iterations = 10;
-    adaptive_config.max_elements = 500;
+    adaptive_config.max_iterations  = 10;
+    adaptive_config.max_elements    = 500;
     adaptive_config.smoother_config = solver_config;
 
-    AdaptiveCGCubicBezierSmoother adaptive(0.0, 100.0, 0.0, 100.0, 4, 4,
-                                           adaptive_config);
+    AdaptiveCGCubicBezierSmoother adaptive(0.0, 100.0, 0.0, 100.0, 4, 4, adaptive_config);
     adaptive.set_bathymetry_data(cone);
 
     // First pass: just get the mesh
@@ -950,7 +879,7 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
     solve_profile.multigrid_profile = &mg_profile;
 
     // Get the verbose coloring info
-    auto config_verbose = solver_config;
+    auto config_verbose                     = solver_config;
     config_verbose.multigrid_config.verbose = true;
 
     CGCubicBezierBathymetrySmoother smoother(mesh, config_verbose);
@@ -961,21 +890,14 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
     smoother.solve();
     auto end = std::chrono::high_resolution_clock::now();
 
-    double time_ms =
-        std::chrono::duration<double, std::milli>(end - start).count();
+    double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
     std::ostringstream name;
     name << "thresh=" << std::fixed << std::setprecision(1) << threshold;
 
-    results.push_back(
-        {name.str(), mesh.num_elements(), smoother.num_free_dofs(),
-         solve_profile.outer_cg_iterations, mg_profile.vcycle_calls, time_ms});
+    results.push_back({name.str(), mesh.num_elements(), smoother.num_free_dofs(), solve_profile.outer_cg_iterations, mg_profile.vcycle_calls, time_ms});
 
-    std::cout << std::setw(12) << results.back().name << ": " << std::setw(5)
-              << results.back().num_elements << " elems, " << std::setw(6)
-              << results.back().num_dofs << " DOFs, " << std::setw(3)
-              << results.back().cg_iterations << " CG iters, " << std::fixed
-              << std::setprecision(1) << std::setw(8) << time_ms << " ms\n";
+    std::cout << std::setw(12) << results.back().name << ": " << std::setw(5) << results.back().num_elements << " elems, " << std::setw(6) << results.back().num_dofs << " DOFs, " << std::setw(3) << results.back().cg_iterations << " CG iters, " << std::fixed << std::setprecision(1) << std::setw(8) << time_ms << " ms\n";
   }
 
   // =========================================================================
@@ -992,21 +914,14 @@ TEST_F(AdaptiveCGCubicBezierSmootherTest,
             << " | " << std::setw(8) << "CG Iters"
             << " | " << std::setw(12) << "Iters/1000"
             << " |\n";
-  std::cout << "|" << std::string(17, '-') << "|" << std::string(10, '-') << "|"
-            << std::string(10, '-') << "|" << std::string(10, '-') << "|"
-            << std::string(14, '-') << "|\n";
+  std::cout << "|" << std::string(17, '-') << "|" << std::string(10, '-') << "|" << std::string(10, '-') << "|" << std::string(10, '-') << "|" << std::string(14, '-') << "|\n";
 
   for (const auto &r : results) {
     double iters_per_1k = 1000.0 * r.cg_iterations / r.num_dofs;
-    std::cout << "| " << std::setw(15) << r.name << " | " << std::setw(8)
-              << r.num_elements << " | " << std::setw(8) << r.num_dofs << " | "
-              << std::setw(8) << r.cg_iterations << " | " << std::fixed
-              << std::setprecision(2) << std::setw(12) << iters_per_1k
-              << " |\n";
+    std::cout << "| " << std::setw(15) << r.name << " | " << std::setw(8) << r.num_elements << " | " << std::setw(8) << r.num_dofs << " | " << std::setw(8) << r.cg_iterations << " | " << std::fixed << std::setprecision(2) << std::setw(12) << iters_per_1k << " |\n";
   }
 
   std::cout << "\nNote: Lower 'Iters/1000' = better multigrid efficiency\n";
-  std::cout
-      << "If adaptive meshes have much higher Iters/1000, the mixed-size\n";
+  std::cout << "If adaptive meshes have much higher Iters/1000, the mixed-size\n";
   std::cout << "coarsening may be degrading multigrid convergence.\n";
 }

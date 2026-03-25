@@ -112,6 +112,7 @@ endif()
 # Source files by module
 set(CORE_SOURCES
     src/core/config.cpp
+    src/core/config_reader.cpp
     src/core/logger.cpp
     src/core/timer.cpp
 )

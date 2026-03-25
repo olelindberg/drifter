@@ -58,13 +58,23 @@ struct CGCubicIterationProfile {
   double hessian_assembly_ms = 0.0; ///< assemble_thin_plate_hessian()
   double data_fitting_ms = 0.0;     ///< assemble_data_fitting()
 
-  // Solve breakdown
+  // Solve breakdown (direct solver)
   double matrix_build_ms = 0.0;          ///< Q matrix construction
   double constraint_build_ms = 0.0;      ///< C¹ edge constraint assembly
   double kkt_assembly_ms = 0.0;          ///< KKT system build
   double sparse_lu_compute_ms = 0.0;     ///< SparseLU factorization
   double sparse_lu_solve_ms = 0.0;       ///< SparseLU back-substitution
   double constraint_projection_ms = 0.0; ///< Constraint projection solve
+
+  // Solve breakdown (iterative solver - populated when use_iterative_solver=true)
+  double inner_cg_setup_ms = 0.0;            ///< Q^{-1} setup (LU or MG)
+  int outer_cg_iterations = 0;               ///< Number of outer CG iterations
+  double outer_cg_total_ms = 0.0;            ///< Total outer CG time
+  double schur_matvec_total_ms = 0.0;        ///< Total Schur matvec time
+  double schur_precond_setup_ms = 0.0;       ///< Schur preconditioner setup
+  double schur_precond_apply_total_ms = 0.0; ///< Total Schur precond apply
+  double qinv_apply_total_ms = 0.0;          ///< Total Q^{-1} apply time
+  double solution_recovery_ms = 0.0;         ///< Final x recovery
 
   // Context
   Index num_elements = 0;
