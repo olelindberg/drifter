@@ -728,6 +728,12 @@ VecX BezierMultigridPreconditioner::apply(const VecX &b) const {
     profile_->converged_vcycle_count = cycle;
   }
 
+  // Output final iteration summary
+  VecX final_residual = b - Q * x;
+  Real relative_residual = final_residual.norm() / b_norm;
+  std::cout << "[Multigrid        ] iter=" << cycle
+            << ", relative_residual=" << relative_residual << "\n";
+
   return x;
 }
 

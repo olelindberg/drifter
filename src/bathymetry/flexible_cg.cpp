@@ -90,11 +90,9 @@ FCGResult FlexibleCG::solve(VecX& x, const VecX& b) {
         result.residual_history.push_back(precond_res_norm);
 
         if (verbose_) {
-            std::cout << "[SchurFCG] iter=" << (iter + 1)
-                      << " ||r||_2=" << unprecond_res_norm
-                      << " ||r||_{M^-1}=" << precond_res_norm
-                      << " relative=" << (precond_res_norm / result.initial_residual)
-                      << " alpha=" << alpha << "\n";
+            std::cout << "[SchurFCG         ] iter=" << (iter + 1)
+                      << ", relative_residual="
+                      << (precond_res_norm / result.initial_residual) << "\n";
         }
 
         // Check convergence: ||r||_{M^{-1}} / ||r_0||_{M^{-1}} < tol
@@ -103,6 +101,8 @@ FCGResult FlexibleCG::solve(VecX& x, const VecX& b) {
             result.final_residual = precond_res_norm;
             result.relative_residual = precond_res_norm / result.initial_residual;
             result.converged = true;
+            std::cout << "[SchurFCG         ] iter=" << result.iterations
+                      << ", relative_residual=" << result.relative_residual << "\n";
             return result;
         }
 
@@ -120,6 +120,8 @@ FCGResult FlexibleCG::solve(VecX& x, const VecX& b) {
     result.final_residual = std::sqrt(rz_old);
     result.relative_residual = result.final_residual / result.initial_residual;
     result.converged = false;
+    std::cout << "[SchurFCG         ] iter=" << result.iterations
+              << ", relative_residual=" << result.relative_residual << "\n";
 
     return result;
 }

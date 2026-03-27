@@ -1,4 +1,5 @@
 #include "bathymetry/multigrid_schur_preconditioner.hpp"
+#include <iostream>
 
 namespace drifter {
 
@@ -30,6 +31,7 @@ VecX MultigridSchurPreconditioner::apply(const VecX& r) const {
 
     // 1. Compute C^T * r (maps from constraint space to primal space)
     VecX b = Ct_ * r;
+    Real b_norm = b.norm();
 
     // 2. Iterative refinement with MG V-cycles
     VecX x = VecX::Zero(b.size());
@@ -38,6 +40,12 @@ VecX MultigridSchurPreconditioner::apply(const VecX& r) const {
         VecX correction = mg_precond_.apply(residual);
         x += correction;
     }
+
+    // Output final iteration summary
+    VecX final_residual = b - Q_ * x;
+    Real relative_residual = (b_norm > 1e-30) ? final_residual.norm() / b_norm : 0.0;
+    std::cout << "[MGSchur          ] iter=" << num_vcycles_
+              << ", relative_residual=" << relative_residual << "\n";
 
     // 3. Compute C * result (maps back to constraint space)
     return C_ * x;

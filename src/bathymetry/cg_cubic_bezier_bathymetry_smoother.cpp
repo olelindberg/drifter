@@ -583,11 +583,9 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
         }
 
         if (config_.verbose) {
-          std::cout << "[SchurPCG] iter=" << iterations
-                    << " ||r||_2=" << unprecond_res
-                    << " ||r||_{M^-1}=" << precond_res
-                    << " relative=" << (precond_res / std::sqrt(rz_init))
-                    << " alpha=" << alpha << "\n";
+          std::cout << "[SchurPCG         ] iter=" << iterations
+                    << ", relative_residual=" << (precond_res / std::sqrt(rz_init))
+                    << "\n";
         }
 
         // Convergence: ||r||_{M^{-1}} / ||r_0||_{M^{-1}} < tol
@@ -603,6 +601,10 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
           rz_old = rz_new;
         }
       }
+      // Output final iteration summary
+      Real final_relative = std::sqrt(rz_old) / std::sqrt(rz_init);
+      std::cout << "[SchurPCG         ] iter=" << iterations
+                << ", relative_residual=" << final_relative << "\n";
     }
   }
 

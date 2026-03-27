@@ -1,5 +1,6 @@
 #include "bathymetry/diagonal_approx_cg_schur_preconditioner.hpp"
 #include <cmath>
+#include <iostream>
 
 namespace drifter {
 
@@ -59,7 +60,9 @@ VecX DiagonalApproxCGSchurPreconditioner::apply(const VecX& r) const {
     VecX p = precond_r;
     Real rz = residual.dot(precond_r);
 
+    int iterations = 0;
     for (int iter = 0; iter < inner_max_iter_; ++iter) {
+        iterations = iter + 1;
         VecX Ap = M_S_ * p;
         Real pAp = p.dot(Ap);
 
@@ -91,6 +94,11 @@ VecX DiagonalApproxCGSchurPreconditioner::apply(const VecX& r) const {
         p = precond_r_new + beta * p;
         rz = rz_new;
     }
+
+    // Output final iteration summary
+    Real relative_residual = residual.norm() / r_norm;
+    std::cout << "[DiagApproxCG    ] iter=" << iterations
+              << ", relative_residual=" << relative_residual << "\n";
 
     return z;
 }
