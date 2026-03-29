@@ -3,7 +3,7 @@
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "synthetic_bathymetry.hpp"
-#include "test_integration_fixtures.hpp"
+#include "integration/test_integration_fixtures.hpp"
 #include <chrono>
 #include <cmath>
 #include <fstream>

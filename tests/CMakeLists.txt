@@ -27,7 +27,8 @@ set(UNIT_TESTS
     unit/test_thin_plate_hessian.cpp
     unit/test_bezier_multigrid.cpp
     unit/test_area_of_interest.cpp
-    unit/test_schur_preconditioner.cpp)
+    unit/test_schur_preconditioner.cpp
+    unit/test_iterative_methods.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS
@@ -44,14 +45,13 @@ set(INTEGRATION_TESTS
     integration/test_cg_linear_bezier_bathymetry_smoother.cpp
     integration/test_adaptive_cg_linear_bezier_smoother.cpp
     # Multi-source bathymetry lookup
-    integration/test_multi_source_bathymetry.cpp
-    # Solver comparison verification
-    integration/test_cg_cubic_bezier_solver_comparison.cpp
-    integration/test_adaptive_cg_cubic_bezier_solver_comparison.cpp
-    # Standalone iterative methods
-    integration/test_standalone_iterative_methods.cpp
-    # Uniform vs adaptive convergence comparison
-    integration/test_uniform_vs_adaptive_convergence.cpp)
+    integration/test_multi_source_bathymetry.cpp)
+
+# Benchmark tests (run manually, excluded from CI by default)
+set(BENCHMARK_TESTS
+    benchmarks/test_solver_scaling.cpp
+    benchmarks/test_adaptive_solver_scaling.cpp
+    benchmarks/test_convergence_comparison.cpp)
 
 # Create unit test executable
 add_executable(drifter_unit_tests ${UNIT_TESTS})
@@ -67,7 +67,16 @@ target_link_libraries(drifter_integration_tests PRIVATE drifter_lib GTest::gtest
 
 target_include_directories(drifter_integration_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Create benchmark executable (excluded from CI by default)
+add_executable(drifter_benchmarks ${BENCHMARK_TESTS})
+
+target_link_libraries(drifter_benchmarks PRIVATE drifter_lib GTest::gtest GTest::gtest_main)
+
+target_include_directories(drifter_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Register tests with CTest
 gtest_discover_tests(drifter_unit_tests PROPERTIES LABELS "unit")
 
 gtest_discover_tests(drifter_integration_tests PROPERTIES LABELS "integration")
+
+gtest_discover_tests(drifter_benchmarks PROPERTIES LABELS "benchmark")
