@@ -1,3 +1,5 @@
+perf.data*
+
 *.tif
 *.tif.aux.xml
 
