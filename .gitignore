@@ -49,8 +49,8 @@ data/output/*
 
 # Logs and debug
 *.log
-core
-core.*
+/core
+/core.*
 
 # OS files
 .DS_Store
