@@ -216,7 +216,7 @@ TEST_F(BezierMultigridTest, MultigridNoConstraintsMatchesDirect) {
 
 TEST_F(BezierMultigridTest, ConfigDefaults) {
     MultigridConfig config;
-    EXPECT_EQ(config.min_tree_level, 4);  // Coarsest level: 16x16 elements
+    EXPECT_EQ(config.min_tree_level, 0);  // Default 0; auto-computed from initial_grid
     EXPECT_EQ(config.pre_smoothing, 1);
     EXPECT_EQ(config.post_smoothing, 1);
     EXPECT_EQ(config.smoother_type, SmootherType::ColoredMultiplicativeSchwarz);

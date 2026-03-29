@@ -4,12 +4,7 @@
 #include "bathymetry/constraint_condenser.hpp"
 #include "bathymetry/block_diag_approx_cg_schur_preconditioner.hpp"
 #include "bathymetry/diagonal_approx_cg_schur_preconditioner.hpp"
-#include "bathymetry/diagonal_schur_preconditioner.hpp"
 #include "bathymetry/flexible_cg.hpp"
-#include "bathymetry/gauss_seidel_schur_preconditioner.hpp"
-#include "bathymetry/multigrid_schur_preconditioner.hpp"
-#include "bathymetry/schwarz_colored_schur_preconditioner.hpp"
-#include "bathymetry/physics_based_schur_preconditioner.hpp"
 #include "bathymetry/schur_preconditioner.hpp"
 #include "core/scoped_timer.hpp"
 #include "dg/basis_hexahedron.hpp"
@@ -339,17 +334,7 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
     OptionalScopedTimer t(solve_profile_ ? &solve_profile_->inner_cg_setup_ms
                                          : nullptr);
 
-    // Determine if we need exact Q^{-1} for Schur matvec
-    // When using MultigridVCycle preconditioner with use_exact_schur_matvec=true,
-    // schur_matvec must use exact LU to ensure consistency with the preconditioner.
-    // Otherwise, the CG iteration diverges because schur_matvec (1 V-cycle) and
-    // preconditioner (5 V-cycles with iterative refinement) approximate different
-    // Schur complements.
-    bool need_exact_schur_matvec =
-        config_.use_exact_schur_matvec &&
-        config_.schur_preconditioner == SchurPreconditionerType::MultigridVCycle;
-
-    // Setup MG preconditioner if requested (used for Schur preconditioner)
+    // Setup MG preconditioner if requested
     if (config_.use_multigrid) {
       mg_precond = std::make_unique<BezierMultigridPreconditioner>(
           config_.multigrid_config);
@@ -364,8 +349,8 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
       mg_precond->setup(sys.Q_reduced, *quadtree_, *dof_manager_);
     }
 
-    // Setup LU factorization if needed (for schur_matvec or when MG not used)
-    if (!config_.use_multigrid || need_exact_schur_matvec) {
+    // Setup LU factorization if needed (when MG not used)
+    if (!config_.use_multigrid) {
       Q_solver = std::make_unique<SparseSolver>();
       Q_solver->compute(sys.Q_reduced);
       if (Q_solver->info() != Eigen::Success) {
@@ -428,42 +413,6 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_iterative() {
         solve_profile_ ? &solve_profile_->schur_precond_setup_ms : nullptr);
 
     switch (config_.schur_preconditioner) {
-    case SchurPreconditionerType::Diagonal:
-      schur_precond =
-          std::make_unique<DiagonalSchurPreconditioner>(schur_matvec, m);
-      break;
-
-    case SchurPreconditionerType::PhysicsBased:
-      // Use sys.Q_reduced = alpha*H + lambda*BtWB (full system matrix)
-      // This is already SPD and matches the actual Schur complement matrix
-      schur_precond = std::make_unique<PhysicsBasedSchurPreconditioner>(
-          sys.Q_reduced, sys.A_edge);
-      break;
-
-    case SchurPreconditionerType::MultigridVCycle:
-      if (!mg_precond) {
-        throw std::runtime_error(
-            "CGCubicBezierBathymetrySmoother: MultigridVCycle Schur "
-            "preconditioner requires use_multigrid=true");
-      }
-      // Pass Q matrix for proper iterative refinement with V-cycles
-      schur_precond = std::make_unique<MultigridSchurPreconditioner>(
-          *mg_precond, sys.Q_reduced, sys.A_edge);
-      break;
-
-    case SchurPreconditionerType::GaussSeidel:
-      schur_precond =
-          std::make_unique<GaussSeidelSchurPreconditioner>(schur_matvec, m);
-      break;
-
-    case SchurPreconditionerType::SchwarzColored:
-      schur_precond = std::make_unique<SchwarzColoredSchurPreconditioner>(
-          schur_matvec, m, dof_manager_->edge_derivative_constraints(),
-          dof_manager_->boundary_curvature_constraints(),
-          dof_manager_->boundary_gradient_constraints(),
-          config_.schwarz_schur_iterations);
-      break;
-
     case SchurPreconditionerType::DiagonalApproxCG:
       schur_precond = std::make_unique<DiagonalApproxCGSchurPreconditioner>(
           sys.Q_reduced, sys.A_edge, config_.inner_tolerance,

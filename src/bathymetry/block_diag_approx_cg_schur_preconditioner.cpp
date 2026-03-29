@@ -130,14 +130,14 @@ VecX BlockDiagApproxCGSchurPreconditioner::apply(const VecX &r) const {
     return z;
   }
 
-    // Adaptive inner tolerance: as outer solver converges, inner solve can be less precise
+    // Adaptive inner tolerance: allow looser tolerance early, but ensure accuracy late
     // On first call, record initial outer residual norm
   if (initial_outer_norm_ < 0.0) {
     initial_outer_norm_ = r_norm;
   }
-    // Scale tolerance: tighter early, looser as outer converges
-    // Formula: adaptive_tol = max(inner_tol, 0.1 * sqrt(r_norm / initial_norm))
-  Real adaptive_tol = std::max(inner_tol_, 0.1 * std::sqrt(r_norm / initial_outer_norm_));
+    // Scale tolerance: looser early (up to 100x inner_tol), strict late (inner_tol)
+    // This ensures convergence isn't stalled by poor preconditioner quality
+  Real adaptive_tol = inner_tol_ * std::max(1.0, 100.0 * std::sqrt(r_norm / initial_outer_norm_));
 
   VecX residual  = r; // r - M_S * z, but z=0 initially
   VecX precond_r = diag_M_S_inv_.cwiseProduct(residual);

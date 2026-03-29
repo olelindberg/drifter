@@ -96,10 +96,11 @@ struct MultigridProfile {
 
 /// @brief Configuration for geometric multigrid preconditioner
 struct MultigridConfig {
-  /// Minimum tree level for coarsest multigrid level (0 = 1x1, 1 = 2x2, 2 =
-  /// 4x4, 3 = 8x8, 4 = 16x16 elements). Number of V-cycle levels is computed
-  /// automatically as max_tree_depth - min_tree_level + 1.
-  int min_tree_level = 3;
+  /// Minimum tree level for coarsest multigrid level.
+  /// Auto-computed from initial grid size: log2(max(nx, ny)).
+  /// 0 = 1x1, 1 = 2x2, 2 = 4x4, 3 = 8x8, 4 = 16x16 elements.
+  /// Number of V-cycle levels is computed as max_tree_depth - min_tree_level + 1.
+  int min_tree_level = 0;
 
   /// Pre-smoothing iterations
   int pre_smoothing = 1;

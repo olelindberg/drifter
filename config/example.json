@@ -23,13 +23,13 @@
     "domain_size": 100000.0
   },
   "initial_grid": {
-    "nx": 4,
-    "ny": 4
+    "nx": 8,
+    "ny": 8
   },
   "adaptive": {
     "error_threshold": 1.0,
     "error_metric_type": "VolumeChange",
-    "max_iterations": 4,
+    "max_iterations": 12,
     "max_elements": 10000,
     "max_refinement_level": 12,
     "verbose": true,
@@ -39,6 +39,7 @@
   "smoother": {
     "lambda": 10.0,
     "edge_ngauss": 4,
+    "tolerance": 1e-6,
     "use_iterative_solver": true,
     "use_multigrid": true,
     "schur_preconditioner": "BlockDiagApproxCG",
@@ -46,9 +47,10 @@
     "multigrid": {
       "smoother_type": "MultiplicativeSchwarz",
       "verbose": true,
-      "min_tree_level": 2,
       "pre_smoothing": 2,
       "post_smoothing": 2,
+      "max_vcycles": 10,
+      "vcycle_tolerance": 1e-3,
       "transfer_strategy": "BezierSubdivision",
       "coarse_grid_strategy": "CachedRediscretization"
     }
