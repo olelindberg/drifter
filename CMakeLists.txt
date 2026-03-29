@@ -8,7 +8,6 @@ project(drifter
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 # Set RPATH to find libraries in custom locations
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_BUILD_RPATH "/home/ole/.local/lib")
@@ -22,6 +21,9 @@ option(DRIFTER_USE_VTK "Enable VTK output" ON)
 option(DRIFTER_BUILD_TESTS "Build unit tests" ON)
 option(DRIFTER_BUILD_DOCS "Build documentation" OFF)
 option(DRIFTER_USE_METIS "Enable METIS ordering for sparse solvers" ON)
+
+set(DRIFTER_USE_OPENMP OFF)
+
 
 # Find required packages
 find_package(Eigen3 3.4 REQUIRED)
