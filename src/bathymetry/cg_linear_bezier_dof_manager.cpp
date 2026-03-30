@@ -44,6 +44,18 @@ CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
     assign_vertex_dofs();
     identify_boundary_dofs_impl([this](int edge) { return basis_.edge_dofs(edge); });
     build_hanging_node_constraints();
+
+    // Reorder DOFs by Morton Z-curve for better spatial locality
+    auto perm = reorder_dofs_by_morton();
+    if (!perm.empty()) {
+        for (auto &c : constraints_) {
+            c.slave_dof = perm[c.slave_dof];
+            for (auto &m : c.master_dofs) {
+                m = perm[m];
+            }
+        }
+    }
+
     build_dof_mappings();
 }
 

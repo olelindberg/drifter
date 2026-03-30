@@ -9,6 +9,8 @@
 
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
+#include "mesh/morton.hpp"
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <set>
@@ -137,6 +139,9 @@ protected:
     /// Position to DOF map for CG DOF sharing
     std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;
 
+    /// Physical position of each global DOF (populated during assignment)
+    std::vector<Vec2> dof_positions_;
+
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes
     // =========================================================================
@@ -176,6 +181,18 @@ protected:
     /// @param num_elements Number of elements
     /// @param ndof Number of DOFs per element
     void initialize_elem_to_global(Index num_elements, int ndof);
+
+    /// @brief Store position for a DOF index
+    /// @param dof Global DOF index
+    /// @param pos Physical position
+    void register_dof_position(Index dof, const Vec2 &pos);
+
+    /// @brief Reorder global DOFs by Morton Z-curve of their physical positions
+    /// @return Permutation vector: perm[old_index] = new_index
+    /// Call after all DOFs are assigned but before build_dof_mappings().
+    /// Derived classes must apply the returned permutation to their own
+    /// constraint data structures (hanging node constraints etc.).
+    std::vector<Index> reorder_dofs_by_morton();
 };
 
 } // namespace drifter

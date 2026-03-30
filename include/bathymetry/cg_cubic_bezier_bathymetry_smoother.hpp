@@ -250,6 +250,32 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
   /// @return Reference to the CubicBezierBasis2D
   const BezierBasis2DBase &get_basis() const { return *basis_; }
 
+  // =========================================================================
+  // Matrix accessors (for diagnostics / visualization)
+  // =========================================================================
+
+  /// @brief Get the thin plate hessian matrix H
+  const SpMat &H_global() const { return H_global_; }
+
+  /// @brief Get the data fitting matrix B^T W B
+  const SpMat &BtWB_global() const { return BtWB_global_; }
+
+  /// @brief Get the combined system matrix Q = alpha*H + lambda*(BtWB + eps*I)
+  SpMat Q_global() const { return assemble_Q(); }
+
+  /// @brief Condensed system after hanging node elimination
+  struct CondensedSystem {
+    SpMat Q_reduced; ///< Condensed stiffness matrix (num_free × num_free)
+    VecX b_reduced;  ///< Condensed RHS vector (num_free)
+    SpMat A_edge;    ///< Edge constraints on free DOFs (num_edge × num_free)
+    Index num_dofs;  ///< Total global DOFs
+    Index num_free;  ///< Free DOFs after hanging node elimination
+    Index num_edge;  ///< Number of edge derivative constraints
+  };
+
+  /// @brief Build condensed system exposing Q_reduced and A_edge on free DOFs
+  CondensedSystem condensed_system() { return build_condensed_system(); }
+
   protected:
   // =========================================================================
   // CGBezierSmootherBase virtual method implementations
@@ -287,16 +313,6 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
   // =========================================================================
   // Shared helpers for constrained solve
   // =========================================================================
-
-  /// @brief Condensed system after hanging node elimination
-  struct CondensedSystem {
-    SpMat Q_reduced; ///< Condensed stiffness matrix (num_free × num_free)
-    VecX b_reduced;  ///< Condensed RHS vector (num_free)
-    SpMat A_edge;    ///< Edge constraints on free DOFs (num_edge × num_free)
-    Index num_dofs;  ///< Total global DOFs
-    Index num_free;  ///< Free DOFs after hanging node elimination
-    Index num_edge;  ///< Number of edge derivative constraints
-  };
 
   /// @brief Build condensed system by eliminating hanging node constraints
   CondensedSystem build_condensed_system();

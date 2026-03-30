@@ -53,6 +53,10 @@ set(BENCHMARK_TESTS
     benchmarks/test_adaptive_solver_scaling.cpp
     benchmarks/test_convergence_comparison.cpp)
 
+# Tool tests (matrix visualization, developer diagnostics)
+set(TOOL_TESTS
+    tools/test_matrix_sparsity.cpp)
+
 # Create unit test executable
 add_executable(drifter_unit_tests ${UNIT_TESTS})
 
@@ -80,3 +84,12 @@ gtest_discover_tests(drifter_unit_tests PROPERTIES LABELS "unit")
 gtest_discover_tests(drifter_integration_tests PROPERTIES LABELS "integration")
 
 gtest_discover_tests(drifter_benchmarks PROPERTIES LABELS "benchmark")
+
+# Create tool test executable
+add_executable(drifter_tools ${TOOL_TESTS})
+
+target_link_libraries(drifter_tools PRIVATE drifter_lib GTest::gtest GTest::gtest_main)
+
+target_include_directories(drifter_tools PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+gtest_discover_tests(drifter_tools PROPERTIES LABELS "tool")

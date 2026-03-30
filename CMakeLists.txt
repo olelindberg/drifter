@@ -222,6 +222,7 @@ set(SOLVER_SOURCES
 
 set(IO_SOURCES
     src/io/bathymetry_vtk_writer.cpp
+    src/io/matrix_market_writer.cpp
     src/io/netcdf_io.cpp
     src/io/vtk_io.cpp
     src/io/vtk_writer.cpp
