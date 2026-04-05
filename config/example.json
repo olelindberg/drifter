@@ -29,7 +29,7 @@
   "adaptive": {
     "error_threshold": 1.0,
     "error_metric_type": "VolumeChange",
-    "max_iterations": 12,
+    "max_iterations": 15,
     "max_elements": 10000,
     "max_refinement_level": 12,
     "verbose": true,

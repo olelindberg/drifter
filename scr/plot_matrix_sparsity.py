@@ -46,7 +46,7 @@ def load_dof_map(path):
 
 def build_element_colormap(num_elems):
     """Build a list of distinct colors for elements."""
-    base_cmap = plt.colormaps.get_cmap("tab20").resampled(max(num_elems, 1))
+    base_cmap = plt.colormaps["tab20"]._resample(max(num_elems, 1))
     return [base_cmap(i) for i in range(num_elems)]
 
 
@@ -176,13 +176,22 @@ def main():
 
     output_dir = args.output or args.input_dir
 
+    def sort_key(d):
+        """Sort by mesh size: NxN dirs first, then center_graded_LN dirs."""
+        if "x" in d.name:
+            return (0, int(d.name.split("x")[0]))
+        elif d.name.startswith("center_graded_L"):
+            return (1, int(d.name.split("L")[1]))
+        return (2, 0)
+
     subdirs = sorted(
-        [d for d in args.input_dir.iterdir() if d.is_dir() and "x" in d.name],
-        key=lambda d: int(d.name.split("x")[0]),
+        [d for d in args.input_dir.iterdir()
+         if d.is_dir() and ("x" in d.name or d.name.startswith("center_graded_"))],
+        key=sort_key,
     )
 
     if not subdirs:
-        print(f"No NxN subdirectories found in {args.input_dir}")
+        print(f"No mesh subdirectories found in {args.input_dir}")
         return
 
     print(f"Generating {len(subdirs)} plots:")
