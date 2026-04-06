@@ -8,7 +8,8 @@ namespace drifter {
 
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
+CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh,
+                                                   bool use_hierarchical_ordering)
     : CGBezierDofManagerBase(mesh) {
 
     Index num_elements = mesh_.num_elements();
@@ -27,8 +28,22 @@ CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
     identify_boundary_dofs_impl([this](int edge) { return basis_.edge_dofs(edge); });
     build_hanging_node_constraints();
 
-    // Reorder DOFs by Morton Z-curve for better spatial locality
-    auto perm = reorder_dofs_by_morton();
+    // Reorder DOFs for better spatial locality
+    std::vector<Index> perm;
+    if (use_hierarchical_ordering) {
+        // Hierarchical ordering: (level, is_constrained, type, hilbert_key)
+        // Better for iterative solvers with multigrid
+        perm = reorder_dofs_hierarchical([this](int local_dof) -> DOFType {
+            if (is_corner_dof(local_dof)) return DOFType::Vertex;
+            if (is_edge_dof(local_dof)) return DOFType::Edge;
+            return DOFType::Interior;
+        });
+    } else {
+        // Morton Z-curve ordering (default)
+        perm = reorder_dofs_by_morton();
+    }
+
+    // Apply permutation to constraints
     if (!perm.empty()) {
         for (auto &c : constraints_) {
             c.slave_dof = perm[c.slave_dof];

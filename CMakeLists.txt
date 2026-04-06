@@ -174,6 +174,8 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/diagonal_approx_cg_schur_preconditioner.cpp
     src/bathymetry/block_diag_approx_cg_schur_preconditioner.cpp
     src/bathymetry/flexible_cg.cpp
+    # Static condensation for hp-multiresolution ordering
+    src/bathymetry/static_condensation.cpp
 )
 
 set(DG_SOURCES

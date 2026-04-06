@@ -58,7 +58,8 @@ void CGCubicBezierBathymetrySmoother::init_components() {
   basis_ = std::make_unique<CubicBezierBasis2D>();
   thin_plate_hessian_ =
       std::make_unique<CubicThinPlateHessian>(config_.ngauss_energy);
-  dof_manager_ = std::make_unique<CGCubicBezierDofManager>(*quadtree_);
+  dof_manager_ = std::make_unique<CGCubicBezierDofManager>(
+      *quadtree_, config_.use_hierarchical_ordering);
   dof_manager_->build_edge_derivative_constraints(config_.edge_ngauss);
   if (config_.enable_natural_bc) {
     dof_manager_->build_boundary_curvature_constraints(config_.edge_ngauss);
@@ -91,6 +92,43 @@ void CGCubicBezierBathymetrySmoother::set_bathymetry_data_impl(
   {
     OptionalScopedTimer t(profile_ ? &profile_->data_fitting_ms : nullptr);
     assemble_data_fitting_global(bathy_func);
+  }
+
+  // Track element RHS vectors when static condensation is enabled
+  if (config_.use_static_condensation) {
+    Index num_elements = quadtree_->num_elements();
+    int ndof = CubicBezierBasis2D::NDOF;
+
+    element_rhs_.resize(static_cast<size_t>(num_elements));
+
+    std::vector<Real> gauss_pts, gauss_wts;
+    gauss_legendre_01(config_.ngauss_data, gauss_pts, gauss_wts);
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+      const auto &bounds = quadtree_->element_bounds(elem);
+      Real dx = bounds.xmax - bounds.xmin;
+      Real dy = bounds.ymax - bounds.ymin;
+      Real jacobian = dx * dy;
+
+      element_rhs_[static_cast<size_t>(elem)] = VecX::Zero(ndof);
+
+      for (int qi = 0; qi < static_cast<int>(gauss_pts.size()); ++qi) {
+        Real u = gauss_pts[qi];
+        for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
+          Real v = gauss_pts[qj];
+
+          Real x = bounds.xmin + u * dx;
+          Real y = bounds.ymin + v * dy;
+          Real relaxation = compute_relaxation_factor(x, y);
+          Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian * relaxation;
+
+          Real d = bathy_func(x, y);
+          VecX B = basis_->evaluate(u, v);
+
+          element_rhs_[static_cast<size_t>(elem)] += config_.lambda * weight * B * d;
+        }
+      }
+    }
   }
 }
 
@@ -150,11 +188,26 @@ CGCubicBezierBathymetrySmoother::build_condensed_system() {
 
   SpMat Q;
   VecX b;
+
+  // Static condensation is only fully supported for single-element meshes.
+  // For multi-element meshes, the C¹ edge constraints involve interior DOFs
+  // in a way that makes constraint transformation complex. Fall back to
+  // standard assembly for multi-element cases.
+  bool use_condensed = config_.use_static_condensation &&
+                       quadtree_->num_elements() == 1;
+
   {
     OptionalScopedTimer t(solve_profile_ ? &solve_profile_->matrix_build_ms
                                          : nullptr);
-    Q = assemble_Q();
-    b = assemble_b();
+    if (use_condensed) {
+      // Use condensed assembly that eliminates interior DOFs at element level
+      Q = assemble_Q_condensed();
+      b = assemble_b_condensed();
+    } else {
+      // Standard assembly
+      Q = assemble_Q();
+      b = assemble_b();
+    }
   }
 
   // Define expand_dof to map global DOF to (free_index, weight) pairs
@@ -197,6 +250,24 @@ CGCubicBezierBathymetrySmoother::build_condensed_system() {
     SpMat A_boundary = assemble_A_boundary_free(expand_dof);
     SpMat A_gradient = assemble_A_gradient_free(expand_dof);
 
+    // Initialize constraint RHS vectors (typically zeros for derivative matching)
+    VecX b_edge = VecX::Zero(A_edge.rows());
+    VecX b_boundary = VecX::Zero(A_boundary.rows());
+    VecX b_gradient = VecX::Zero(A_gradient.rows());
+
+    // Note: Static condensation is only supported for single-element meshes.
+    // Multi-element meshes with C¹ edge constraints require a more complex
+    // constraint transformation that correctly handles the coupling between
+    // interior and skeleton DOFs across elements. For now, we skip constraint
+    // transformation which effectively disables static condensation benefits
+    // for multi-element cases (the KKT solve will determine interior DOFs
+    // through constraints rather than the recovery formula).
+    //
+    // TODO: Implement proper multi-element static condensation by:
+    // 1. Eliminating interior DOFs entirely from the global system
+    // 2. Building edge constraints only on skeleton DOFs from the start
+    // 3. Using element-local recovery after solve
+
     // Stack edge, boundary curvature, and boundary gradient constraints
     // vertically
     Index num_edge = A_edge.rows();
@@ -234,8 +305,15 @@ CGCubicBezierBathymetrySmoother::build_condensed_system() {
 
       sys.A_edge.resize(total_constraints, sys.num_free);
       sys.A_edge.setFromTriplets(triplets.begin(), triplets.end());
+
+      // Stack constraint RHS vectors
+      sys.b_constraint.resize(total_constraints);
+      sys.b_constraint.head(num_edge) = b_edge;
+      sys.b_constraint.segment(num_edge, num_boundary) = b_boundary;
+      sys.b_constraint.tail(num_gradient) = b_gradient;
     } else {
       sys.A_edge.resize(0, sys.num_free);
+      sys.b_constraint.resize(0);
     }
   }
 
@@ -252,6 +330,13 @@ void CGCubicBezierBathymetrySmoother::recover_solution_from_free(
     solution_(dof_manager_->free_to_global(f)) = x_free(f);
   }
   back_substitute_slaves(solution_, constraints);
+
+  // Recover interior DOFs from skeleton solution when static condensation is used
+  // (only for single-element case where condensation was actually applied)
+  if (config_.use_static_condensation && quadtree_->num_elements() == 1 &&
+      !element_condensation_.empty()) {
+    recover_interior_dofs(solution_);
+  }
 }
 
 // =============================================================================
@@ -269,7 +354,7 @@ void CGCubicBezierBathymetrySmoother::solve_with_constraints_direct() {
   {
     OptionalScopedTimer t(solve_profile_ ? &solve_profile_->kkt_assembly_ms
                                          : nullptr);
-    std::tie(KKT, rhs) = assemble_kkt(sys.Q_reduced, sys.A_edge, sys.b_reduced);
+    std::tie(KKT, rhs) = assemble_kkt(sys.Q_reduced, sys.A_edge, sys.b_reduced, sys.b_constraint);
   }
 
   SparseSolver solver;
@@ -921,6 +1006,298 @@ Real CGCubicBezierBathymetrySmoother::constraint_violation() const {
   SpMat A = assemble_A();
   VecX violation = A * solution_;
   return violation.norm();
+}
+
+// =============================================================================
+// Static condensation assembly
+// =============================================================================
+
+SpMat CGCubicBezierBathymetrySmoother::assemble_Q_condensed() {
+  Index num_dofs = dof_manager_->num_global_dofs();
+  Index num_elements = quadtree_->num_elements();
+  int ndof = CubicBezierBasis2D::NDOF; // 16
+
+  // Initialize per-element condensation managers
+  element_condensation_.resize(static_cast<size_t>(num_elements));
+
+  std::vector<Eigen::Triplet<Real>> triplets;
+  triplets.reserve(num_elements * StaticCondensationManager::NUM_SKELETON *
+                   StaticCondensationManager::NUM_SKELETON);
+
+  // Get Gauss quadrature for data fitting
+  std::vector<Real> gauss_pts, gauss_wts;
+  gauss_legendre_01(config_.ngauss_data, gauss_pts, gauss_wts);
+
+  for (Index elem = 0; elem < num_elements; ++elem) {
+    const auto &bounds = quadtree_->element_bounds(elem);
+    Vec2 size = quadtree_->element_size(elem);
+    Real dx = size(0);
+    Real dy = size(1);
+    Real jacobian = dx * dy;
+
+    // Compute full 16×16 element matrix: Q_elem = alpha*H + lambda*(B^T W B + eps*I)
+    MatX H_elem = thin_plate_hessian_->scaled_hessian(dx, dy);
+    MatX B_elem = MatX::Zero(ndof, ndof);
+
+    // Accumulate data fitting matrix
+    for (int qi = 0; qi < static_cast<int>(gauss_pts.size()); ++qi) {
+      Real u = gauss_pts[qi];
+      for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
+        Real v = gauss_pts[qj];
+
+        Real x = bounds.xmin + u * dx;
+        Real y = bounds.ymin + v * dy;
+        Real relaxation = compute_relaxation_factor(x, y);
+        Real weight = gauss_wts[qi] * gauss_wts[qj] * jacobian * relaxation;
+
+        VecX B = basis_->evaluate(u, v);
+        B_elem += weight * B * B.transpose();
+      }
+    }
+
+    // Combine: Q_elem = alpha*H + lambda*(B + eps*I)
+    MatX Q_elem = alpha_ * H_elem + config_.lambda * B_elem;
+    for (int i = 0; i < ndof; ++i) {
+      Q_elem(i, i) += config_.lambda * config_.ridge_epsilon;
+    }
+
+    // Apply static condensation: 16×16 → 12×12 Schur complement
+    MatX S_elem = element_condensation_[static_cast<size_t>(elem)].condense(Q_elem);
+
+    // Map skeleton local DOFs to global DOFs
+    const auto &global_dofs = dof_manager_->element_dofs(elem);
+
+    // Assemble skeleton contributions (12×12)
+    for (int si = 0; si < StaticCondensationManager::NUM_SKELETON; ++si) {
+      int local_i = StaticCondensationManager::SKELETON_INDICES[si];
+      Index I = global_dofs[local_i];
+
+      for (int sj = 0; sj < StaticCondensationManager::NUM_SKELETON; ++sj) {
+        int local_j = StaticCondensationManager::SKELETON_INDICES[sj];
+        Index J = global_dofs[local_j];
+
+        if (std::abs(S_elem(si, sj)) > 1e-16) {
+          triplets.emplace_back(I, J, S_elem(si, sj));
+        }
+      }
+    }
+
+    // Set interior DOFs to identity (placeholder - will be recovered later)
+    for (int ii = 0; ii < StaticCondensationManager::NUM_INTERIOR; ++ii) {
+      int local_i = StaticCondensationManager::INTERIOR_INDICES[ii];
+      Index I = global_dofs[local_i];
+      triplets.emplace_back(I, I, 1.0);
+    }
+  }
+
+  SpMat Q(num_dofs, num_dofs);
+  Q.setFromTriplets(triplets.begin(), triplets.end());
+  return Q;
+}
+
+VecX CGCubicBezierBathymetrySmoother::assemble_b_condensed() {
+  Index num_dofs = dof_manager_->num_global_dofs();
+  Index num_elements = quadtree_->num_elements();
+
+  VecX b = VecX::Zero(num_dofs);
+
+  // Ensure condensation managers and element RHS vectors exist
+  if (element_condensation_.empty()) {
+    throw std::runtime_error(
+        "CGCubicBezierBathymetrySmoother: must call assemble_Q_condensed() "
+        "before assemble_b_condensed()");
+  }
+
+  if (element_rhs_.empty()) {
+    throw std::runtime_error(
+        "CGCubicBezierBathymetrySmoother: element_rhs_ not initialized. "
+        "Ensure use_static_condensation=true during set_bathymetry_data()");
+  }
+
+  for (Index elem = 0; elem < num_elements; ++elem) {
+    const auto &global_dofs = dof_manager_->element_dofs(elem);
+
+    // Get pre-computed element RHS: b_elem = lambda * B^T W d
+    const VecX &b_elem = element_rhs_[static_cast<size_t>(elem)];
+
+    // Extract skeleton and interior parts
+    VecX b_skeleton = StaticCondensationManager::extract_skeleton(b_elem);
+    VecX b_interior = StaticCondensationManager::extract_interior(b_elem);
+
+    // Condense: b_S_condensed = b_S - K_SI * K_II^{-1} * b_I
+    // Get the recovery operator: K_II^{-1} * K_IS (4×12)
+    // We need K_SI * K_II^{-1} * b_I = (K_II^{-1} * K_IS)^T * b_I
+    const auto &recovery = element_condensation_[static_cast<size_t>(elem)].recovery_operator();
+    // recovery is (4×12), recovery^T is (12×4)
+    VecX rhs_contrib = recovery.transpose() * b_interior;  // 12×1
+
+    // Condensed skeleton RHS
+    VecX b_condensed = b_skeleton - rhs_contrib;
+
+    // Assemble into global vector (skeleton DOFs only)
+    for (int si = 0; si < StaticCondensationManager::NUM_SKELETON; ++si) {
+      int local_i = StaticCondensationManager::SKELETON_INDICES[si];
+      Index I = global_dofs[local_i];
+      b(I) += b_condensed(si);
+    }
+    // Interior DOFs remain 0 (placeholder)
+  }
+
+  return b;
+}
+
+void CGCubicBezierBathymetrySmoother::recover_interior_dofs(VecX &x_skeleton) {
+  Index num_elements = quadtree_->num_elements();
+
+  if (element_condensation_.empty()) {
+    // No static condensation was used
+    return;
+  }
+
+  for (Index elem = 0; elem < num_elements; ++elem) {
+    const auto &global_dofs = dof_manager_->element_dofs(elem);
+    auto &condenser = element_condensation_[static_cast<size_t>(elem)];
+
+    if (!condenser.is_valid()) {
+      continue;
+    }
+
+    // Extract skeleton DOF values from global solution
+    VecX x_skel_local(StaticCondensationManager::NUM_SKELETON);
+    for (int si = 0; si < StaticCondensationManager::NUM_SKELETON; ++si) {
+      int local_i = StaticCondensationManager::SKELETON_INDICES[si];
+      Index I = global_dofs[local_i];
+      x_skel_local(si) = x_skeleton(I);
+    }
+
+    // Get interior RHS (f_I) from stored element RHS
+    VecX f_interior;
+    if (!element_rhs_.empty()) {
+      const VecX &b_elem = element_rhs_[static_cast<size_t>(elem)];
+      f_interior = StaticCondensationManager::extract_interior(b_elem);
+    } else {
+      f_interior = VecX::Zero(StaticCondensationManager::NUM_INTERIOR);
+    }
+
+    // Recover interior DOFs: x_I = K_II^{-1} * (f_I - K_IS * x_S)
+    VecX x_interior = condenser.recover_interior(x_skel_local, f_interior);
+
+    // Write back to global solution
+    for (int ii = 0; ii < StaticCondensationManager::NUM_INTERIOR; ++ii) {
+      int local_i = StaticCondensationManager::INTERIOR_INDICES[ii];
+      Index I = global_dofs[local_i];
+      x_skeleton(I) = x_interior(ii);
+    }
+  }
+}
+
+std::pair<SpMat, VecX> CGCubicBezierBathymetrySmoother::transform_edge_constraints_for_condensation(
+    const SpMat &A_edge,
+    const VecX &b_edge,
+    const std::function<std::vector<std::pair<Index, Real>>(Index)> &expand_dof) const {
+
+  if (element_condensation_.empty() || A_edge.rows() == 0) {
+    return {A_edge, b_edge};
+  }
+
+  Index num_free = dof_manager_->num_free_dofs();
+  Index num_elements = quadtree_->num_elements();
+  Index num_rows = A_edge.rows();
+
+  // Build reverse mapping: global DOF -> (element, local_interior_index)
+  // Only for interior DOFs
+  std::unordered_map<Index, std::pair<Index, int>> interior_dof_to_element;
+  for (Index elem = 0; elem < num_elements; ++elem) {
+    const auto &global_dofs = dof_manager_->element_dofs(elem);
+    for (int ii = 0; ii < StaticCondensationManager::NUM_INTERIOR; ++ii) {
+      int local_i = StaticCondensationManager::INTERIOR_INDICES[ii];
+      Index I = global_dofs[local_i];
+      interior_dof_to_element[I] = {elem, ii};
+    }
+  }
+
+  // First, identify which free DOF indices are interior DOFs
+  std::unordered_map<Index, std::pair<Index, int>> free_interior_map; // free_idx -> (elem, interior_local_idx)
+  for (Index g = 0; g < dof_manager_->num_global_dofs(); ++g) {
+    Index f = dof_manager_->global_to_free(g);
+    if (f >= 0) {
+      auto it = interior_dof_to_element.find(g);
+      if (it != interior_dof_to_element.end()) {
+        free_interior_map[f] = it->second;
+      }
+    }
+  }
+
+  // Build transformed constraint matrix and RHS
+  std::vector<Eigen::Triplet<Real>> triplets;
+  triplets.reserve(A_edge.nonZeros() * 2);
+
+  // Initialize transformed RHS from original
+  VecX b_transformed = b_edge;
+  if (b_transformed.size() != num_rows) {
+    b_transformed = VecX::Zero(num_rows);
+  }
+
+  // Build row-based structure from column-major A_edge
+  // Each row maps column indices to values
+  std::vector<std::unordered_map<Index, Real>> rows_data(num_rows);
+  for (int k = 0; k < A_edge.outerSize(); ++k) {
+    for (SpMat::InnerIterator it(A_edge, k); it; ++it) {
+      rows_data[it.row()][it.col()] += it.value();
+    }
+  }
+
+  // Process each row of A_edge
+  for (int row = 0; row < num_rows; ++row) {
+    // Get non-zero entries in this row
+    std::unordered_map<Index, Real> &row_entries = rows_data[row];
+
+    // Transform: for each interior DOF column, subtract its contribution to skeleton DOFs
+    // and add RHS contribution from f_I
+    std::unordered_map<Index, Real> transformed_entries = row_entries;
+
+    for (const auto &[free_col, coeff] : row_entries) {
+      auto int_it = free_interior_map.find(free_col);
+      if (int_it == free_interior_map.end()) {
+        continue; // Not an interior DOF
+      }
+
+      Index elem = int_it->second.first;
+      int interior_idx = int_it->second.second;
+
+      // Get recovery operator for this element: K_II^{-1} * K_IS (4×12)
+      const auto &recovery = element_condensation_[static_cast<size_t>(elem)].recovery_operator();
+
+      // For each skeleton DOF of this element, add -coeff * recovery(interior_idx, skel_idx)
+      const auto &global_dofs = dof_manager_->element_dofs(elem);
+      for (int si = 0; si < StaticCondensationManager::NUM_SKELETON; ++si) {
+        int local_skel = StaticCondensationManager::SKELETON_INDICES[si];
+        Index skel_global = global_dofs[local_skel];
+        Index skel_free = dof_manager_->global_to_free(skel_global);
+
+        if (skel_free >= 0) {
+          Real transform_coeff = -coeff * recovery(interior_idx, si);
+          if (std::abs(transform_coeff) > 1e-16) {
+            transformed_entries[skel_free] += transform_coeff;
+          }
+        }
+      }
+
+      // Zero out the interior DOF column (it's been absorbed into skeleton DOFs)
+      transformed_entries[free_col] = 0.0;
+    }
+
+    // Write transformed row to triplets
+    for (const auto &[col, val] : transformed_entries) {
+      if (std::abs(val) > 1e-16) {
+        triplets.emplace_back(row, col, val);
+      }
+    }
+  }
+
+  SpMat A_transformed(num_rows, num_free);
+  A_transformed.setFromTriplets(triplets.begin(), triplets.end());
+  return {A_transformed, b_transformed};
 }
 
 } // namespace drifter

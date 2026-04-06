@@ -28,7 +28,8 @@ set(UNIT_TESTS
     unit/test_bezier_multigrid.cpp
     unit/test_area_of_interest.cpp
     unit/test_schur_preconditioner.cpp
-    unit/test_iterative_methods.cpp)
+    unit/test_iterative_methods.cpp
+    unit/test_hierarchical_ordering.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS
@@ -51,7 +52,8 @@ set(INTEGRATION_TESTS
 set(BENCHMARK_TESTS
     benchmarks/test_solver_scaling.cpp
     benchmarks/test_adaptive_solver_scaling.cpp
-    benchmarks/test_convergence_comparison.cpp)
+    benchmarks/test_convergence_comparison.cpp
+    benchmarks/test_hierarchical_ordering_performance.cpp)
 
 # Tool tests (matrix visualization, developer diagnostics)
 set(TOOL_TESTS
