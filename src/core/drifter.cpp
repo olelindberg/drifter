@@ -27,6 +27,7 @@ bool Drifter::data_files_exist() const {
       return false;
     }
   }
+
   return true;
 }
 

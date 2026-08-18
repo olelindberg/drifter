@@ -29,7 +29,8 @@ set(UNIT_TESTS
     unit/test_area_of_interest.cpp
     unit/test_schur_preconditioner.cpp
     unit/test_iterative_methods.cpp
-    unit/test_hierarchical_ordering.cpp)
+    unit/test_hierarchical_ordering.cpp
+    unit/test_linear_mesh.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS

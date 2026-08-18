@@ -289,6 +289,35 @@ public:
         }
     }
 
+    // =========================================================================
+    // Refinement
+    // =========================================================================
+
+    /// @brief Refine selected elements
+    ///
+    /// Refines the specified leaf elements by splitting each into 4 children.
+    /// After refinement, the tree is balanced to maintain the 2:1 constraint
+    /// and all lookup structures are rebuilt.
+    ///
+    /// @param elements_to_refine Indices of leaf elements to refine
+    /// @return Number of elements actually refined (may be less if some were already refined)
+    Index refine(const std::vector<Index> &elements_to_refine);
+
+    /// @brief Refine all elements matching a predicate
+    ///
+    /// @param predicate Function returning true for elements to refine
+    /// @return Number of elements refined
+    template <typename Predicate>
+    Index refine_where(Predicate &&predicate) {
+        std::vector<Index> to_refine;
+        for (Index i = 0; i < num_elements(); ++i) {
+            if (predicate(i, *leaves_[i])) {
+                to_refine.push_back(i);
+            }
+        }
+        return refine(to_refine);
+    }
+
 private:
     /// Domain bounds
     QuadBounds domain_;
@@ -308,9 +337,11 @@ private:
     /// Cached edge neighbors for O(1) lookup (computed in build_lookup)
     std::vector<std::array<EdgeNeighborInfo, 4>> cached_neighbors_;
 
-    /// PIMPL for Boost-dependent members (R-tree spatial index)
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    /// Morton codes at max depth for each leaf (parallel to leaves_, sorted)
+    std::vector<uint64_t> leaf_morton_codes_;
+
+    /// Cached max depth for Morton calculations
+    int cached_max_depth_ = 0;
 
     /// Rebuild leaf list and lookup
     void rebuild_leaf_list();
@@ -320,9 +351,6 @@ private:
 
     /// Build spatial lookup
     void build_lookup();
-
-    /// Build R-tree spatial index for fast point location
-    void build_rtree();
 
     /// Precompute all edge neighbors using spatial edge index
     void precompute_neighbors();

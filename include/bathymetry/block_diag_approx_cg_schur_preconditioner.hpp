@@ -6,17 +6,16 @@
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
 #include "bathymetry/schur_preconditioner.hpp"
 #include "core/types.hpp"
-#include <Eigen/LU>
-#include <set>
 #include <vector>
 
 namespace drifter {
 
 /// @brief Element block data for block-diagonal Q approximation
 struct ElementBlockData {
-    Index element_id;                   ///< Element index owning this block
-    std::vector<Index> free_dofs;       ///< Owned free DOF indices
-    Eigen::PartialPivLU<MatX> block_lu; ///< LU factorization of Q[dofs, dofs]
+  Index element_id;             ///< Element index owning this block
+  std::vector<Index> free_dofs; ///< Owned free DOF indices
+  MatX block_inv;               ///< Explicit inverse of Q[dofs, dofs] (dense, small block)
+  mutable VecX local_vec;       ///< Pre-allocated work buffer (size = block_size)
 };
 
 /// @brief Block-diagonal approximation Schur complement preconditioner
@@ -42,7 +41,7 @@ struct ElementBlockData {
 /// This is a variable preconditioner (inner CG is iterative) and requires
 /// Flexible CG (FCG) for the outer solve.
 class BlockDiagApproxCGSchurPreconditioner : public ISchurPreconditioner {
-public:
+  public:
     /// @brief Setup block-diagonal approximation preconditioner
     /// @param Q System matrix on free DOFs (n_free x n_free)
     /// @param C Constraint matrix on free DOFs (n_c x n_free)
@@ -50,43 +49,49 @@ public:
     /// @param inner_tolerance CG tolerance for M_S^{-1} solve (default: 1e-6)
     /// @param inner_max_iterations Max inner CG iterations (default: 100)
     /// @param drop_tolerance Threshold for dropping small entries in block inverse (default: 1e-14)
-    BlockDiagApproxCGSchurPreconditioner(const SpMat& Q, const SpMat& C,
-                                         const CGCubicBezierDofManager& dof_manager,
-                                         Real inner_tolerance = 1e-6,
-                                         int inner_max_iterations = 100,
-                                         Real drop_tolerance = 1e-14);
+  BlockDiagApproxCGSchurPreconditioner(const SpMat &Q, const SpMat &C, const CGCubicBezierDofManager &dof_manager, Real inner_tolerance = 1e-6, int inner_max_iterations = 100, Real drop_tolerance = 1e-14);
 
     /// @brief Apply preconditioner: z = M_S^{-1} * r via inner CG
-    VecX apply(const VecX& r) const override;
+  VecX apply(const VecX &r) const override;
 
     /// @brief This is a variable preconditioner (inner CG is iterative)
-    bool is_variable() const override { return true; }
+  bool is_variable() const override { return true; }
 
     /// @brief Number of constraints
-    Index num_constraints() const override { return n_c_; }
+  Index num_constraints() const override { return n_c_; }
 
-    /// @brief Get assembled M_S matrix for inspection (testing)
-    const SpMat& assembled_matrix() const { return M_S_; }
+    /// @brief Assemble M_S matrix on demand for inspection (testing only)
+    /// @note This is expensive - only use for testing, not in hot paths
+  SpMat assembled_matrix() const;
 
     /// @brief Get number of element blocks (for diagnostics)
-    Index num_element_blocks() const { return static_cast<Index>(element_blocks_.size()); }
+  Index num_element_blocks() const { return static_cast<Index>(element_blocks_.size()); }
 
-private:
-    SpMat M_S_;                                  ///< Assembled C * blockdiag(Q)^{-1} * C^T
-    SpMat C_T_;                                  ///< Cached transpose of C (for future matrix-free mode)
-    VecX diag_M_S_inv_;                          ///< 1/diag(M_S) for inner CG preconditioning
-    std::vector<ElementBlockData> element_blocks_; ///< LU factorizations for each element
-    Index n_c_;                                  ///< Number of constraints
-    Real inner_tol_;                             ///< Inner CG tolerance
-    int inner_max_iter_;                         ///< Max inner CG iterations
-    Real drop_tolerance_;                        ///< Threshold for dropping small inverse entries
-    mutable Real initial_outer_norm_ = -1.0;     ///< Initial outer residual norm (for adaptive tolerance)
+  private:
+  SpMat C_;                                    ///< Stored copy of constraint matrix C
+  SpMat C_T_;                                  ///< Cached transpose of C
+  VecX diag_M_S_inv_;                          ///< 1/diag(M_S) for inner CG preconditioning
+  std::vector<ElementBlockData> element_blocks_; ///< LU factorizations for each element
+  Index n_c_;                                  ///< Number of constraints
+  Index n_free_;                               ///< Number of free DOFs
+  Real inner_tol_;                             ///< Inner CG tolerance
+  int inner_max_iter_;                         ///< Max inner CG iterations
+  mutable Real initial_outer_norm_ = -1.0;     ///< Initial outer residual norm (for adaptive tolerance)
+  mutable VecX z_, precond_r_new_, Ap_, residual_, precond_r_, p_;
+  mutable VecX temp1_, temp2_;                 ///< Workspace for matrix-free matvec (size n_free)
 
     /// @brief Build element blocks with owned DOFs and LU factorizations
-    void build_element_blocks(const SpMat& Q, const CGCubicBezierDofManager& dof_manager);
+  void build_element_blocks(const SpMat &Q, const CGCubicBezierDofManager &dof_manager);
 
-    /// @brief Assemble block-diagonal inverse matrix D
-    SpMat build_block_diagonal_inverse(Index n_free) const;
+    /// @brief Apply block-diagonal inverse: result = D * v where D = blockdiag(Q)^{-1}
+    /// @note Zero allocations - uses pre-allocated buffers
+  void apply_block_diagonal(const VecX &v, VecX &result) const;
+
+    /// @brief Matrix-free M_S * p computation: result = C * D * C^T * p
+  void apply_M_S(const VecX &p, VecX &result) const;
+
+    /// @brief Compute diagonal of M_S without forming full matrix
+  VecX compute_M_S_diagonal() const;
 };
 
 } // namespace drifter

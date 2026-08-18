@@ -18,7 +18,7 @@ using VecX  = Eigen::VectorXd;
 using Mat2  = Eigen::Matrix2d;
 using Mat3  = Eigen::Matrix3d;
 using MatX  = Eigen::MatrixXd;
-using SpMat = Eigen::SparseMatrix<Real>;
+using SpMat = Eigen::SparseMatrix<Real, Eigen::RowMajor>;
 
 // 3D tensor type (array of 3 matrices for x, y, z components)
 using Tensor3 = std::array<MatX, 3>;

@@ -1,0 +1,42 @@
+{
+  "data": {
+    "data_dir": "/home/ole/Projects/drifter/data/input/",
+    "primary_file": "ddm_50m.dybde-emodnet.tif",
+    "tile_files": [
+      "C4_2024.tif",
+      "C5_2024.tif",
+      "C6_2024.tif",
+      "C7_2024.tif",
+      "D4_2024.tif",
+      "D5_2024.tif",
+      "D6_2024.tif",
+      "D7_2024.tif",
+      "E4_2024.tif",
+      "E5_2024.tif",
+      "E6_2024.tif",
+      "E7_2024.tif"
+    ]
+  },
+  "domain": {
+    "xmin": 4045238.0,
+    "xmax": 4145238.0,
+    "ymin": 3294695.0,
+    "ymax": 3394695.0,
+    "initial_nx": 8,
+    "initial_ny": 8
+  },
+  "refinement": {
+    "error_threshold": 1.0,
+    "max_iterations": 20,
+    "max_elements": 100000,
+    "max_level": 10,
+    "error_metric": "volume_error",
+    "dorfler_theta": 0.5,
+    "ngauss": 4
+  },
+  "output": {
+    "vtk_file": "/tmp/lowrider_mesh",
+    "write_per_iteration": false
+  },
+  "verbose": true
+}

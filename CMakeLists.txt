@@ -22,9 +22,6 @@ option(DRIFTER_BUILD_TESTS "Build unit tests" ON)
 option(DRIFTER_BUILD_DOCS "Build documentation" OFF)
 option(DRIFTER_USE_METIS "Enable METIS ordering for sparse solvers" ON)
 
-set(DRIFTER_USE_OPENMP OFF)
-
-
 # Find required packages
 find_package(Eigen3 3.4 REQUIRED)
 find_package(Boost REQUIRED)  # For Boost.Geometry coastline refinement
@@ -118,6 +115,8 @@ set(CORE_SOURCES
     src/core/drifter.cpp
     src/core/logger.cpp
     src/core/timer.cpp
+    src/core/lowrider.cpp
+    src/core/lowrider_config_reader.cpp
 )
 
 set(MESH_SOURCES
@@ -176,6 +175,10 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/flexible_cg.cpp
     # Static condensation for hp-multiresolution ordering
     src/bathymetry/static_condensation.cpp
+    # Lowrider linear mesh components
+    src/bathymetry/linear_bezier_surface.cpp
+    src/bathymetry/linear_mesh_generator.cpp
+    src/bathymetry/linear_mesh_error_estimator.cpp
 )
 
 set(DG_SOURCES
@@ -230,6 +233,7 @@ set(IO_SOURCES
     src/io/vtk_writer.cpp
     src/io/zarr_writer.cpp
     src/io/restart.cpp
+    src/io/quadtree_vtk_writer.cpp
 )
 
 set(UTILS_SOURCES
@@ -267,9 +271,38 @@ target_link_libraries(drifter_lib PUBLIC
     $<$<BOOL:${METIS_FOUND}>:${METIS_LIBRARY}>
 )
 
-# Main executable
-add_executable(drifter src/main.cpp)
-target_link_libraries(drifter PRIVATE drifter_lib)
+# Shared library (for lowrider and other projects linking to drifter)
+option(BUILD_SHARED_LIBS "Build shared library (libdrifter.so)" OFF)
+
+if(BUILD_SHARED_LIBS)
+    add_library(drifter_shared SHARED
+        ${CORE_SOURCES}
+        ${MESH_SOURCES}
+        ${BATHYMETRY_SOURCES}
+        ${DG_SOURCES}
+        ${AMR_SOURCES}
+        ${PHYSICS_SOURCES}
+        ${FLUX_SOURCES}
+        ${SOLVER_SOURCES}
+        ${IO_SOURCES}
+        ${UTILS_SOURCES}
+        ${PARALLEL_SOURCES}
+    )
+    set_target_properties(drifter_shared PROPERTIES OUTPUT_NAME "drifter")
+    target_link_libraries(drifter_shared PUBLIC
+        Eigen3::Eigen
+        $<$<BOOL:${DRIFTER_USE_MPI}>:MPI::MPI_CXX>
+        $<$<BOOL:${DRIFTER_USE_OPENMP}>:OpenMP::OpenMP_CXX>
+        ${GDAL_LIBRARIES}
+        $<$<BOOL:${VTK_FOUND}>:${VTK_LIBRARIES}>
+        $<$<BOOL:${ZARRS_FFI_LIB}>:${ZARRS_FFI_LIB}>
+        $<$<BOOL:${METIS_FOUND}>:${METIS_LIBRARY}>
+    )
+endif()
+
+# Applications
+add_subdirectory(apps/highrider)
+add_subdirectory(apps/lowrider)
 
 # Tests
 if(DRIFTER_BUILD_TESTS)
@@ -281,9 +314,14 @@ if(DRIFTER_BUILD_TESTS)
 endif()
 
 # Install rules
-install(TARGETS drifter drifter_lib
+install(TARGETS drifter_lib highrider lowrider
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+if(BUILD_SHARED_LIBS)
+    install(TARGETS drifter_shared
+        LIBRARY DESTINATION lib
+    )
+endif()
 install(DIRECTORY include/ DESTINATION include)
