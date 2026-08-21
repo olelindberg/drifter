@@ -178,7 +178,8 @@ set(BATHYMETRY_SOURCES
     # Lowrider linear mesh components
     src/bathymetry/linear_bezier_surface.cpp
     src/bathymetry/linear_mesh_generator.cpp
-    src/bathymetry/linear_mesh_error_estimator.cpp
+    src/bathymetry/element_error_estimator.cpp
+    src/bathymetry/gauss_quadrature_error_estimator.cpp
 )
 
 set(DG_SOURCES

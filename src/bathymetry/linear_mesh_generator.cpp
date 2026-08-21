@@ -89,6 +89,74 @@ void LinearMeshGenerator::rebuild_surface() {
     }
 }
 
+void LinearMeshGenerator::rebuild_surface_incremental(const std::vector<Index>& new_elements) {
+    if (!surface_ || !bathymetry_) {
+        // Fall back to full rebuild if no existing surface
+        rebuild_surface();
+        return;
+    }
+
+    // Update mesh reference and extend DOF map
+    // Returns the index of first new DOF (for incremental fitting)
+    Index first_new_dof = surface_->update_mesh(mesh_);
+
+    // Only fit new DOFs (those with index >= first_new_dof)
+    surface_->fit_incremental(*bathymetry_, new_elements, first_new_dof);
+}
+
+std::vector<ElementError> LinearMeshGenerator::get_errors_cached() {
+    if (!surface_ || !bathymetry_) {
+        return {};
+    }
+
+    Index num_elements = mesh_.num_elements();
+
+    // Initialize cache on first call or if mesh changed dramatically
+    if (cached_errors_.size() != static_cast<size_t>(num_elements)) {
+        cached_errors_.resize(num_elements);
+        error_valid_.assign(num_elements, false);
+    }
+
+    // Create estimator for computing individual element errors
+    auto estimator = create_error_estimator(config_.error_metric, *surface_,
+                                             *bathymetry_, mesh_, config_.ngauss);
+
+    // Compute errors only for invalidated elements
+    Index recomputed = 0;
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        if (!error_valid_[elem]) {
+            cached_errors_[elem] = estimator->estimate_element(elem);
+            error_valid_[elem] = true;
+            ++recomputed;
+        }
+    }
+
+    return cached_errors_;
+}
+
+void LinearMeshGenerator::invalidate_affected_errors(const std::vector<Index>& new_elements) {
+    // Invalidate errors for new elements
+    for (Index elem : new_elements) {
+        if (elem < static_cast<Index>(error_valid_.size())) {
+            error_valid_[elem] = false;
+        }
+    }
+
+    // Also invalidate neighbors of new elements (their boundaries changed)
+    for (Index elem : new_elements) {
+        if (elem >= mesh_.num_elements()) continue;
+
+        auto neighbors = mesh_.get_edge_neighbors(elem);
+        for (const auto& info : neighbors) {
+            for (Index nb : info.neighbor_elements) {
+                if (nb < static_cast<Index>(error_valid_.size())) {
+                    error_valid_[nb] = false;
+                }
+            }
+        }
+    }
+}
+
 LowriderAdaptiveResult LinearMeshGenerator::solve_adaptive() {
     LowriderAdaptiveResult result;
     result.iterations = 0;
@@ -106,9 +174,23 @@ LowriderAdaptiveResult LinearMeshGenerator::solve_adaptive() {
 
     std::cout << "\nStarting adaptive refinement..." << std::endl;
 
+    // Initialize error cache
+    cached_errors_.clear();
+    error_valid_.clear();
+
     for (iteration_ = 0; iteration_ < config_.max_iterations; ++iteration_) {
-        // Compute errors once per iteration (was previously computed 3x)
-        auto errors = get_errors();
+        // Use incremental error computation after first iteration
+        std::vector<ElementError> errors;
+        if (iteration_ == 0) {
+            // First iteration: compute all errors (populates cache)
+            errors = get_errors();
+            cached_errors_ = errors;
+            error_valid_.assign(errors.size(), true);
+        } else {
+            // Subsequent iterations: use cached errors with incremental updates
+            errors = get_errors_cached();
+        }
+
         Real max_err = max_error_from(errors);
         Real mean_err = mean_error_from(errors);
 
@@ -134,8 +216,8 @@ LowriderAdaptiveResult LinearMeshGenerator::solve_adaptive() {
     result.iterations = iteration_;
     result.num_elements = mesh_.num_elements();
 
-    // Final error computation
-    auto final_errors = get_errors();
+    // Final error computation (use cached if available)
+    auto final_errors = get_errors_cached();
     result.max_error = max_error_from(final_errors);
     result.mean_error = mean_error_from(final_errors);
 
@@ -157,7 +239,7 @@ bool LinearMeshGenerator::adapt_once() {
     return adapt_once(errors);
 }
 
-bool LinearMeshGenerator::adapt_once(const std::vector<LinearMeshElementError>& errors) {
+bool LinearMeshGenerator::adapt_once(const std::vector<ElementError>& errors) {
     if (!bathymetry_ || !surface_) {
         return false;
     }
@@ -169,11 +251,18 @@ bool LinearMeshGenerator::adapt_once(const std::vector<LinearMeshElementError>& 
         return false;
     }
 
-    // Refine selected elements
+    // Refine selected elements (stores last_new_elements_)
     refine_elements(to_refine);
 
-    // Rebuild surface for new mesh
-    rebuild_surface();
+    // Use incremental surface rebuild if we have new elements tracked
+    if (!last_new_elements_.empty()) {
+        rebuild_surface_incremental(last_new_elements_);
+        invalidate_affected_errors(last_new_elements_);
+    } else {
+        rebuild_surface();
+        // Invalidate all errors on full rebuild
+        error_valid_.assign(mesh_.num_elements(), false);
+    }
 
     return true;
 }
@@ -192,53 +281,68 @@ const BathymetryData& LinearMeshGenerator::bathymetry() const {
     return *bathymetry_;
 }
 
-std::vector<LinearMeshElementError> LinearMeshGenerator::get_errors() const {
+std::vector<ElementError> LinearMeshGenerator::get_errors() const {
     if (!surface_ || !bathymetry_) {
         return {};
     }
-    LinearMeshErrorEstimator estimator(*surface_, *bathymetry_, config_.ngauss);
-    return estimator.estimate_all();
+    auto estimator = create_error_estimator(config_.error_metric, *surface_,
+                                             *bathymetry_, mesh_, config_.ngauss);
+    return estimator->estimate_all();
 }
 
 Real LinearMeshGenerator::max_error() const {
     if (!surface_ || !bathymetry_) {
         return 0.0;
     }
-    LinearMeshErrorEstimator estimator(*surface_, *bathymetry_, config_.ngauss);
-    return estimator.max_error(config_.error_metric);
+    auto estimator = create_error_estimator(config_.error_metric, *surface_,
+                                             *bathymetry_, mesh_, config_.ngauss);
+    return estimator->max_error();
 }
 
 Real LinearMeshGenerator::mean_error() const {
     if (!surface_ || !bathymetry_) {
         return 0.0;
     }
-    LinearMeshErrorEstimator estimator(*surface_, *bathymetry_, config_.ngauss);
-    return estimator.mean_error(config_.error_metric);
+    auto estimator = create_error_estimator(config_.error_metric, *surface_,
+                                             *bathymetry_, mesh_, config_.ngauss);
+    return estimator->mean_error();
 }
 
-Real LinearMeshGenerator::max_error_from(const std::vector<LinearMeshElementError>& errors) const {
+Real LinearMeshGenerator::max_error_from(const std::vector<ElementError>& errors) const {
     Real max_err = 0.0;
     for (const auto& err : errors) {
-        max_err = std::max(max_err, LinearMeshErrorEstimator::get_metric(err, config_.error_metric));
+        if (!std::isnan(err.error)) {
+            max_err = std::max(max_err, err.error);
+        }
     }
     return max_err;
 }
 
-Real LinearMeshGenerator::mean_error_from(const std::vector<LinearMeshElementError>& errors) const {
+Real LinearMeshGenerator::mean_error_from(const std::vector<ElementError>& errors) const {
     if (errors.empty()) {
         return 0.0;
     }
     Real sum = 0.0;
+    Index valid_count = 0;
     for (const auto& err : errors) {
-        sum += LinearMeshErrorEstimator::get_metric(err, config_.error_metric);
+        if (!std::isnan(err.error)) {
+            sum += err.error;
+            ++valid_count;
+        }
     }
-    return sum / static_cast<Real>(errors.size());
+    return valid_count > 0 ? sum / static_cast<Real>(valid_count) : 0.0;
 }
 
 std::vector<Index> LinearMeshGenerator::select_for_refinement(
-    const std::vector<LinearMeshElementError>& errors) const {
+    const std::vector<ElementError>& errors) const {
     if (errors.empty()) {
         return {};
+    }
+
+    // Determine minimum element size (from config or GeoTIFF resolution)
+    Real min_size = config_.min_element_size;
+    if (config_.enforce_pixel_limit && bathymetry_ && min_size <= 0.0) {
+        min_size = bathymetry_->min_element_size();
     }
 
     // Dorfler marking: select elements capturing theta fraction of total squared error
@@ -247,9 +351,10 @@ std::vector<Index> LinearMeshGenerator::select_for_refinement(
 
     Real total_sq = 0.0;
     for (const auto& err : errors) {
-        Real metric = LinearMeshErrorEstimator::get_metric(err, config_.error_metric);
-        error_list.push_back({metric, err.element});
-        total_sq += metric * metric;
+        if (!std::isnan(err.error)) {
+            error_list.push_back({err.error, err.element});
+            total_sq += err.error * err.error;
+        }
     }
 
     // Sort by error (descending)
@@ -266,6 +371,15 @@ std::vector<Index> LinearMeshGenerator::select_for_refinement(
         auto level = mesh_.element_level(elem);
         if (level.max_level() >= config_.max_level) {
             continue;  // Already at max level
+        }
+
+        // Check minimum element size constraint (pixel resolution limit)
+        if (config_.enforce_pixel_limit && min_size > 0.0) {
+            auto size = mesh_.element_size(elem);
+            Real elem_min_size = std::min(size(0), size(1));
+            if (elem_min_size <= min_size) {
+                continue;  // Already at or below pixel resolution
+            }
         }
 
         selected.push_back(elem);
@@ -302,9 +416,12 @@ void LinearMeshGenerator::refine_elements(const std::vector<Index>& elements_to_
     // - Splitting each element into 4 children
     // - Balancing for 2:1 constraint
     // - Rebuilding lookup structures
-    Index refined = mesh_.refine(elements_to_refine);
+    auto result = mesh_.refine(elements_to_refine);
 
-    std::cout << "  Refined " << refined << " elements, new total: " << mesh_.num_elements() << std::endl;
+    // Store new element indices for incremental error/surface updates
+    last_new_elements_ = std::move(result.new_elements);
+
+    std::cout << "  Refined " << result.num_refined << " elements, new total: " << mesh_.num_elements() << std::endl;
 }
 
 std::string LinearMeshGenerator::check_convergence(Real max_err) const {

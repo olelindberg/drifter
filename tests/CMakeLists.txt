@@ -30,7 +30,9 @@ set(UNIT_TESTS
     unit/test_schur_preconditioner.cpp
     unit/test_iterative_methods.cpp
     unit/test_hierarchical_ordering.cpp
-    unit/test_linear_mesh.cpp)
+    unit/test_linear_mesh.cpp
+    unit/test_pixel_error_estimator.cpp
+    unit/test_pixel_max_error_estimator.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS

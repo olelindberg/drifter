@@ -3,18 +3,12 @@
 /// @file lowrider_config.hpp
 /// @brief Configuration structures for Lowrider adaptive mesh generator
 
+#include "bathymetry/adaptive_smoother_types.hpp"
 #include "core/types.hpp"
 #include <string>
 #include <vector>
 
 namespace drifter {
-
-/// @brief Error metric type for refinement decisions
-enum class ErrorMetricType {
-    NormalizedError,  ///< L2 error / sqrt(area) = RMS
-    MeanDifference,   ///< integral |z_data - z_surface| dA / area
-    VolumeError       ///< integral |z_data - z_surface| dA
-};
 
 /// @brief Domain configuration
 struct LowriderDomainConfig {
@@ -35,6 +29,10 @@ struct LowriderRefinementConfig {
     Real dorfler_theta = 0.5;        ///< Fraction of total squared error to capture
     ErrorMetricType error_metric = ErrorMetricType::NormalizedError;
     int ngauss = 4;                  ///< Gauss points per direction for error integration
+
+    // Pixel resolution limit
+    bool enforce_pixel_limit = true; ///< Stop refining at GeoTIFF pixel resolution
+    Real min_element_size = 0.0;     ///< Minimum element size (0 = auto from GeoTIFF)
 };
 
 /// @brief Output configuration

@@ -60,8 +60,10 @@ LowriderConfig LowriderConfigReader::load(const std::string& path) {
             config.refinement.error_metric = ErrorMetricType::NormalizedError;
         } else if (metric_str == "mean_difference") {
             config.refinement.error_metric = ErrorMetricType::MeanDifference;
-        } else if (metric_str == "volume_error") {
-            config.refinement.error_metric = ErrorMetricType::VolumeError;
+        } else if (metric_str == "volume_error" || metric_str == "volume_change") {
+            config.refinement.error_metric = ErrorMetricType::VolumeChange;
+        } else if (metric_str == "pixel_rmse") {
+            config.refinement.error_metric = ErrorMetricType::PixelRMSE;
         }
     }
 

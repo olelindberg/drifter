@@ -3,8 +3,8 @@
 /// @file linear_mesh_generator.hpp
 /// @brief Adaptive 2D mesh generation with error-driven refinement
 
+#include "bathymetry/element_error_estimator.hpp"
 #include "bathymetry/linear_bezier_surface.hpp"
-#include "bathymetry/linear_mesh_error_estimator.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/lowrider_config.hpp"
 #include "mesh/geotiff_reader.hpp"
@@ -63,7 +63,7 @@ public:
     void write_vtk(const std::string& filename) const;
 
     /// @brief Get current error estimates
-    std::vector<LinearMeshElementError> get_errors() const;
+    std::vector<ElementError> get_errors() const;
 
     /// @brief Get maximum error
     Real max_error() const;
@@ -80,24 +80,41 @@ private:
     LowriderRefinementConfig config_;
     int iteration_ = 0;
 
+    // Error caching for incremental computation
+    std::vector<ElementError> cached_errors_;  ///< Cached per-element errors
+    std::vector<bool> error_valid_;                      ///< Per-element validity flags
+    std::vector<Index> last_new_elements_;               ///< Elements created in last refinement
+
     /// @brief Rebuild surface after mesh changes
     void rebuild_surface();
+
+    /// @brief Rebuild surface incrementally for new elements
+    /// @param new_elements Indices of newly created elements
+    void rebuild_surface_incremental(const std::vector<Index>& new_elements);
+
+    /// @brief Get errors with incremental caching
+    /// @return Per-element error estimates (recomputed only for invalidated elements)
+    std::vector<ElementError> get_errors_cached();
+
+    /// @brief Invalidate errors for elements affected by refinement
+    /// @param new_elements Indices of newly created elements
+    void invalidate_affected_errors(const std::vector<Index>& new_elements);
 
     /// @brief Perform single adaptation iteration with pre-computed errors
     /// @param errors Pre-computed error estimates
     /// @return True if refinement occurred
-    bool adapt_once(const std::vector<LinearMeshElementError>& errors);
+    bool adapt_once(const std::vector<ElementError>& errors);
 
     /// @brief Compute maximum error from pre-computed errors
-    Real max_error_from(const std::vector<LinearMeshElementError>& errors) const;
+    Real max_error_from(const std::vector<ElementError>& errors) const;
 
     /// @brief Compute mean error from pre-computed errors
-    Real mean_error_from(const std::vector<LinearMeshElementError>& errors) const;
+    Real mean_error_from(const std::vector<ElementError>& errors) const;
 
     /// @brief Select elements for refinement using Dorfler marking
     /// @param errors Per-element error estimates
     /// @return Element indices to refine
-    std::vector<Index> select_for_refinement(const std::vector<LinearMeshElementError>& errors) const;
+    std::vector<Index> select_for_refinement(const std::vector<ElementError>& errors) const;
 
     /// @brief Refine selected elements
     /// @param elements_to_refine Element indices

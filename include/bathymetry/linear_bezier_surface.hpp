@@ -6,6 +6,7 @@
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/geotiff_reader.hpp"
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -31,6 +32,19 @@ public:
     /// @note Simply samples the bathymetry at corner positions
     void fit(const BathymetryData& data);
 
+    /// @brief Update mesh reference after refinement
+    /// @param mesh New mesh reference
+    /// @return Index of first new DOF (DOFs >= this are new and need fitting)
+    Index update_mesh(const QuadtreeAdapter& mesh);
+
+    /// @brief Incrementally fit only new elements
+    /// @param data Bathymetry data from GeoTIFF
+    /// @param new_elements Indices of newly created elements
+    /// @param first_new_dof Index of first new DOF (from update_mesh return value)
+    /// @note Reuses existing DOF values, only samples new DOF positions
+    void fit_incremental(const BathymetryData& data, const std::vector<Index>& new_elements,
+                         Index first_new_dof);
+
     /// @brief Evaluate surface at a point
     /// @param x, y World coordinates
     /// @return Surface height at (x, y)
@@ -42,7 +56,7 @@ public:
     Eigen::Vector4d element_coefficients(Index elem) const;
 
     /// @brief Get the quadtree mesh
-    const QuadtreeAdapter& mesh() const { return mesh_; }
+    const QuadtreeAdapter& mesh() const { return *mesh_; }
 
     /// @brief Get total number of global DOFs
     Index num_dofs() const { return num_global_dofs_; }
@@ -56,11 +70,14 @@ public:
     static Eigen::Vector4d basis(Real xi, Real eta);
 
 private:
-    const QuadtreeAdapter& mesh_;
+    const QuadtreeAdapter* mesh_;                ///< Pointer to allow update
     VecX coefficients_;                          ///< Global DOF vector
     std::vector<std::array<Index, 4>> dof_map_;  ///< Element corners -> global DOF indices
     Index num_global_dofs_ = 0;
     bool is_fitted_ = false;
+
+    /// Persistent corner position to DOF index map (for incremental fitting)
+    std::map<std::pair<int64_t, int64_t>, Index> corner_to_dof_;
 
     /// @brief Build DOF connectivity (shared corners)
     void build_dof_map();

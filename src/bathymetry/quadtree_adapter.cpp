@@ -6,6 +6,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace drifter {
 
@@ -355,6 +356,106 @@ std::array<EdgeNeighborInfo, 4> QuadtreeAdapter::get_edge_neighbors(Index elem) 
             get_neighbor(elem, 3)};
 }
 
+void QuadtreeAdapter::precompute_neighbors_fast() {
+    // Use tree traversal for neighbor finding instead of probe-based lookups
+    // This is O(N × 4 × log(N)) vs O(N × 12 × log(N)) for probe-based
+    Index N = num_elements();
+    cached_neighbors_.clear();
+    cached_neighbors_.resize(N);
+
+    if (N == 0) return;
+
+    constexpr int opposite_edge[4] = {1, 0, 3, 2};
+    const Real tol = 1e-10;
+
+    for (Index elem = 0; elem < N; ++elem) {
+        QuadtreeNode* node = leaves_[elem];
+        const auto& bounds = node->bounds;
+        Real dx = bounds.xmax - bounds.xmin;
+        Real dy = bounds.ymax - bounds.ymin;
+
+        for (int edge_id = 0; edge_id < 4; ++edge_id) {
+            EdgeNeighborInfo info;
+
+            // Check domain boundary
+            bool at_boundary =
+                (edge_id == 0 && std::abs(bounds.xmin - domain_.xmin) < tol) ||
+                (edge_id == 1 && std::abs(bounds.xmax - domain_.xmax) < tol) ||
+                (edge_id == 2 && std::abs(bounds.ymin - domain_.ymin) < tol) ||
+                (edge_id == 3 && std::abs(bounds.ymax - domain_.ymax) < tol);
+
+            if (at_boundary) {
+                info.type = EdgeNeighborInfo::Type::Boundary;
+                cached_neighbors_[elem][edge_id] = std::move(info);
+                continue;
+            }
+
+            // Find neighbor via tree traversal
+            QuadtreeNode* neighbor = find_neighbor_via_tree(node, edge_id);
+
+            if (!neighbor) {
+                info.type = EdgeNeighborInfo::Type::Boundary;
+                cached_neighbors_[elem][edge_id] = std::move(info);
+                continue;
+            }
+
+            Index nb_idx = neighbor->leaf_index;
+            const auto& nb = neighbor->bounds;
+            bool is_x_edge = (edge_id <= 1);
+
+            Real my_size = is_x_edge ? dy : dx;
+            Real nb_size = is_x_edge ? (nb.ymax - nb.ymin) : (nb.xmax - nb.xmin);
+
+            if (std::abs(my_size - nb_size) < tol) {
+                info.type = EdgeNeighborInfo::Type::Conforming;
+            } else if (nb_size > my_size * 1.5) {
+                info.type = EdgeNeighborInfo::Type::FineToCoarse;
+                Real my_center = is_x_edge ? 0.5 * (bounds.ymin + bounds.ymax)
+                                           : 0.5 * (bounds.xmin + bounds.xmax);
+                Real nb_center = is_x_edge ? 0.5 * (nb.ymin + nb.ymax)
+                                           : 0.5 * (nb.xmin + nb.xmax);
+                info.subedge_index = (my_center < nb_center) ? 0 : 1;
+            } else if (my_size > nb_size * 1.5) {
+                // Coarse-to-fine: need to find both fine neighbors
+                info.type = EdgeNeighborInfo::Type::CoarseToFine;
+                // First neighbor already found
+                info.neighbor_elements.push_back(nb_idx);
+                info.neighbor_edges.push_back(opposite_edge[edge_id]);
+
+                // Find second fine neighbor using different probe point
+                Real probe_offset = std::min(dx, dy) * 0.01;
+                Vec2 probe2;
+                if (is_x_edge) {
+                    Real x_probe = (edge_id == 0) ? bounds.xmin - probe_offset : bounds.xmax + probe_offset;
+                    Real y_other = (nb.ymin < 0.5 * (bounds.ymin + bounds.ymax))
+                                   ? bounds.ymax - 0.25 * dy
+                                   : bounds.ymin + 0.25 * dy;
+                    probe2 = Vec2(x_probe, y_other);
+                } else {
+                    Real y_probe = (edge_id == 2) ? bounds.ymin - probe_offset : bounds.ymax + probe_offset;
+                    Real x_other = (nb.xmin < 0.5 * (bounds.xmin + bounds.xmax))
+                                   ? bounds.xmax - 0.25 * dx
+                                   : bounds.xmin + 0.25 * dx;
+                    probe2 = Vec2(x_other, y_probe);
+                }
+                Index nb2_idx = find_element(probe2);
+                if (nb2_idx >= 0 && nb2_idx != nb_idx) {
+                    info.neighbor_elements.push_back(nb2_idx);
+                    info.neighbor_edges.push_back(opposite_edge[edge_id]);
+                }
+                cached_neighbors_[elem][edge_id] = std::move(info);
+                continue;
+            } else {
+                info.type = EdgeNeighborInfo::Type::Conforming;
+            }
+
+            info.neighbor_elements.push_back(nb_idx);
+            info.neighbor_edges.push_back(opposite_edge[edge_id]);
+            cached_neighbors_[elem][edge_id] = std::move(info);
+        }
+    }
+}
+
 void QuadtreeAdapter::rebuild_leaf_list() {
     leaves_.clear();
     leaf_morton_codes_.clear();
@@ -373,25 +474,37 @@ void QuadtreeAdapter::rebuild_leaf_list() {
                 domain_, cached_max_depth_);
         }
 
-        // Create index array and sort by Morton code
-        std::vector<size_t> indices(leaves_.size());
-        std::iota(indices.begin(), indices.end(), 0);
-        std::sort(indices.begin(), indices.end(),
-            [this](size_t a, size_t b) {
-                return leaf_morton_codes_[a] < leaf_morton_codes_[b];
-            });
-
-        // Reorder leaves and Morton codes by sorted indices
-        std::vector<QuadtreeNode*> sorted_leaves(leaves_.size());
-        std::vector<uint64_t> sorted_mortons(leaves_.size());
-        for (size_t i = 0; i < indices.size(); ++i) {
-            sorted_leaves[i] = leaves_[indices[i]];
-            sorted_mortons[i] = leaf_morton_codes_[indices[i]];
+        // Check if already sorted (O(N) check vs O(N log N) sort)
+        // DFS traversal of tree with Morton-ordered children produces sorted leaves
+        bool already_sorted = true;
+        for (size_t i = 1; i < leaf_morton_codes_.size(); ++i) {
+            if (leaf_morton_codes_[i] < leaf_morton_codes_[i - 1]) {
+                already_sorted = false;
+                break;
+            }
         }
-        leaves_ = std::move(sorted_leaves);
-        leaf_morton_codes_ = std::move(sorted_mortons);
 
-        // Update leaf indices after sorting
+        if (!already_sorted) {
+            // Create index array and sort by Morton code
+            std::vector<size_t> indices(leaves_.size());
+            std::iota(indices.begin(), indices.end(), 0);
+            std::sort(indices.begin(), indices.end(),
+                [this](size_t a, size_t b) {
+                    return leaf_morton_codes_[a] < leaf_morton_codes_[b];
+                });
+
+            // Reorder leaves and Morton codes by sorted indices
+            std::vector<QuadtreeNode*> sorted_leaves(leaves_.size());
+            std::vector<uint64_t> sorted_mortons(leaves_.size());
+            for (size_t i = 0; i < indices.size(); ++i) {
+                sorted_leaves[i] = leaves_[indices[i]];
+                sorted_mortons[i] = leaf_morton_codes_[indices[i]];
+            }
+            leaves_ = std::move(sorted_leaves);
+            leaf_morton_codes_ = std::move(sorted_mortons);
+        }
+
+        // Update leaf indices
         for (Index i = 0; i < static_cast<Index>(leaves_.size()); ++i) {
             leaves_[i]->leaf_index = i;
         }
@@ -508,44 +621,102 @@ void QuadtreeAdapter::balance() {
     while (changed) {
         changed = false;
 
-        // Collect current leaves (copy since we may modify during iteration)
-        std::vector<QuadtreeNode*> current_leaves = leaves_;
+        // Use tree traversal instead of iterating over leaves_
+        // This avoids needing to rebuild_leaf_list() inside the loop
+        if (root_) {
+            balance_subtree(root_.get(), changed);
+        }
+    }
 
-        for (QuadtreeNode* node : current_leaves) {
-            // Check all 4 edge neighbors
-            for (int edge = 0; edge < 4; ++edge) {
-                EdgeNeighborInfo info = get_neighbor(node->leaf_index, edge);
+    // Single rebuild at the end (not inside the loop)
+    rebuild_leaf_list();
+}
 
-                if (info.is_boundary()) {
-                    continue;
-                }
+void QuadtreeAdapter::balance_subtree(QuadtreeNode* node, bool& changed) {
+    if (!node) return;
 
-                for (Index nb_idx : info.neighbor_elements) {
-                    QuadtreeNode* neighbor = leaves_[nb_idx];
+    if (node->is_leaf()) {
+        // Check all 4 edge neighbors via tree traversal
+        for (int edge = 0; edge < 4; ++edge) {
+            QuadtreeNode* neighbor = find_neighbor_via_tree(node, edge);
 
-                    // Check 2:1 balance constraint per axis
-                    int diff_x = node->level.x - neighbor->level.x;
-                    int diff_y = node->level.y - neighbor->level.y;
+            if (!neighbor) continue;  // Boundary
 
-                    // If neighbor is more than 1 level coarser, refine it
-                    if ((diff_x > 1 || diff_y > 1) && neighbor->is_leaf()) {
-                        refine_leaf(neighbor);
-                        changed = true;
-                    }
-                }
+            // Check 2:1 balance constraint per axis
+            int diff_x = node->level.x - neighbor->level.x;
+            int diff_y = node->level.y - neighbor->level.y;
+
+            // If neighbor is more than 1 level coarser, refine it
+            if ((diff_x > 1 || diff_y > 1) && neighbor->is_leaf()) {
+                refine_leaf(neighbor);
+                changed = true;
             }
         }
-
-        if (changed) {
-            rebuild_leaf_list();
+    } else {
+        // Recurse into children
+        for (auto& child : node->children) {
+            balance_subtree(child.get(), changed);
         }
     }
 }
 
-Index QuadtreeAdapter::refine(const std::vector<Index> &elements_to_refine) {
-    if (elements_to_refine.empty()) {
-        return 0;
+QuadtreeNode* QuadtreeAdapter::find_neighbor_via_tree(QuadtreeNode* node, int edge_id) const {
+    if (!node) return nullptr;
+
+    // Direction offsets: 0=left(-x), 1=right(+x), 2=bottom(-y), 3=top(+y)
+    const Real tol = 1e-10;
+    const auto& bounds = node->bounds;
+
+    // Check domain boundary
+    bool at_boundary =
+        (edge_id == 0 && std::abs(bounds.xmin - domain_.xmin) < tol) ||
+        (edge_id == 1 && std::abs(bounds.xmax - domain_.xmax) < tol) ||
+        (edge_id == 2 && std::abs(bounds.ymin - domain_.ymin) < tol) ||
+        (edge_id == 3 && std::abs(bounds.ymax - domain_.ymax) < tol);
+
+    if (at_boundary) return nullptr;
+
+    // Compute probe point just outside the edge
+    Real dx = bounds.xmax - bounds.xmin;
+    Real dy = bounds.ymax - bounds.ymin;
+    Real probe_offset = std::min(dx, dy) * 0.01;
+
+    Vec2 probe;
+    switch (edge_id) {
+        case 0: probe = Vec2(bounds.xmin - probe_offset, 0.5 * (bounds.ymin + bounds.ymax)); break;
+        case 1: probe = Vec2(bounds.xmax + probe_offset, 0.5 * (bounds.ymin + bounds.ymax)); break;
+        case 2: probe = Vec2(0.5 * (bounds.xmin + bounds.xmax), bounds.ymin - probe_offset); break;
+        case 3: probe = Vec2(0.5 * (bounds.xmin + bounds.xmax), bounds.ymax + probe_offset); break;
+        default: return nullptr;
     }
+
+    // Traverse tree to find leaf containing probe point
+    QuadtreeNode* current = root_.get();
+    while (current && !current->is_leaf()) {
+        bool found = false;
+        for (auto& child : current->children) {
+            if (child->bounds.contains(probe, tol)) {
+                current = child.get();
+                found = true;
+                break;
+            }
+        }
+        if (!found) break;
+    }
+
+    return (current && current != node && current->is_leaf()) ? current : nullptr;
+}
+
+RefinementResult QuadtreeAdapter::refine(const std::vector<Index> &elements_to_refine) {
+    RefinementResult result;
+    result.num_refined = 0;
+
+    if (elements_to_refine.empty()) {
+        return result;
+    }
+
+    // Record original leaf pointers to identify new elements later
+    std::unordered_set<QuadtreeNode*> original_leaves(leaves_.begin(), leaves_.end());
 
     // Convert indices to node pointers before refinement (indices will change)
     std::vector<QuadtreeNode*> nodes_to_refine;
@@ -561,25 +732,31 @@ Index QuadtreeAdapter::refine(const std::vector<Index> &elements_to_refine) {
     }
 
     if (nodes_to_refine.empty()) {
-        return 0;
+        return result;
     }
 
     // Refine all selected nodes
-    Index count = 0;
     for (QuadtreeNode* node : nodes_to_refine) {
         if (node->is_leaf()) {  // Double-check it's still a leaf
             refine_leaf(node);
-            ++count;
+            ++result.num_refined;
         }
     }
 
-    // Rebuild leaf list after refinement
-    rebuild_leaf_list();
-
     // Balance the tree to maintain 2:1 constraint
+    // Note: balance() calls rebuild_leaf_list() at the end, so we don't
+    // need to call it here. balance_subtree() uses tree traversal, not leaves_.
     balance();
 
-    return count;
+    // Collect indices of newly created elements
+    result.new_elements.reserve(leaves_.size() - original_leaves.size() + nodes_to_refine.size());
+    for (Index i = 0; i < static_cast<Index>(leaves_.size()); ++i) {
+        if (original_leaves.find(leaves_[i]) == original_leaves.end()) {
+            result.new_elements.push_back(i);
+        }
+    }
+
+    return result;
 }
 
 void QuadtreeAdapter::subdivide_toward_center(QuadtreeNode* node, int remaining_levels,

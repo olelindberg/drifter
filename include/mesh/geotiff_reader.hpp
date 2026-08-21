@@ -170,6 +170,27 @@ struct BathymetryData {
             return val < 0.0f ? -val : 0.0f;
         }
     }
+
+    /// @brief Get pixel width in world units
+    /// @return Absolute value of geotransform[1] (pixel width)
+    Real pixel_size_x() const { return std::abs(geotransform[1]); }
+
+    /// @brief Get pixel height in world units
+    /// @return Absolute value of geotransform[5] (pixel height, typically negative)
+    Real pixel_size_y() const { return std::abs(geotransform[5]); }
+
+    /// @brief Get minimum element size based on pixel resolution
+    /// @return Minimum of pixel_size_x and pixel_size_y
+    /// @note Elements smaller than this cannot benefit from finer data resolution
+    Real min_element_size() const { return std::min(pixel_size_x(), pixel_size_y()); }
+
+    /// @brief Convert pixel center to world coordinates
+    /// @param px, py Pixel indices
+    /// @param wx, wy Output world coordinates at pixel center
+    void pixel_center_to_world(int px, int py, double &wx, double &wy) const {
+        wx = geotransform[0] + (px + 0.5) * geotransform[1] + (py + 0.5) * geotransform[2];
+        wy = geotransform[3] + (px + 0.5) * geotransform[4] + (py + 0.5) * geotransform[5];
+    }
 };
 
 /// @brief Reader for GeoTIFF bathymetry files

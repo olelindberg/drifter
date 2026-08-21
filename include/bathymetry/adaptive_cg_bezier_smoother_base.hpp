@@ -9,6 +9,7 @@
 
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
+#include "mesh/geotiff_reader.hpp"
 #include "mesh/octree_adapter.hpp"
 #include "mesh/refine_mask.hpp"
 #include <functional>
@@ -58,6 +59,19 @@ public:
     /// Elements entirely on land will not be refined
     void set_land_mask(std::function<bool(Real, Real)> is_land_func);
 
+    /// @brief Set bathymetry data for pixel-based error computation
+    /// @param data Shared pointer to BathymetryData (for pixel RMSE validation)
+    /// @note Required for compute_pixel_rmse option; the data must outlive this smoother
+    void set_bathymetry_data_for_pixels(std::shared_ptr<BathymetryData> data) {
+        bathy_data_ = std::move(data);
+    }
+
+    /// @brief Check if bathymetry data is available for pixel error computation
+    bool has_bathymetry_data_for_pixels() const { return bathy_data_ != nullptr; }
+
+    /// @brief Get bathymetry data for pixel error computation
+    const BathymetryData* bathymetry_data_for_pixels() const { return bathy_data_.get(); }
+
     // =========================================================================
     // Evaluation - implemented in base
     // =========================================================================
@@ -106,6 +120,9 @@ protected:
 
     /// Optional land mask function
     std::function<bool(Real, Real)> land_mask_func_;
+
+    /// Bathymetry data for pixel-based error computation (optional)
+    std::shared_ptr<BathymetryData> bathy_data_;
 
     /// Gauss-Legendre quadrature nodes on [0, 1]
     VecX gauss_nodes_;

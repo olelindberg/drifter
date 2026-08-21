@@ -1,7 +1,7 @@
 #include "core/lowrider_config.hpp"
+#include "bathymetry/element_error_estimator.hpp"
 #include "bathymetry/linear_bezier_surface.hpp"
 #include "bathymetry/linear_mesh_generator.hpp"
-#include "bathymetry/linear_mesh_error_estimator.hpp"
 #include "io/quadtree_vtk_writer.hpp"
 #include <gtest/gtest.h>
 
@@ -64,14 +64,16 @@ TEST_F(LinearMeshTest, VTKWriterMeshOnly) {
     gen.write_vtk("/tmp/lowrider_test_mesh");
 }
 
-TEST_F(LinearMeshTest, ErrorMetricTypes) {
-    LinearMeshElementError err;
-    err.l2_error = 1.0;
-    err.normalized_error = 0.5;
-    err.mean_difference = 0.3;
-    err.volume_error = 100.0;
+TEST_F(LinearMeshTest, ElementErrorStruct) {
+    // Test the unified ElementError struct
+    ElementError err;
+    err.element = 5;
+    err.error = 2.5;
+    err.area = 100.0;
+    err.sample_count = 16;
 
-    EXPECT_NEAR(LinearMeshErrorEstimator::get_metric(err, ErrorMetricType::NormalizedError), 0.5, 1e-12);
-    EXPECT_NEAR(LinearMeshErrorEstimator::get_metric(err, ErrorMetricType::MeanDifference), 0.3, 1e-12);
-    EXPECT_NEAR(LinearMeshErrorEstimator::get_metric(err, ErrorMetricType::VolumeError), 100.0, 1e-12);
+    EXPECT_EQ(err.element, 5);
+    EXPECT_NEAR(err.error, 2.5, 1e-12);
+    EXPECT_NEAR(err.area, 100.0, 1e-12);
+    EXPECT_EQ(err.sample_count, 16);
 }
