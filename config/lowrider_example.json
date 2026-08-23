@@ -18,24 +18,25 @@
     ]
   },
   "domain": {
-    "xmin": 4045238.0,
-    "xmax": 4145238.0,
-    "ymin": 3294695.0,
-    "ymax": 3394695.0,
+    "xmin": 3900000.0,
+    "xmax": 4300000.0,
+    "ymin": 3100000.0,
+    "ymax": 3500000.0,
     "initial_nx": 8,
     "initial_ny": 8
   },
   "refinement": {
     "error_threshold": 1.0,
     "max_iterations": 28,
-    "max_elements": 200000,
+    "max_elements": 1000000,
     "max_level": 100,
-    "error_metric": "max_pixel_error",
+    "error_metric": "pixel_max_error",
     "dorfler_theta": 0.5,
     "ngauss": 4
   },
   "output": {
     "vtk_file": "/tmp/lowrider_mesh",
+    "vtk_writer_type": "water",
     "write_per_iteration": false
   },
   "verbose": true

@@ -86,7 +86,7 @@ int Lowrider::run() {
     std::cout << "Size of smallest element : " << element_size_min << std::endl;
 
     // Write VTK output
-    generator.write_vtk(config_.output.vtk_file);
+    generator.write_vtk(config_.output.vtk_file, config_.output.vtk_writer_type);
     std::cout << "Output written to        : " << config_.output.vtk_file << ".vtu" << std::endl;
 
     std::cout << "\nMesh generation complete.\n";

@@ -8,6 +8,7 @@
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/lowrider_config.hpp"
 #include "mesh/geotiff_reader.hpp"
+#include "mesh/multi_source_bathymetry.hpp"
 #include <functional>
 #include <memory>
 #include <string>
@@ -60,7 +61,9 @@ public:
 
     /// @brief Write VTK output
     /// @param filename Output filename (without extension)
-    void write_vtk(const std::string& filename) const;
+    /// @param writer_type Type of VTK writer: All (default) or Water (water elements only)
+    void write_vtk(const std::string& filename,
+                   VTKWriterType writer_type = VTKWriterType::All) const;
 
     /// @brief Get current error estimates
     std::vector<ElementError> get_errors() const;
@@ -75,6 +78,7 @@ private:
     QuadtreeAdapter mesh_;
     std::unique_ptr<LinearBezierSurface> surface_;
     std::shared_ptr<BathymetryData> bathymetry_;
+    std::shared_ptr<MultiSourceBathymetry> multi_bathy_;  ///< Multi-source bathymetry (if loaded)
     std::function<Real(Real, Real)> depth_func_;      ///< Depth evaluation function
     std::function<bool(Real, Real)> land_mask_func_;  ///< Land mask function
     LowriderRefinementConfig config_;

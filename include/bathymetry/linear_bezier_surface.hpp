@@ -6,6 +6,7 @@
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/geotiff_reader.hpp"
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -45,10 +46,28 @@ public:
     void fit_incremental(const BathymetryData& data, const std::vector<Index>& new_elements,
                          Index first_new_dof);
 
+    /// @brief Fit surface using a depth function (supports multi-source bathymetry)
+    /// @param depth_func Function that returns depth at (x, y) coordinates
+    void fit(std::function<Real(Real, Real)> depth_func);
+
+    /// @brief Incrementally fit only new elements using depth function
+    /// @param depth_func Function that returns depth at (x, y) coordinates
+    /// @param new_elements Indices of newly created elements
+    /// @param first_new_dof Index of first new DOF (from update_mesh return value)
+    void fit_incremental(std::function<Real(Real, Real)> depth_func,
+                         const std::vector<Index>& new_elements, Index first_new_dof);
+
     /// @brief Evaluate surface at a point
     /// @param x, y World coordinates
     /// @return Surface height at (x, y)
     Real evaluate(Real x, Real y) const;
+
+    /// @brief Evaluate surface at a point within a known element (skips element lookup)
+    /// @param elem Known containing element index
+    /// @param x, y World coordinates
+    /// @return Surface height at (x, y)
+    /// @note Caller must ensure (x, y) is within element bounds
+    Real evaluate_in_element(Index elem, Real x, Real y) const;
 
     /// @brief Get corner coefficients for an element
     /// @param elem Element index

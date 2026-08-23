@@ -1,10 +1,12 @@
 #include "bathymetry/linear_mesh_generator.hpp"
+#include "bathymetry/multi_source_pixel_error_estimator.hpp"
 #include "io/quadtree_vtk_writer.hpp"
 #include "mesh/multi_source_bathymetry.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <numeric>
+#include <stdexcept>
 
 namespace drifter {
 
@@ -48,28 +50,27 @@ void LinearMeshGenerator::load_bathymetry(const LowriderDataConfig& data_config)
     std::cout << "  with " << tile_paths.size() << " tile files" << std::endl;
 
     // Use MultiSourceBathymetry for blended data
-    auto multi_bathy = std::make_shared<MultiSourceBathymetry>(primary_path, tile_paths);
+    multi_bathy_ = std::make_shared<MultiSourceBathymetry>(primary_path, tile_paths);
 
     // Create depth and land mask functions
-    depth_func_ = [multi_bathy](Real x, Real y) -> Real {
+    depth_func_ = [this](Real x, Real y) -> Real {
         try {
-            return multi_bathy->evaluate(x, y);
+            return multi_bathy_->evaluate(x, y);
         } catch (const std::out_of_range&) {
             return 0.0;
         }
     };
 
-    land_mask_func_ = [multi_bathy](Real x, Real y) -> bool {
+    land_mask_func_ = [this](Real x, Real y) -> bool {
         try {
-            return multi_bathy->is_land(x, y);
+            return multi_bathy_->is_land(x, y);
         } catch (const std::out_of_range&) {
             return true;
         }
     };
 
-    // Also load primary as BathymetryData for compatibility
-    GeoTiffReader reader;
-    bathymetry_ = std::make_shared<BathymetryData>(reader.load(primary_path));
+    // Store primary as BathymetryData for compatibility with single-source error estimation
+    bathymetry_ = std::make_shared<BathymetryData>(multi_bathy_->get_primary());
 
     rebuild_surface();
 }
@@ -84,16 +85,23 @@ void LinearMeshGenerator::set_bathymetry_functions(
 
 void LinearMeshGenerator::rebuild_surface() {
     surface_ = std::make_unique<LinearBezierSurface>(mesh_);
-    if (bathymetry_) {
-        surface_->fit(*bathymetry_);
+    if (!depth_func_) {
+        throw std::runtime_error(
+            "LinearMeshGenerator: depth_func_ not set. Call load_bathymetry() first.");
     }
+    surface_->fit(depth_func_);
 }
 
 void LinearMeshGenerator::rebuild_surface_incremental(const std::vector<Index>& new_elements) {
-    if (!surface_ || !bathymetry_) {
-        // Fall back to full rebuild if no existing surface
+    if (!surface_) {
+        // Full rebuild if no existing surface
         rebuild_surface();
         return;
+    }
+
+    if (!depth_func_) {
+        throw std::runtime_error(
+            "LinearMeshGenerator: depth_func_ not set for incremental fit.");
     }
 
     // Update mesh reference and extend DOF map
@@ -101,7 +109,7 @@ void LinearMeshGenerator::rebuild_surface_incremental(const std::vector<Index>& 
     Index first_new_dof = surface_->update_mesh(mesh_);
 
     // Only fit new DOFs (those with index >= first_new_dof)
-    surface_->fit_incremental(*bathymetry_, new_elements, first_new_dof);
+    surface_->fit_incremental(depth_func_, new_elements, first_new_dof);
 }
 
 std::vector<ElementError> LinearMeshGenerator::get_errors_cached() {
@@ -118,8 +126,16 @@ std::vector<ElementError> LinearMeshGenerator::get_errors_cached() {
     }
 
     // Create estimator for computing individual element errors
-    auto estimator = create_error_estimator(config_.error_metric, *surface_,
-                                             *bathymetry_, mesh_, config_.ngauss);
+    std::unique_ptr<ElementErrorEstimator> estimator;
+    if (multi_bathy_ &&
+        (config_.error_metric == ErrorMetricType::PixelMaxError ||
+         config_.error_metric == ErrorMetricType::PixelRMSE)) {
+        estimator = std::make_unique<MultiSourcePixelMaxErrorEstimator>(
+            *surface_, *bathymetry_, *multi_bathy_, mesh_);
+    } else {
+        estimator = create_error_estimator(config_.error_metric, *surface_,
+                                            *bathymetry_, mesh_, config_.ngauss);
+    }
 
     // Compute errors only for invalidated elements
     Index recomputed = 0;
@@ -285,6 +301,16 @@ std::vector<ElementError> LinearMeshGenerator::get_errors() const {
     if (!surface_ || !bathymetry_) {
         return {};
     }
+
+    // Use multi-source estimator for pixel-based metrics when multi_bathy_ is available
+    if (multi_bathy_ &&
+        (config_.error_metric == ErrorMetricType::PixelMaxError ||
+         config_.error_metric == ErrorMetricType::PixelRMSE)) {
+        auto estimator = std::make_unique<MultiSourcePixelMaxErrorEstimator>(
+            *surface_, *bathymetry_, *multi_bathy_, mesh_);
+        return estimator->estimate_all();
+    }
+
     auto estimator = create_error_estimator(config_.error_metric, *surface_,
                                              *bathymetry_, mesh_, config_.ngauss);
     return estimator->estimate_all();
@@ -339,10 +365,10 @@ std::vector<Index> LinearMeshGenerator::select_for_refinement(
         return {};
     }
 
-    // Determine minimum element size (from config or GeoTIFF resolution)
-    Real min_size = config_.min_element_size;
-    if (config_.enforce_pixel_limit && bathymetry_ && min_size <= 0.0) {
-        min_size = bathymetry_->min_element_size();
+    // Default minimum element size (from config)
+    Real default_min_size = config_.min_element_size;
+    if (config_.enforce_pixel_limit && bathymetry_ && default_min_size <= 0.0) {
+        default_min_size = bathymetry_->min_element_size();
     }
 
     // Dorfler marking: select elements capturing theta fraction of total squared error
@@ -374,11 +400,27 @@ std::vector<Index> LinearMeshGenerator::select_for_refinement(
         }
 
         // Check minimum element size constraint (pixel resolution limit)
-        if (config_.enforce_pixel_limit && min_size > 0.0) {
-            auto size = mesh_.element_size(elem);
-            Real elem_min_size = std::min(size(0), size(1));
-            if (elem_min_size <= min_size) {
-                continue;  // Already at or below pixel resolution
+        if (config_.enforce_pixel_limit) {
+            Real min_size = default_min_size;
+
+            // For multi-source bathymetry, use per-element pixel limits
+            if (multi_bathy_) {
+                const auto& bounds = mesh_.element_bounds(elem);
+                Real cx = (bounds.xmin + bounds.xmax) / 2.0;
+                Real cy = (bounds.ymin + bounds.ymax) / 2.0;
+
+                const BathymetryData* source = multi_bathy_->get_source_for_point(cx, cy);
+                if (source) {
+                    min_size = source->min_element_size();
+                }
+            }
+
+            if (min_size > 0.0) {
+                auto size = mesh_.element_size(elem);
+                Real elem_min_size = std::min(size(0), size(1));
+                if (elem_min_size <= min_size) {
+                    continue;  // Already at or below pixel resolution for this source
+                }
             }
         }
 
@@ -434,10 +476,20 @@ std::string LinearMeshGenerator::check_convergence(Real max_err) const {
     return "";  // Not converged
 }
 
-void LinearMeshGenerator::write_vtk(const std::string& filename) const {
+void LinearMeshGenerator::write_vtk(const std::string& filename,
+                                     VTKWriterType writer_type) const {
     QuadtreeVTKWriter writer;
     if (surface_ && surface_->is_fitted()) {
-        writer.write(filename, mesh_, *surface_);
+        if (writer_type == VTKWriterType::Water) {
+            if (!depth_func_) {
+                throw std::runtime_error(
+                    "LinearMeshGenerator::write_vtk: cannot use VTKWriterType::Water "
+                    "without a depth function. Load bathymetry first.");
+            }
+            writer.write_water_only(filename, mesh_, *surface_, depth_func_);
+        } else {
+            writer.write(filename, mesh_, *surface_);
+        }
     } else {
         writer.write_mesh_only(filename, mesh_);
     }

@@ -178,6 +178,71 @@ void LinearBezierSurface::fit_incremental(const BathymetryData& data,
     is_fitted_ = true;
 }
 
+void LinearBezierSurface::fit(std::function<Real(Real, Real)> depth_func) {
+    // Simple fitting: sample depth function at each global DOF position
+    // This is a direct interpolation (no smoothing)
+
+    // Build position array for global DOFs
+    std::vector<Vec2> dof_positions(num_global_dofs_);
+    std::vector<bool> dof_set(num_global_dofs_, false);
+
+    for (Index elem = 0; elem < mesh_->num_elements(); ++elem) {
+        const auto& bounds = mesh_->element_bounds(elem);
+        std::array<Vec2, 4> corners = {
+            {Vec2{bounds.xmin, bounds.ymin}, Vec2{bounds.xmax, bounds.ymin},
+             Vec2{bounds.xmin, bounds.ymax}, Vec2{bounds.xmax, bounds.ymax}}};
+
+        for (int c = 0; c < 4; ++c) {
+            Index dof = dof_map_[elem][c];
+            if (!dof_set[dof]) {
+                dof_positions[dof] = corners[c];
+                dof_set[dof] = true;
+            }
+        }
+    }
+
+    // Sample depth function at each DOF position
+    for (Index dof = 0; dof < num_global_dofs_; ++dof) {
+        Real x = dof_positions[dof](0);
+        Real y = dof_positions[dof](1);
+        Real depth = depth_func(x, y);
+        // Store as negative z (bathymetry is depth positive downward)
+        coefficients_(dof) = -depth;
+    }
+
+    is_fitted_ = true;
+}
+
+void LinearBezierSurface::fit_incremental(std::function<Real(Real, Real)> depth_func,
+                                          const std::vector<Index>& new_elements,
+                                          Index first_new_dof) {
+    // Only fit DOFs associated with new elements
+    // Existing DOF values are preserved (already sampled in previous fit)
+
+    for (Index elem : new_elements) {
+        if (elem >= static_cast<Index>(dof_map_.size()))
+            continue;
+
+        const auto& bounds = mesh_->element_bounds(elem);
+        std::array<Vec2, 4> corners = {
+            {Vec2{bounds.xmin, bounds.ymin}, Vec2{bounds.xmax, bounds.ymin},
+             Vec2{bounds.xmin, bounds.ymax}, Vec2{bounds.xmax, bounds.ymax}}};
+
+        for (int c = 0; c < 4; ++c) {
+            Index dof = dof_map_[elem][c];
+            // Only sample if this is a new DOF (created after update_mesh was called)
+            if (dof >= first_new_dof) {
+                Real x = corners[c](0);
+                Real y = corners[c](1);
+                Real depth = depth_func(x, y);
+                coefficients_(dof) = -depth;
+            }
+        }
+    }
+
+    is_fitted_ = true;
+}
+
 Real LinearBezierSurface::evaluate(Real x, Real y) const {
     if (!is_fitted_) {
         throw std::runtime_error("Surface not fitted - call fit() first");
@@ -190,6 +255,22 @@ Real LinearBezierSurface::evaluate(Real x, Real y) const {
     }
 
     // Map to reference coordinates
+    Real xi, eta;
+    world_to_reference(x, y, elem, xi, eta);
+
+    // Evaluate bilinear interpolation
+    Eigen::Vector4d N = basis(xi, eta);
+    Eigen::Vector4d coeffs = element_coefficients(elem);
+
+    return N.dot(coeffs);
+}
+
+Real LinearBezierSurface::evaluate_in_element(Index elem, Real x, Real y) const {
+    if (!is_fitted_) {
+        throw std::runtime_error("Surface not fitted - call fit() first");
+    }
+
+    // Map to reference coordinates (no element lookup needed)
     Real xi, eta;
     world_to_reference(x, y, elem, xi, eta);
 

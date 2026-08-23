@@ -275,4 +275,61 @@ LoadingStats MultiSourceBathymetry::get_loading_stats() const {
 
 bool MultiSourceBathymetry::is_available() { return true; }
 
+const BathymetryData& MultiSourceBathymetry::get_primary() const {
+    return impl_->primary;
+}
+
+bool MultiSourceBathymetry::is_in_primary(Real x, Real y) const {
+    return Impl::is_inside_bounds(impl_->primary, x, y);
+}
+
+const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y) const {
+    // Check primary source first (EPSG:3034)
+    if (Impl::is_inside_bounds(impl_->primary, x, y)) {
+        return &impl_->primary;
+    }
+
+    // Transform to EPSG:4326 for tile lookup
+    double lon = x, lat = y;
+    if (!impl_->to_4326->Transform(1, &lon, &lat)) {
+        return nullptr;
+    }
+
+    // Search tiles (with lazy loading)
+    for (auto &tile : impl_->tiles) {
+        if (Impl::is_inside_bounds(tile.bounds, lon, lat)) {
+            // Load tile data if not already loaded
+            if (!tile.data.has_value()) {
+                auto start = std::chrono::high_resolution_clock::now();
+                std::cout << "[MultiSourceBathymetry] Loading tile on demand: " << tile.path
+                          << std::endl;
+
+                tile.data = impl_->reader.load(tile.path);
+
+                auto end = std::chrono::high_resolution_clock::now();
+                double ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+                if (tile.data->is_valid()) {
+                    size_t bytes = tile.data->elevation.size() * sizeof(float);
+                    std::cout << "[MultiSourceBathymetry] Tile loaded: " << tile.data->sizex << "x"
+                              << tile.data->sizey << " (" << bytes / (1024 * 1024) << " MB) in "
+                              << ms << " ms" << std::endl;
+
+                    impl_->tiles_loaded++;
+                    impl_->total_bytes_loaded += bytes;
+                } else {
+                    std::cout << "[MultiSourceBathymetry] Warning: Failed to load tile: "
+                              << tile.path << std::endl;
+                }
+            }
+
+            if (tile.data->is_valid()) {
+                return &(*tile.data);
+            }
+        }
+    }
+
+    return nullptr;
+}
+
 } // namespace drifter

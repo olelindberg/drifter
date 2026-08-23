@@ -232,6 +232,7 @@ set(IO_SOURCES
     src/io/netcdf_io.cpp
     src/io/vtk_io.cpp
     src/io/vtk_writer.cpp
+    src/io/water_vtk_writer.cpp
     src/io/zarr_writer.cpp
     src/io/restart.cpp
     src/io/quadtree_vtk_writer.cpp

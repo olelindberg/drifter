@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
 
 namespace drifter {
 
@@ -86,6 +87,137 @@ void QuadtreeVTKWriter::write(const std::string& filename,
     f << "        <DataArray type=\"Float64\" Name=\"area\" format=\"ascii\">\n";
     for (Index elem = 0; elem < ncells; ++elem) {
         auto size = mesh.element_size(elem);
+        f << "          " << (size(0) * size(1)) << "\n";
+    }
+    f << "        </DataArray>\n";
+
+    f << "      </CellData>\n";
+
+    // Close tags
+    f << "    </Piece>\n";
+    f << "  </UnstructuredGrid>\n";
+    f << "</VTKFile>\n";
+
+    f.close();
+}
+
+void QuadtreeVTKWriter::write_water_only(const std::string& filename,
+                                          const QuadtreeAdapter& mesh,
+                                          const LinearBezierSurface& surface,
+                                          std::function<Real(Real, Real)> depth_func) {
+    if (!depth_func) {
+        throw std::runtime_error(
+            "QuadtreeVTKWriter::write_water_only: depth_func is null. "
+            "Provide a valid depth function.");
+    }
+
+    // First pass: identify water elements and store depths
+    std::vector<Index> water_elements;
+    std::vector<Real> element_depths;
+
+    for (Index elem = 0; elem < mesh.num_elements(); ++elem) {
+        const auto& bounds = mesh.element_bounds(elem);
+        Real cx = 0.5 * (bounds.xmin + bounds.xmax);
+        Real cy = 0.5 * (bounds.ymin + bounds.ymax);
+        Real depth = depth_func(cx, cy);
+
+        if (depth > 0.0) {
+            water_elements.push_back(elem);
+            element_depths.push_back(depth);
+        }
+    }
+
+    if (water_elements.empty()) {
+        throw std::runtime_error(
+            "QuadtreeVTKWriter::write_water_only: no water elements found. "
+            "All " + std::to_string(mesh.num_elements()) +
+            " elements have depth <= 0 at their centers.");
+    }
+
+    std::string full_path = filename + ".vtu";
+    std::ofstream f(full_path);
+    if (!f.is_open()) {
+        throw std::runtime_error(
+            "QuadtreeVTKWriter::write_water_only: could not open '" + full_path + "' for writing.");
+    }
+
+    Index ncells = static_cast<Index>(water_elements.size());
+    Index npoints = ncells * 4;
+
+    // VTK XML header
+    f << "<?xml version=\"1.0\"?>\n";
+    f << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
+    f << "  <UnstructuredGrid>\n";
+    f << "    <Piece NumberOfPoints=\"" << npoints << "\" NumberOfCells=\"" << ncells << "\">\n";
+
+    // Points
+    f << "      <Points>\n";
+    f << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    for (size_t i = 0; i < water_elements.size(); ++i) {
+        Index elem = water_elements[i];
+        const auto& bounds = mesh.element_bounds(elem);
+        Eigen::Vector4d z = surface.element_coefficients(elem);
+
+        f << std::setprecision(12);
+        f << "          " << bounds.xmin << " " << bounds.ymin << " " << z(0) << "\n";
+        f << "          " << bounds.xmax << " " << bounds.ymin << " " << z(1) << "\n";
+        f << "          " << bounds.xmax << " " << bounds.ymax << " " << z(3) << "\n";
+        f << "          " << bounds.xmin << " " << bounds.ymax << " " << z(2) << "\n";
+    }
+    f << "        </DataArray>\n";
+    f << "      </Points>\n";
+
+    // Cells
+    f << "      <Cells>\n";
+    f << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
+    for (Index i = 0; i < ncells; ++i) {
+        Index base = i * 4;
+        f << "          " << base << " " << base+1 << " " << base+2 << " " << base+3 << "\n";
+    }
+    f << "        </DataArray>\n";
+
+    f << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+    for (Index i = 0; i < ncells; ++i) {
+        f << "          " << (i + 1) * 4 << "\n";
+    }
+    f << "        </DataArray>\n";
+
+    f << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+    for (Index i = 0; i < ncells; ++i) {
+        f << "          9\n";
+    }
+    f << "        </DataArray>\n";
+    f << "      </Cells>\n";
+
+    // Cell data
+    f << "      <CellData>\n";
+
+    // Depth field
+    f << "        <DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
+    for (size_t i = 0; i < element_depths.size(); ++i) {
+        f << "          " << std::setprecision(12) << element_depths[i] << "\n";
+    }
+    f << "        </DataArray>\n";
+
+    // Refinement level
+    f << "        <DataArray type=\"Int32\" Name=\"level\" format=\"ascii\">\n";
+    for (size_t i = 0; i < water_elements.size(); ++i) {
+        auto level = mesh.element_level(water_elements[i]);
+        f << "          " << level.max_level() << "\n";
+    }
+    f << "        </DataArray>\n";
+
+    // Element index (original mesh index)
+    f << "        <DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
+    for (size_t i = 0; i < water_elements.size(); ++i) {
+        f << "          " << water_elements[i] << "\n";
+    }
+    f << "        </DataArray>\n";
+
+    // Element area
+    f << "        <DataArray type=\"Float64\" Name=\"area\" format=\"ascii\">\n";
+    for (size_t i = 0; i < water_elements.size(); ++i) {
+        auto size = mesh.element_size(water_elements[i]);
         f << "          " << (size(0) * size(1)) << "\n";
     }
     f << "        </DataArray>\n";

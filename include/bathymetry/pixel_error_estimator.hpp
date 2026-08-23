@@ -12,9 +12,16 @@
 #include "core/types.hpp"
 #include "mesh/geotiff_reader.hpp"
 #include <cmath>
+#include <concepts>
 #include <vector>
 
 namespace drifter {
+
+/// @brief Concept for surfaces supporting element-aware evaluation (skips find_element)
+template <typename T>
+concept HasEvaluateInElement = requires(const T& t, Index elem, Real x, Real y) {
+    { t.evaluate_in_element(elem, x, y) } -> std::convertible_to<Real>;
+};
 
 /// @brief Per-element pixel-based error estimate
 struct PixelElementError {
@@ -168,7 +175,15 @@ PixelElementError PixelErrorEstimator<SurfaceType>::estimate_element(Index elem)
             }
 
             // Evaluate surface at pixel center
-            Real z_surface = surface_.evaluate(static_cast<Real>(wx), static_cast<Real>(wy));
+            // Use optimized path if available (skips element lookup)
+            Real z_surface;
+            if constexpr (HasEvaluateInElement<SurfaceType>) {
+                z_surface = surface_.evaluate_in_element(
+                    elem, static_cast<Real>(wx), static_cast<Real>(wy));
+            } else {
+                z_surface = surface_.evaluate(
+                    static_cast<Real>(wx), static_cast<Real>(wy));
+            }
 
             // Skip if surface evaluation returned NaN (can happen at boundary elements
             // where DOF coefficients weren't properly initialized)

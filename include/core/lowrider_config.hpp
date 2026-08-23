@@ -35,10 +35,17 @@ struct LowriderRefinementConfig {
     Real min_element_size = 0.0;     ///< Minimum element size (0 = auto from GeoTIFF)
 };
 
+/// @brief VTK writer type selection
+enum class VTKWriterType {
+    All,   ///< Write all elements (existing VTKWriter)
+    Water  ///< Write only water elements (WaterVTKWriter)
+};
+
 /// @brief Output configuration
 struct LowriderOutputConfig {
     std::string vtk_file = "lowrider_mesh";
-    bool write_per_iteration = false;  ///< Write VTK after each iteration
+    bool write_per_iteration = false;     ///< Write VTK after each iteration
+    VTKWriterType vtk_writer_type = VTKWriterType::All;  ///< Type of VTK writer to use
 };
 
 /// @brief Data configuration (matches drifter format)

@@ -107,6 +107,27 @@ public:
     /// @brief Check if GDAL support is available
     static bool is_available();
 
+    /// @brief Get the primary source data
+    /// @return Reference to the primary BathymetryData
+    const BathymetryData& get_primary() const;
+
+    /// @brief Get the data source for a point (EPSG:3034 coordinates)
+    ///
+    /// Returns a pointer to the BathymetryData that covers the given point.
+    /// This allows per-element pixel-based operations using the correct source.
+    ///
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return Pointer to BathymetryData, or nullptr if point is outside all sources
+    /// @note May trigger lazy loading of tile data
+    const BathymetryData* get_source_for_point(Real x, Real y) const;
+
+    /// @brief Check if a point is inside the primary source bounds
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return true if inside primary bounds
+    bool is_in_primary(Real x, Real y) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
