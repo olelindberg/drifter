@@ -283,6 +283,10 @@ bool MultiSourceBathymetry::is_in_primary(Real x, Real y) const {
     return Impl::is_inside_bounds(impl_->primary, x, y);
 }
 
+bool MultiSourceBathymetry::transform_to_4326(double& x, double& y) const {
+    return impl_->to_4326->Transform(1, &x, &y) != 0;
+}
+
 const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y) const {
     // Check primary source first (EPSG:3034)
     if (Impl::is_inside_bounds(impl_->primary, x, y)) {

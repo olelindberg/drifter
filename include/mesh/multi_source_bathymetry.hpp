@@ -128,6 +128,12 @@ public:
     /// @return true if inside primary bounds
     bool is_in_primary(Real x, Real y) const;
 
+    /// @brief Transform a point from EPSG:3034 to EPSG:4326
+    /// @param x Input/output: X coordinate (EPSG:3034 in, longitude out)
+    /// @param y Input/output: Y coordinate (EPSG:3034 in, latitude out)
+    /// @return true if transformation succeeded
+    bool transform_to_4326(double& x, double& y) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
