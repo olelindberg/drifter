@@ -92,6 +92,16 @@ LowriderConfig LowriderConfigReader::load(const std::string &path) {
     }
   }
 
+  // Coastline configuration (optional)
+  if (tree.count("coastline")) {
+    const auto &coast               = tree.get_child("coastline");
+    config.coastline.file           = coast.get<std::string>("file", "");
+    config.coastline.layer          = coast.get<std::string>("layer", "");
+    config.coastline.srs            = coast.get<std::string>("srs", "");
+    config.coastline.max_level      = coast.get<int>("max_level", 10);
+    config.coastline.min_polygon_area = coast.get<Real>("min_polygon_area", 0.0);
+  }
+
   config.verbose = tree.get<bool>("verbose", true);
 
   return config;
@@ -120,6 +130,24 @@ void print_lowrider_config(const LowriderConfig &config) {
   std::cout << "  VTK writer type: "
             << (config.output.vtk_writer_type == VTKWriterType::Water ? "water" : "all")
             << "\n";
+
+  // Coastline configuration
+  if (config.coastline.enabled()) {
+    std::cout << "  Coastline file: " << config.coastline.file << "\n";
+    if (!config.coastline.layer.empty()) {
+      std::cout << "  Coastline layer: " << config.coastline.layer << "\n";
+    }
+    if (!config.coastline.srs.empty()) {
+      std::cout << "  Coastline SRS: " << config.coastline.srs << "\n";
+    }
+    std::cout << "  Coastline max level: " << config.coastline.max_level << "\n";
+    if (config.coastline.min_polygon_area > 0.0) {
+      std::cout << "  Coastline min polygon area: " << config.coastline.min_polygon_area << "\n";
+    }
+  } else {
+    std::cout << "  Coastline: (disabled)\n";
+  }
+
   std::cout << std::endl;
 }
 

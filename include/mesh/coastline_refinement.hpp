@@ -36,6 +36,17 @@ public:
     bool load(const std::string &filename, const std::string &layer_name = "",
               const std::string &target_srs = "");
 
+    /// @brief Load land polygons with spatial filter (for large global datasets)
+    /// Only features intersecting the domain bounds are loaded.
+    /// @param filename Path to the vector file (shapefile, GeoPackage, etc.)
+    /// @param layer_name Layer name to read (empty = first layer)
+    /// @param target_srs Target spatial reference system (e.g., "EPSG:3034")
+    /// @param domain_xmin, domain_ymin, domain_xmax, domain_ymax Domain bounds in target SRS
+    /// @return true if successful
+    bool load(const std::string &filename, const std::string &layer_name,
+              const std::string &target_srs,
+              Real domain_xmin, Real domain_ymin, Real domain_xmax, Real domain_ymax);
+
     /// @brief Get the number of polygons
     size_t num_polygons() const;
 
@@ -52,6 +63,18 @@ public:
     /// @brief Build coastline index from loaded polygons
     /// @return Shared pointer to the built index
     std::shared_ptr<CoastlineIndex> build_index() const;
+
+    /// @brief Build coastline index filtered to domain bounds
+    /// Only segments intersecting the domain bounding box are indexed.
+    /// This is critical for performance with global datasets.
+    /// @param xmin, ymin, xmax, ymax Domain bounding box
+    /// @return Shared pointer to the built index
+    std::shared_ptr<CoastlineIndex> build_index(Real xmin, Real ymin,
+                                                 Real xmax, Real ymax) const;
+
+    /// @brief Write loaded polygons to VTK file (for debugging)
+    /// @param filename Output filename (without extension)
+    void write_vtk(const std::string &filename) const;
 
     /// @brief Check if GDAL/OGR is available
     static bool is_available();

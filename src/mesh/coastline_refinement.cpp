@@ -12,8 +12,10 @@
 #include <boost/geometry/geometries/segment.hpp>
 #include <boost/geometry/index/rtree.hpp>
 
+#include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <vector>
 
 namespace drifter {
@@ -40,7 +42,7 @@ using SegmentRTree = bgi::rtree<SegmentValue, bgi::rstar<16>>;
 
 // PIMPL implementation structs
 struct CoastlineReader::Impl {
-    MultiPolygon2D polygons;
+    std::vector<Segment2D> segments;  // Store segments directly, no polygon overhead
     std::string error;
 };
 
@@ -52,32 +54,85 @@ struct CoastlineIndex::Impl {
 // Internal utility functions (moved from public header)
 namespace {
 
-void swap_xy_impl(MultiPolygon2D &mp) {
-    for (auto &poly : mp) {
-        for (auto &pt : poly.outer()) {
-            double x = bg::get<0>(pt);
-            double y = bg::get<1>(pt);
-            bg::set<0>(pt, y);
-            bg::set<1>(pt, x);
-        }
-        for (auto &inner : poly.inners()) {
-            for (auto &pt : inner) {
-                double x = bg::get<0>(pt);
-                double y = bg::get<1>(pt);
-                bg::set<0>(pt, y);
-                bg::set<1>(pt, x);
-            }
-        }
+void swap_xy_segments(std::vector<Segment2D> &segments) {
+    for (auto &seg : segments) {
+        Point2D p1 = seg.first;
+        Point2D p2 = seg.second;
+        seg.first = Point2D(bg::get<1>(p1), bg::get<0>(p1));
+        seg.second = Point2D(bg::get<1>(p2), bg::get<0>(p2));
     }
-    bg::correct(mp);
 }
 
-void remove_small_polygons_impl(MultiPolygon2D &mp, double min_area) {
-    for (auto it = mp.begin(); it != mp.end();) {
-        if (bg::area(it->outer()) < min_area) {
-            it = mp.erase(it);
-        } else {
-            ++it;
+// Helper to add segments from OGR geometry
+void add_segments_from_linestring(const OGRLineString* ls,
+                                   OGRCoordinateTransformation* coord_tx,
+                                   std::vector<Segment2D>& out) {
+    if (!ls || ls->getNumPoints() < 2) return;
+
+    int n = ls->getNumPoints();
+    std::vector<double> x(n), y(n);
+    for (int i = 0; i < n; ++i) {
+        x[i] = ls->getX(i);
+        y[i] = ls->getY(i);
+    }
+
+    // Transform if needed
+    if (coord_tx) {
+        if (!coord_tx->Transform(n, x.data(), y.data())) {
+            return;  // Skip failed transform
+        }
+    }
+
+    // Add segments
+    for (int i = 0; i + 1 < n; ++i) {
+        out.emplace_back(Point2D(x[i], y[i]), Point2D(x[i+1], y[i+1]));
+    }
+}
+
+void add_segments_from_polygon(const OGRPolygon* poly,
+                                OGRCoordinateTransformation* coord_tx,
+                                std::vector<Segment2D>& out) {
+    if (!poly) return;
+
+    // Exterior ring
+    const OGRLinearRing* ext = poly->getExteriorRing();
+    if (ext) {
+        add_segments_from_linestring(ext, coord_tx, out);
+    }
+
+    // Interior rings
+    for (int i = 0; i < poly->getNumInteriorRings(); ++i) {
+        const OGRLinearRing* inner = poly->getInteriorRing(i);
+        if (inner) {
+            add_segments_from_linestring(inner, coord_tx, out);
+        }
+    }
+}
+
+void collect_segments_recursive(const OGRGeometry* g,
+                                 OGRCoordinateTransformation* coord_tx,
+                                 std::vector<Segment2D>& out) {
+    if (!g) return;
+    OGRwkbGeometryType t = wkbFlatten(g->getGeometryType());
+
+    if (t == wkbLineString) {
+        add_segments_from_linestring(g->toLineString(), coord_tx, out);
+    } else if (t == wkbPolygon) {
+        add_segments_from_polygon(g->toPolygon(), coord_tx, out);
+    } else if (t == wkbMultiLineString) {
+        const OGRMultiLineString* mls = g->toMultiLineString();
+        for (int i = 0; i < mls->getNumGeometries(); ++i) {
+            add_segments_from_linestring(mls->getGeometryRef(i)->toLineString(), coord_tx, out);
+        }
+    } else if (t == wkbMultiPolygon) {
+        const OGRMultiPolygon* mp = g->toMultiPolygon();
+        for (int i = 0; i < mp->getNumGeometries(); ++i) {
+            add_segments_from_polygon(mp->getGeometryRef(i), coord_tx, out);
+        }
+    } else if (t == wkbGeometryCollection) {
+        const OGRGeometryCollection* gc = g->toGeometryCollection();
+        for (int i = 0; i < gc->getNumGeometries(); ++i) {
+            collect_segments_recursive(gc->getGeometryRef(i), coord_tx, out);
         }
     }
 }
@@ -99,81 +154,6 @@ CoastlineIndex &CoastlineIndex::operator=(CoastlineIndex &&) noexcept = default;
 // =============================================================================
 // CoastlineReader implementation
 // =============================================================================
-
-namespace {
-
-void ogr_linear_ring_to_boost_ring(const OGRLinearRing* lr, Ring2D &ring) {
-    if (!lr)
-        return;
-    int n = lr->getNumPoints();
-    // OGR rings are closed (last == first). Skip the last duplicate point.
-    int limit = (n >= 2) ? n - 1 : n;
-    ring.clear();
-    ring.reserve(limit);
-    for (int i = 0; i < limit; ++i) {
-        ring.emplace_back(lr->getX(i), lr->getY(i));
-    }
-}
-
-bool ogr_polygon_to_boost_polygon(const OGRPolygon* opoly, Polygon2D &bp) {
-    if (!opoly)
-        return false;
-
-    // Exterior ring
-    const OGRLinearRing* ext = opoly->getExteriorRing();
-    if (!ext || ext->getNumPoints() < 4)
-        return false;
-
-    Ring2D outer;
-    ogr_linear_ring_to_boost_ring(ext, outer);
-    bp.outer().assign(outer.begin(), outer.end());
-
-    // Interior rings (holes)
-    bp.inners().clear();
-    const int nh = opoly->getNumInteriorRings();
-    bp.inners().reserve(nh);
-    for (int i = 0; i < nh; ++i) {
-        const OGRLinearRing* in = opoly->getInteriorRing(i);
-        if (!in || in->getNumPoints() < 4)
-            continue;
-        Ring2D inner;
-        ogr_linear_ring_to_boost_ring(in, inner);
-        bp.inners().emplace_back();
-        bp.inners().back().assign(inner.begin(), inner.end());
-    }
-
-    // Fix orientation/closure to Boost expectations
-    bg::correct(bp);
-    return true;
-}
-
-void collect_polygons(const OGRGeometry* g, std::vector<const OGRPolygon*> &out) {
-    if (!g)
-        return;
-    OGRwkbGeometryType t = wkbFlatten(g->getGeometryType());
-
-    if (t == wkbPolygon) {
-        out.push_back(g->toPolygon());
-        return;
-    }
-    if (t == wkbMultiPolygon) {
-        const OGRMultiPolygon* mp = g->toMultiPolygon();
-        for (int i = 0; i < mp->getNumGeometries(); ++i) {
-            out.push_back(mp->getGeometryRef(i));
-        }
-        return;
-    }
-    if (t == wkbGeometryCollection) {
-        const OGRGeometryCollection* gc = g->toGeometryCollection();
-        for (int i = 0; i < gc->getNumGeometries(); ++i) {
-            collect_polygons(gc->getGeometryRef(i), out);
-        }
-        return;
-    }
-    // Ignore lines/points
-}
-
-} // anonymous namespace
 
 bool CoastlineReader::load(const std::string &filename, const std::string &layer_name,
                            const std::string &target_srs) {
@@ -203,23 +183,122 @@ bool CoastlineReader::load(const std::string &filename, const std::string &layer
 
     // Optional coordinate transformation
     std::unique_ptr<OGRCoordinateTransformation> coord_tx;
-    if (!target_srs.empty()) {
+    if (!target_srs.empty() && layer->GetSpatialRef()) {
         OGRSpatialReference srcSRS = *layer->GetSpatialRef();
         OGRSpatialReference dstSRS;
         if (dstSRS.SetFromUserInput(target_srs.c_str()) != OGRERR_NONE) {
             impl_->error = "Invalid target SRS: " + target_srs;
             return false;
         }
-        if (layer->GetSpatialRef()) {
-            coord_tx.reset(OGRCreateCoordinateTransformation(&srcSRS, &dstSRS));
-            if (!coord_tx) {
-                impl_->error = "Failed to create coordinate transformation";
-                return false;
-            }
+        // Use traditional GIS axis order (x=lon/easting, y=lat/northing)
+        srcSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        dstSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        coord_tx.reset(OGRCreateCoordinateTransformation(&srcSRS, &dstSRS));
+        if (!coord_tx) {
+            impl_->error = "Failed to create coordinate transformation";
+            return false;
         }
     }
 
-    impl_->polygons.clear();
+    impl_->segments.clear();
+
+    layer->ResetReading();
+    OGRFeature* feat = nullptr;
+    while ((feat = layer->GetNextFeature()) != nullptr) {
+        std::unique_ptr<OGRFeature> feat_guard(feat);
+        OGRGeometry* geom = feat->GetGeometryRef();
+        if (!geom) continue;
+
+        // Work on a 2D clone
+        std::unique_ptr<OGRGeometry> g2d(geom->clone());
+        g2d->flattenTo2D();
+
+        // Collect all segments directly (handles LineStrings, Polygons, etc.)
+        collect_segments_recursive(g2d.get(), coord_tx.get(), impl_->segments);
+    }
+
+    return true;
+}
+
+bool CoastlineReader::load(const std::string &filename, const std::string &layer_name,
+                           const std::string &target_srs,
+                           Real domain_xmin, Real domain_ymin,
+                           Real domain_xmax, Real domain_ymax) {
+    GDALAllRegister();
+
+    std::unique_ptr<GDALDataset> ds(static_cast<GDALDataset*>(
+        GDALOpenEx(filename.c_str(), GDAL_OF_VECTOR, nullptr, nullptr, nullptr)));
+    if (!ds) {
+        impl_->error = "Failed to open: " + filename;
+        return false;
+    }
+
+    OGRLayer* layer = nullptr;
+    if (!layer_name.empty()) {
+        layer = ds->GetLayerByName(layer_name.c_str());
+        if (!layer) {
+            impl_->error = "Layer not found: " + layer_name;
+            return false;
+        }
+    } else {
+        layer = ds->GetLayer(0);
+        if (!layer) {
+            impl_->error = "No layers in dataset";
+            return false;
+        }
+    }
+
+    // Set up coordinate transformations
+    std::unique_ptr<OGRCoordinateTransformation> coord_tx;        // source -> target
+    std::unique_ptr<OGRCoordinateTransformation> coord_tx_inv;    // target -> source (for filter)
+
+    if (!target_srs.empty() && layer->GetSpatialRef()) {
+        OGRSpatialReference srcSRS = *layer->GetSpatialRef();
+        OGRSpatialReference dstSRS;
+        if (dstSRS.SetFromUserInput(target_srs.c_str()) != OGRERR_NONE) {
+            impl_->error = "Invalid target SRS: " + target_srs;
+            return false;
+        }
+
+        // Use traditional GIS axis order (x=lon/easting, y=lat/northing)
+        // This is critical for EPSG:4326 which officially uses lat/lon order
+        srcSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        dstSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+        coord_tx.reset(OGRCreateCoordinateTransformation(&srcSRS, &dstSRS));
+        if (!coord_tx) {
+            impl_->error = "Failed to create coordinate transformation";
+            return false;
+        }
+
+        // Inverse transformation for domain bounds
+        coord_tx_inv.reset(OGRCreateCoordinateTransformation(&dstSRS, &srcSRS));
+        if (!coord_tx_inv) {
+            impl_->error = "Failed to create inverse coordinate transformation";
+            return false;
+        }
+
+        // Transform domain bounds to source SRS for spatial filter
+        double filter_xmin = domain_xmin, filter_ymin = domain_ymin;
+        double filter_xmax = domain_xmax, filter_ymax = domain_ymax;
+
+        // Transform all four corners and take envelope
+        double corners_x[4] = {domain_xmin, domain_xmax, domain_xmax, domain_xmin};
+        double corners_y[4] = {domain_ymin, domain_ymin, domain_ymax, domain_ymax};
+        if (coord_tx_inv->Transform(4, corners_x, corners_y)) {
+            filter_xmin = std::min({corners_x[0], corners_x[1], corners_x[2], corners_x[3]});
+            filter_xmax = std::max({corners_x[0], corners_x[1], corners_x[2], corners_x[3]});
+            filter_ymin = std::min({corners_y[0], corners_y[1], corners_y[2], corners_y[3]});
+            filter_ymax = std::max({corners_y[0], corners_y[1], corners_y[2], corners_y[3]});
+        }
+
+        // Apply spatial filter to only read features within domain
+        layer->SetSpatialFilterRect(filter_xmin, filter_ymin, filter_xmax, filter_ymax);
+        std::cout << "Applied spatial filter: [" << filter_xmin << ", " << filter_xmax
+                  << "] x [" << filter_ymin << ", " << filter_ymax << "]\n";
+    }
+
+    impl_->segments.clear();
 
     layer->ResetReading();
     OGRFeature* feat = nullptr;
@@ -233,72 +312,120 @@ bool CoastlineReader::load(const std::string &filename, const std::string &layer
         std::unique_ptr<OGRGeometry> g2d(geom->clone());
         g2d->flattenTo2D();
 
-        if (coord_tx) {
-            if (g2d->transform(coord_tx.get()) != OGRERR_NONE) {
-                continue; // Skip failed transforms
-            }
-        }
-
-        std::vector<const OGRPolygon*> polys;
-        collect_polygons(g2d.get(), polys);
-        for (const OGRPolygon* op : polys) {
-            Polygon2D bp;
-            if (ogr_polygon_to_boost_polygon(op, bp)) {
-                impl_->polygons.push_back(std::move(bp));
-            }
-        }
+        // Collect all segments directly (handles LineStrings, Polygons, etc.)
+        collect_segments_recursive(g2d.get(), coord_tx.get(), impl_->segments);
     }
 
-    bg::correct(impl_->polygons);
     return true;
 }
 
 bool CoastlineReader::is_available() { return true; }
 
-void CoastlineReader::swap_xy() { swap_xy_impl(impl_->polygons); }
+void CoastlineReader::swap_xy() { swap_xy_segments(impl_->segments); }
 
-void CoastlineReader::remove_small_polygons(double min_area) {
-    remove_small_polygons_impl(impl_->polygons, min_area);
+void CoastlineReader::remove_small_polygons(double /*min_area*/) {
+    // No-op for segment-based storage (min_polygon_area doesn't apply to line segments)
 }
 
-size_t CoastlineReader::num_polygons() const { return impl_->polygons.size(); }
+size_t CoastlineReader::num_polygons() const { return impl_->segments.size(); }
 
 const std::string &CoastlineReader::last_error() const { return impl_->error; }
 
 void CoastlineReader::bounding_box(Real &xmin, Real &ymin, Real &xmax, Real &ymax) const {
-    Box2D bbox;
-    bg::envelope(impl_->polygons, bbox);
-    xmin = bg::get<0>(bbox.min_corner());
-    ymin = bg::get<1>(bbox.min_corner());
-    xmax = bg::get<0>(bbox.max_corner());
-    ymax = bg::get<1>(bbox.max_corner());
+    if (impl_->segments.empty()) {
+        xmin = ymin = xmax = ymax = 0;
+        return;
+    }
+    xmin = ymin = std::numeric_limits<double>::max();
+    xmax = ymax = std::numeric_limits<double>::lowest();
+    for (const auto &seg : impl_->segments) {
+        xmin = std::min({xmin, bg::get<0>(seg.first), bg::get<0>(seg.second)});
+        ymin = std::min({ymin, bg::get<1>(seg.first), bg::get<1>(seg.second)});
+        xmax = std::max({xmax, bg::get<0>(seg.first), bg::get<0>(seg.second)});
+        ymax = std::max({ymax, bg::get<1>(seg.first), bg::get<1>(seg.second)});
+    }
+}
+
+void CoastlineReader::write_vtk(const std::string &filename) const {
+    std::string vtk_filename = filename + ".vtp";
+    std::ofstream out(vtk_filename);
+    if (!out) {
+        std::cerr << "Failed to open " << vtk_filename << " for writing\n";
+        return;
+    }
+
+    // Each segment has 2 points
+    size_t total_segments = impl_->segments.size();
+    size_t total_points = total_segments * 2;
+
+    out << "<?xml version=\"1.0\"?>\n";
+    out << "<VTKFile type=\"PolyData\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+    out << "  <PolyData>\n";
+    out << "    <Piece NumberOfPoints=\"" << total_points
+        << "\" NumberOfVerts=\"0\" NumberOfLines=\"" << total_segments
+        << "\" NumberOfStrips=\"0\" NumberOfPolys=\"0\">\n";
+
+    // Points
+    out << "      <Points>\n";
+    out << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    for (const auto &seg : impl_->segments) {
+        out << "          " << bg::get<0>(seg.first) << " " << bg::get<1>(seg.first) << " 0\n";
+        out << "          " << bg::get<0>(seg.second) << " " << bg::get<1>(seg.second) << " 0\n";
+    }
+    out << "        </DataArray>\n";
+    out << "      </Points>\n";
+
+    // Lines (connectivity)
+    out << "      <Lines>\n";
+    out << "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n";
+    for (size_t i = 0; i < total_segments; ++i) {
+        out << "          " << (i * 2) << " " << (i * 2 + 1) << "\n";
+    }
+    out << "        </DataArray>\n";
+    out << "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n";
+    for (size_t i = 0; i < total_segments; ++i) {
+        out << "          " << ((i + 1) * 2) << "\n";
+    }
+    out << "        </DataArray>\n";
+    out << "      </Lines>\n";
+
+    out << "    </Piece>\n";
+    out << "  </PolyData>\n";
+    out << "</VTKFile>\n";
+
+    out.close();
+    std::cout << "Wrote coastline to " << vtk_filename << " (" << total_segments << " segments)\n";
 }
 
 std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
     auto index = std::make_shared<CoastlineIndex>();
-
-    // Build the R-tree index directly (CoastlineReader is a friend of
-    // CoastlineIndex)
     index->impl_->rtree = std::make_shared<SegmentRTree>();
     index->impl_->num_segments = 0;
 
-    for (size_t p = 0; p < impl_->polygons.size(); ++p) {
-        const auto &poly = impl_->polygons[p];
+    // Insert all segments into R-tree
+    for (size_t i = 0; i < impl_->segments.size(); ++i) {
+        index->impl_->rtree->insert({impl_->segments[i], {i, 0, 0}});
+        ++index->impl_->num_segments;
+    }
 
-        // Outer ring
-        const auto &outer = poly.outer();
-        for (size_t i = 0; i + 1 < outer.size(); ++i) {
-            index->impl_->rtree->insert({Segment2D(outer[i], outer[i + 1]), {p, 0, i}});
+    return index;
+}
+
+std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
+    Real domain_xmin, Real domain_ymin, Real domain_xmax, Real domain_ymax) const {
+    auto index = std::make_shared<CoastlineIndex>();
+    index->impl_->rtree = std::make_shared<SegmentRTree>();
+    index->impl_->num_segments = 0;
+
+    // Create domain bounding box for filtering
+    Box2D domain_box(Point2D(domain_xmin, domain_ymin),
+                     Point2D(domain_xmax, domain_ymax));
+
+    // Insert only segments that intersect the domain
+    for (size_t i = 0; i < impl_->segments.size(); ++i) {
+        if (bg::intersects(impl_->segments[i], domain_box)) {
+            index->impl_->rtree->insert({impl_->segments[i], {i, 0, 0}});
             ++index->impl_->num_segments;
-        }
-
-        // Inner rings (holes)
-        for (size_t r = 0; r < poly.inners().size(); ++r) {
-            const auto &inner = poly.inners()[r];
-            for (size_t i = 0; i + 1 < inner.size(); ++i) {
-                index->impl_->rtree->insert({Segment2D(inner[i], inner[i + 1]), {p, r + 1, i}});
-                ++index->impl_->num_segments;
-            }
         }
     }
 

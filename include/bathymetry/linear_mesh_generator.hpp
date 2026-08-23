@@ -7,6 +7,7 @@
 #include "bathymetry/linear_bezier_surface.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/lowrider_config.hpp"
+#include "mesh/coastline_refinement.hpp"
 #include "mesh/geotiff_reader.hpp"
 #include "mesh/multi_source_bathymetry.hpp"
 #include <functional>
@@ -74,6 +75,15 @@ public:
     /// @brief Get mean error
     Real mean_error() const;
 
+    /// @brief Load coastline data for refinement
+    /// @param config Coastline configuration
+    void load_coastline(const LowriderCoastlineConfig& config);
+
+    /// @brief Run coastline refinement (pre-pass before error-driven refinement)
+    /// Refines elements intersecting coastline until max_level reached
+    /// @return Number of refinement iterations performed
+    int refine_coastline();
+
 private:
     QuadtreeAdapter mesh_;
     std::unique_ptr<LinearBezierSurface> surface_;
@@ -83,6 +93,10 @@ private:
     std::function<bool(Real, Real)> land_mask_func_;  ///< Land mask function
     LowriderRefinementConfig config_;
     int iteration_ = 0;
+
+    // Coastline refinement
+    std::shared_ptr<CoastlineIndex> coastline_index_;  ///< Coastline R-tree index
+    int coastline_max_level_ = 10;                      ///< Max level for coastline refinement
 
     // Error caching for incremental computation
     std::vector<ElementError> cached_errors_;  ///< Cached per-element errors

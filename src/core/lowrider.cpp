@@ -27,6 +27,15 @@ bool Lowrider::data_files_exist() const {
             }
         }
     }
+
+    // Check coastline file if configured
+    if (config_.coastline.enabled()) {
+        if (!std::filesystem::exists(config_.coastline.file)) {
+            std::cerr << "Coastline file not found: " << config_.coastline.file << std::endl;
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -54,9 +63,25 @@ int Lowrider::run() {
         generator.load_bathymetry(config_.data);
     }
 
-    // Run adaptive refinement
+    // Load coastline data (if configured)
+    if (config_.coastline.enabled()) {
+        generator.load_coastline(config_.coastline);
+    }
+
     auto start = std::chrono::high_resolution_clock::now();
+
+    // Stage 1: Coastline refinement (if configured)
+    if (config_.coastline.enabled()) {
+        std::cout << "\nStage 1: Coastline refinement..." << std::endl;
+        int coast_iters = generator.refine_coastline();
+        std::cout << "  Coastline refinement: " << coast_iters << " iterations, "
+                  << generator.mesh().num_elements() << " elements" << std::endl;
+    }
+
+    // Stage 2: Error-driven seabed refinement
+    std::cout << "\nStage 2: Seabed refinement..." << std::endl;
     auto result = generator.solve_adaptive();
+
     auto end = std::chrono::high_resolution_clock::now();
 
     double time_ms = std::chrono::duration<double, std::milli>(end - start).count();

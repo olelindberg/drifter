@@ -83,6 +83,87 @@ void LinearMeshGenerator::set_bathymetry_functions(
     rebuild_surface();
 }
 
+void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) {
+    if (!config.enabled()) {
+        return;
+    }
+
+    // Get domain bounds for spatial filtering (critical for global datasets)
+    const auto& domain = mesh_.domain_bounds();
+
+    CoastlineReader reader;
+    // Use load overload with domain bounds for GDAL spatial filter
+    if (!reader.load(config.file, config.layer, config.srs,
+                     domain.xmin, domain.ymin, domain.xmax, domain.ymax)) {
+        std::cerr << "Warning: Failed to load coastline: "
+                  << reader.last_error() << std::endl;
+        return;
+    }
+
+    if (config.min_polygon_area > 0.0) {
+        reader.remove_small_polygons(config.min_polygon_area);
+    }
+
+    std::cout << "Loaded coastline: " << reader.num_polygons() << " polygons\n";
+
+    // Write coastline to VTK for debugging
+    reader.write_vtk("/tmp/coastline_debug");
+
+    // Build R-tree with domain filter (segments already filtered during load)
+    coastline_index_ = reader.build_index(domain.xmin, domain.ymin,
+                                           domain.xmax, domain.ymax);
+    coastline_max_level_ = config.max_level;
+
+    std::cout << "Built coastline index: " << coastline_index_->num_segments()
+              << " segments (filtered to domain)\n";
+}
+
+int LinearMeshGenerator::refine_coastline() {
+    if (!coastline_index_ || coastline_index_->num_segments() == 0) {
+        return 0;
+    }
+
+    int iterations = 0;
+    bool changed = true;
+
+    while (changed) {
+        changed = false;
+        std::vector<Index> to_refine;
+
+        for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
+            auto level = mesh_.element_level(elem);
+            if (level.max_level() >= coastline_max_level_) {
+                continue;
+            }
+
+            const auto& bounds = mesh_.element_bounds(elem);
+            if (coastline_index_->intersects(bounds.xmin, bounds.ymin,
+                                              bounds.xmax, bounds.ymax)) {
+                to_refine.push_back(elem);
+            }
+        }
+
+        if (!to_refine.empty()) {
+            refine_elements(to_refine);
+            changed = true;
+            ++iterations;
+
+            std::cout << "  Coastline iteration " << iterations
+                      << ": refined " << to_refine.size() << " elements, "
+                      << mesh_.num_elements() << " total\n";
+        }
+    }
+
+    // Rebuild surface after coastline refinement
+    if (iterations > 0) {
+        rebuild_surface();
+        // Reset error cache
+        error_valid_.assign(mesh_.num_elements(), false);
+    }
+
+    return iterations;
+}
+
 void LinearMeshGenerator::rebuild_surface() {
     surface_ = std::make_unique<LinearBezierSurface>(mesh_);
     if (!depth_func_) {

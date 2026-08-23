@@ -55,11 +55,23 @@ struct LowriderDataConfig {
     std::vector<std::string> tile_files;       ///< Additional high-resolution tiles
 };
 
+/// @brief Coastline refinement configuration
+struct LowriderCoastlineConfig {
+    std::string file;              ///< Path to shapefile/GeoPackage (empty = disabled)
+    std::string layer;             ///< Layer name (optional, defaults to first)
+    std::string srs;               ///< Target SRS (e.g., "EPSG:3034")
+    int max_level = 10;            ///< Max refinement level near coastline
+    Real min_polygon_area = 0.0;   ///< Filter small polygons (0 = no filter)
+
+    bool enabled() const { return !file.empty(); }
+};
+
 /// @brief Main configuration structure
 struct LowriderConfig {
     LowriderDataConfig data;                   ///< Multi-source bathymetry data
     LowriderDomainConfig domain;
     LowriderRefinementConfig refinement;
+    LowriderCoastlineConfig coastline;         ///< Coastline refinement (optional)
     LowriderOutputConfig output;
     bool verbose = true;
 };
