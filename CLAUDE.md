@@ -134,9 +134,9 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 
 4. **VTK output**: Uses VTK 5.1 format with `VTK_LAGRANGE_HEXAHEDRON` (type 72) for high-order elements
 
-5. **Dirichlet boundary conditions**: Use row/column elimination in the stiffness matrix Q:
+5. **Dirichlet boundary conditions** (legacy `CGDofManager` only - NOT used by the CG Bezier smoothers): row/column elimination in the stiffness matrix Q:
    - For each Dirichlet DOF `i`: move coupling terms to RHS, then set `Q(i,:) = 0`, `Q(:,i) = 0`, `Q(i,i) = 1`, `c(i) = -value`
-   - For C² constraints with Dirichlet DOFs: compute `b_c2 = -A_c2 * x_dir`, then zero Dirichlet columns in A_c2
+   - The CG Bezier smoothers apply no Dirichlet elimination and have no C² constraints. See `docs/cg_bezier_matrix_system.md` section 10.
 
 ### Bezier Bathymetry Smoother (`bathymetry/`)
 
@@ -152,18 +152,23 @@ CG (Continuous Galerkin) Bezier smoothers fit Bezier surfaces to bathymetry data
 
 **Optimization (ShipMesh Formulation):**
 
-Uses smoothness-first formulation: `Q = α·H + λ·(BᵀWB + εI)` where H is thin plate Hessian, BᵀWB is data fitting, and α normalizes scales. This avoids boundary oscillations from standard least-squares + regularization.
+Uses smoothness-first formulation: `Q = α·H + λ·(BᵀWB + εI)` where H is the smoothness operator, BᵀWB is data fitting, and `α = ‖BᵀWB‖_F / ‖H‖_F` normalizes scales. This avoids boundary oscillations from standard least-squares + regularization.
 
-- `λ = 0`: Pure thin plate (soap film, ignores data)
+H differs by smoother: the **cubic** uses thin plate energy `∫[(z_xx+z_yy)² + 2z_xy²]`, the **linear** uses gradient/membrane energy `∫[z_x² + z_y²]` (thin plate energy vanishes for bilinear surfaces).
+
+- `λ = 0`: Pure smoothness (ignores data)
 - `λ → ∞`: Approaches least-squares fit
 - Typical: `λ = 0.01` (smooth) to `λ = 100` (close to data)
 
-Solved via KKT system with constraint projection for exact satisfaction.
+Solved via a KKT saddle-point system `[[Q, Aᵀ], [A, -εI]] [x; μ] = [b; 0]`; all constraints are homogeneous. The cubic smoother builds the KKT system; the linear smoother solves `Q_reduced x = b_reduced` directly after hanging-node condensation.
 
 **Key Configuration (`CGCubicBezierSmootherConfig`):**
-- `lambda` - Data fitting weight
-- `enable_edge_constraints` / `edge_ngauss` - C¹ edge derivative constraints
-- `enable_natural_bc` - Zero normal curvature at boundaries (default: true, prevents boundary oscillations)
+- `lambda` - Data fitting weight (default 0.01; linear smoother default 1.0)
+- `edge_ngauss` - Collocation points per edge for C¹ and boundary constraints (default 4). C¹ edge derivative constraints are always built - there is no enable flag.
+- `enable_natural_bc` - Zero normal curvature at boundaries (default: **false**)
+- `enable_zero_gradient_bc` - Zero normal gradient / symmetry BC at boundaries (default: false)
+- `ngauss_data` - Data fitting quadrature (default 4; **values above 4 are silently clamped to 4**)
+- `lower_bound` / `upper_bound` - parsed from config but currently **unused** by any solve path
 
 **Non-conforming meshes:** Hanging node constraints via de Casteljau subdivision ensure continuity at 2:1 T-junctions.
 
@@ -186,6 +191,8 @@ Use `BezierSubdivision` for adaptive meshes where L2 projection's large negative
 | `Galerkin` | A_c = R * A_f * P | Default, automatic |
 | `CachedRediscretization` | Direct assembly from cached element matrices | With BezierSubdivision |
 
+Note: cached element matrices are stored as `H + λB + λεI` with **α = 1** (α is not known until after assembly), so `CachedRediscretization` coarse operators differ from the true Q by the α factor. This is the likely cause of the MG (L2+Cached) data residual outlier in the verification report.
+
 **Recommended configuration for adaptive meshes:**
 ```cpp
 MultigridConfig config;
@@ -193,6 +200,8 @@ config.min_tree_level = 0;  // Coarsest level (1x1 element)
 config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
 config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
 ```
+
+**Matrix System:** See `docs/cg_bezier_matrix_system.md` for the full derivation of the assembled system - least-squares data term, thin plate/membrane energy, C⁰/C¹ continuity, hanging-node constraints, boundary conditions, and KKT layout.
 
 **Verification Report:** See `docs/cg_bezier_solver_verification.md` for solver comparison results (Direct vs Iterative+LU vs Iterative+MG) and iterative method benchmarks. Regenerate figures with `./docs/regenerate_figures.sh`.
 
