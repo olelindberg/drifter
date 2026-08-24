@@ -31,6 +31,7 @@ struct BathymetryBounds {
     Real ymin = 0, ymax = 0;
     float nodata_value = -9999.0f;
     bool is_depth_positive = false;
+    bool is_geographic = false;  ///< CRS uses degrees (not meters)
 
     /// Check if bounds are valid
     bool is_valid() const { return xmin < xmax && ymin < ymax; }
@@ -67,6 +68,9 @@ struct BathymetryData {
     /// If true, values represent depth (positive = below sea level)
     /// If false, values represent elevation (negative = below sea level)
     bool is_depth_positive = false;
+
+    /// Whether CRS uses geographic coordinates (degrees) rather than projected (meters)
+    bool is_geographic = false;
 
     /// Bounding box in world coordinates
     Real xmin, xmax, ymin, ymax;

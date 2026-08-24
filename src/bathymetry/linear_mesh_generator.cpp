@@ -137,6 +137,22 @@ int LinearMeshGenerator::refine_coastline() {
             }
 
             const auto& bounds = mesh_.element_bounds(elem);
+
+            // Check pixel resolution limit for coastline refinement
+            if (config_.enforce_pixel_limit && multi_bathy_) {
+                Real cx = (bounds.xmin + bounds.xmax) / 2.0;
+                Real cy = (bounds.ymin + bounds.ymax) / 2.0;
+
+                Real min_size = multi_bathy_->get_min_element_size_meters(cx, cy);
+                if (min_size > 0.0) {
+                    auto size = mesh_.element_size(elem);
+                    Real elem_min_size = std::min(size(0), size(1));
+                    if (elem_min_size <= min_size) {
+                        continue;  // Already at or below pixel resolution
+                    }
+                }
+            }
+
             if (coastline_index_->intersects(bounds.xmin, bounds.ymin,
                                               bounds.xmax, bounds.ymax)) {
                 to_refine.push_back(elem);
@@ -484,15 +500,15 @@ std::vector<Index> LinearMeshGenerator::select_for_refinement(
         if (config_.enforce_pixel_limit) {
             Real min_size = default_min_size;
 
-            // For multi-source bathymetry, use per-element pixel limits
+            // For multi-source bathymetry, use per-element pixel limits with CRS conversion
             if (multi_bathy_) {
                 const auto& bounds = mesh_.element_bounds(elem);
                 Real cx = (bounds.xmin + bounds.xmax) / 2.0;
                 Real cy = (bounds.ymin + bounds.ymax) / 2.0;
 
-                const BathymetryData* source = multi_bathy_->get_source_for_point(cx, cy);
-                if (source) {
-                    min_size = source->min_element_size();
+                Real source_min_size = multi_bathy_->get_min_element_size_meters(cx, cy);
+                if (source_min_size > 0.0) {
+                    min_size = source_min_size;
                 }
             }
 

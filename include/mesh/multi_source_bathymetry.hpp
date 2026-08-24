@@ -122,6 +122,17 @@ public:
     /// @note May trigger lazy loading of tile data
     const BathymetryData* get_source_for_point(Real x, Real y) const;
 
+    /// @brief Get minimum element size in meters for a point
+    ///
+    /// For sources in geographic CRS (EPSG:4326), converts pixel size from degrees
+    /// to meters using the local latitude. For projected CRS sources, returns the
+    /// pixel size directly.
+    ///
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return Minimum pixel dimension in meters, or 0 if outside all sources
+    Real get_min_element_size_meters(Real x, Real y) const;
+
     /// @brief Check if a point is inside the primary source bounds
     /// @param x X coordinate in EPSG:3034
     /// @param y Y coordinate in EPSG:3034

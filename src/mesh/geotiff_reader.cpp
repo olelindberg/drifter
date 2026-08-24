@@ -6,6 +6,7 @@
 
 #include <cpl_conv.h>
 #include <gdal_priv.h>
+#include <ogr_spatialref.h>
 
 namespace drifter {
 
@@ -52,6 +53,14 @@ BathymetryData GeoTiffReader::load(const std::string &filename) {
     const char* proj = dataset->GetProjectionRef();
     if (proj) {
         data.projection = proj;
+    }
+
+    // Detect if CRS is geographic (units in degrees)
+    if (!data.projection.empty()) {
+        OGRSpatialReference srs;
+        if (srs.SetFromUserInput(data.projection.c_str()) == OGRERR_NONE) {
+            data.is_geographic = srs.IsGeographic();
+        }
     }
 
     // Get the first raster band
@@ -140,6 +149,15 @@ BathymetryBounds GeoTiffReader::load_bounds_only(const std::string &filename) {
     // Get geotransform
     std::array<double, 6> geotransform = {0, 1, 0, 0, 0, -1};
     dataset->GetGeoTransform(geotransform.data());
+
+    // Get projection and detect if geographic
+    const char* proj = dataset->GetProjectionRef();
+    if (proj && proj[0] != '\0') {
+        OGRSpatialReference srs;
+        if (srs.SetFromUserInput(proj) == OGRERR_NONE) {
+            bounds.is_geographic = srs.IsGeographic();
+        }
+    }
 
     // Get the first raster band for metadata
     GDALRasterBand* band = dataset->GetRasterBand(1);

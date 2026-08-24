@@ -336,4 +336,36 @@ const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y
     return nullptr;
 }
 
+Real MultiSourceBathymetry::get_min_element_size_meters(Real x, Real y) const {
+    const BathymetryData* source = get_source_for_point(x, y);
+    if (!source) {
+        return 0.0;
+    }
+
+    Real min_pixel_size = source->min_element_size();
+
+    // If source is in projected CRS, pixel size is already in meters
+    if (!source->is_geographic) {
+        return min_pixel_size;
+    }
+
+    // Convert from degrees to meters at the point's latitude
+    double lon = x, lat = y;
+    if (!impl_->to_4326->Transform(1, &lon, &lat)) {
+        lat = 55.0;  // Fallback: Danish waters
+    }
+
+    constexpr double EARTH_RADIUS_M = 6371000.0;
+    constexpr double DEG_TO_RAD = M_PI / 180.0;
+
+    double lat_rad = lat * DEG_TO_RAD;
+    double meters_per_degree_lat = EARTH_RADIUS_M * DEG_TO_RAD;  // ~111,320 m
+    double meters_per_degree_lon = meters_per_degree_lat * std::cos(lat_rad);
+
+    Real pixel_x_m = source->pixel_size_x() * meters_per_degree_lon;
+    Real pixel_y_m = source->pixel_size_y() * meters_per_degree_lat;
+
+    return std::min(pixel_x_m, pixel_y_m);
+}
+
 } // namespace drifter
