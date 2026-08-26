@@ -1,44 +1,13 @@
 #include "io/vtk_writer.hpp"
 #include "dg/basis_hexahedron.hpp"
 #include "dg/bernstein_basis.hpp"
+#include "io/vtk_binary_utils.hpp"
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
 
 namespace drifter {
-
-// =============================================================================
-// Base64 encoding utilities
-// =============================================================================
-
-namespace {
-
-const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                            "abcdefghijklmnopqrstuvwxyz"
-                            "0123456789+/";
-
-std::string base64_encode(const unsigned char* data, size_t len) {
-    std::string result;
-    result.reserve((len + 2) / 3 * 4);
-
-    for (size_t i = 0; i < len; i += 3) {
-        unsigned int n = data[i] << 16;
-        if (i + 1 < len)
-            n |= data[i + 1] << 8;
-        if (i + 2 < len)
-            n |= data[i + 2];
-
-        result += base64_chars[(n >> 18) & 0x3F];
-        result += base64_chars[(n >> 12) & 0x3F];
-        result += (i + 1 < len) ? base64_chars[(n >> 6) & 0x3F] : '=';
-        result += (i + 2 < len) ? base64_chars[n & 0x3F] : '=';
-    }
-
-    return result;
-}
-
-} // namespace
 
 // =============================================================================
 // VTKWriter implementation
@@ -256,11 +225,7 @@ void VTKWriter::write_vtu(const std::string &filename, Real time) {
 
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
-         << "byte_order=\"LittleEndian\"";
-    if (encoding_ == VTKEncoding::Base64) {
-        file << " compressor=\"vtkZLibDataCompressor\"";
-    }
-    file << ">\n";
+         << "byte_order=\"LittleEndian\" header_type=\"UInt64\">\n";
 
     file << "<UnstructuredGrid>\n";
     file << "<FieldData>\n";
@@ -285,10 +250,8 @@ void VTKWriter::write_vtu(const std::string &filename, Real time) {
 
     if (encoding_ == VTKEncoding::ASCII) {
         write_data_array_ascii(file, "Points", 3, point_data);
-    } else if (encoding_ == VTKEncoding::Binary) {
-        write_data_array_binary(file, "Points", 3, point_data);
     } else {
-        write_data_array_base64(file, "Points", 3, point_data);
+        write_data_array_binary(file, "Points", 3, point_data);
     }
     file << "</Points>\n";
 
@@ -335,10 +298,8 @@ void VTKWriter::write_vtu(const std::string &filename, Real time) {
         for (const auto &[name, field] : point_fields_) {
             if (encoding_ == VTKEncoding::ASCII) {
                 write_data_array_ascii(file, name, field.num_components, field.data);
-            } else if (encoding_ == VTKEncoding::Binary) {
-                write_data_array_binary(file, name, field.num_components, field.data);
             } else {
-                write_data_array_base64(file, name, field.num_components, field.data);
+                write_data_array_binary(file, name, field.num_components, field.data);
             }
         }
         file << "</PointData>\n";
@@ -350,10 +311,8 @@ void VTKWriter::write_vtu(const std::string &filename, Real time) {
         for (const auto &[name, field] : cell_fields_) {
             if (encoding_ == VTKEncoding::ASCII) {
                 write_data_array_ascii(file, name, field.num_components, field.data);
-            } else if (encoding_ == VTKEncoding::Binary) {
-                write_data_array_binary(file, name, field.num_components, field.data);
             } else {
-                write_data_array_base64(file, name, field.num_components, field.data);
+                write_data_array_binary(file, name, field.num_components, field.data);
             }
         }
         file << "</CellData>\n";
@@ -453,23 +412,7 @@ void VTKWriter::write_data_array_ascii(std::ostream &out, const std::string &nam
 
 void VTKWriter::write_data_array_binary(std::ostream &out, const std::string &name,
                                         int num_components, const std::vector<Real> &data) {
-    // For binary, we still write base64 in XML
-    write_data_array_base64(out, name, num_components, data);
-}
-
-void VTKWriter::write_data_array_base64(std::ostream &out, const std::string &name,
-                                        int num_components, const std::vector<Real> &data) {
-    out << "<DataArray type=\"Float64\" Name=\"" << name << "\" NumberOfComponents=\""
-        << num_components << "\" format=\"binary\">";
-
-    // Prepend size as 64-bit unsigned integer
-    uint64_t size = data.size() * sizeof(Real);
-    std::vector<unsigned char> buffer(sizeof(uint64_t) + size);
-    std::memcpy(buffer.data(), &size, sizeof(uint64_t));
-    std::memcpy(buffer.data() + sizeof(uint64_t), data.data(), size);
-
-    out << base64_encode(buffer.data(), buffer.size());
-    out << "</DataArray>\n";
+    vtk::write_binary_float64(out, name, num_components, data);
 }
 
 #ifdef DRIFTER_USE_MPI

@@ -347,8 +347,6 @@ TEST_F(IOTest, VTKEncodings) {
     // Ensure all encoding types are distinct
     EXPECT_NE(static_cast<int>(VTKEncoding::ASCII),
               static_cast<int>(VTKEncoding::Binary));
-    EXPECT_NE(static_cast<int>(VTKEncoding::Binary),
-              static_cast<int>(VTKEncoding::Base64));
 }
 
 // =============================================================================

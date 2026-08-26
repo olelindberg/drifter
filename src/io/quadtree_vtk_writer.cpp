@@ -1,103 +1,139 @@
 #include "io/quadtree_vtk_writer.hpp"
+#include "io/vtk_binary_utils.hpp"
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 
 namespace drifter {
 
+namespace {
+
+// Stream buffer size for faster I/O (1MB)
+constexpr size_t STREAM_BUFFER_SIZE = 1 << 20;
+
+// Open file with large buffer for faster I/O
+std::ofstream open_buffered(const std::string& path, std::vector<char>& buffer) {
+    std::ofstream f(path, std::ios::binary);
+    if (f.is_open()) {
+        buffer.resize(STREAM_BUFFER_SIZE);
+        f.rdbuf()->pubsetbuf(buffer.data(), buffer.size());
+    }
+    return f;
+}
+
+// Write VTK XML header
+// Note: header_type="UInt64" is required because we use 64-bit size headers in binary encoding
+void write_header(std::ostream& f, Index npoints, Index ncells) {
+    f << "<?xml version=\"1.0\"?>\n"
+      << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\">\n"
+      << "  <UnstructuredGrid>\n"
+      << "    <Piece NumberOfPoints=\"" << npoints << "\" NumberOfCells=\"" << ncells << "\">\n";
+}
+
+// Write VTK XML footer
+void write_footer(std::ostream& f) {
+    f << "    </Piece>\n"
+      << "  </UnstructuredGrid>\n"
+      << "</VTKFile>\n";
+}
+
+} // namespace
+
 void QuadtreeVTKWriter::write(const std::string& filename,
                               const QuadtreeAdapter& mesh,
                               const LinearBezierSurface& surface) {
     std::string full_path = filename + ".vtu";
-    std::ofstream f(full_path);
+    std::vector<char> file_buffer;
+    std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
         std::cerr << "Error: Could not open " << full_path << " for writing" << std::endl;
         return;
     }
 
     Index ncells = mesh.num_elements();
-    Index npoints = ncells * 4;  // 4 corners per quad (not shared in VTK)
+    Index npoints = ncells * 4;
 
-    // VTK XML header
-    f << "<?xml version=\"1.0\"?>\n";
-    f << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
-    f << "  <UnstructuredGrid>\n";
-    f << "    <Piece NumberOfPoints=\"" << npoints << "\" NumberOfCells=\"" << ncells << "\">\n";
+    // Pre-allocate all data buffers
+    std::vector<Real> points;
+    points.reserve(static_cast<size_t>(npoints) * 3);
 
-    // Points
-    f << "      <Points>\n";
-    f << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    std::vector<int64_t> connectivity;
+    connectivity.reserve(static_cast<size_t>(npoints));
+
+    std::vector<int64_t> offsets;
+    offsets.reserve(static_cast<size_t>(ncells));
+
+    std::vector<uint8_t> types;
+    types.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int32_t> level;
+    level.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int64_t> element_id;
+    element_id.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> area;
+    area.reserve(static_cast<size_t>(ncells));
+
+    // Single-pass data collection
     for (Index elem = 0; elem < ncells; ++elem) {
         const auto& bounds = mesh.element_bounds(elem);
-        // Get z values at corners from surface
         Eigen::Vector4d z = surface.element_coefficients(elem);
+        auto elem_level = mesh.element_level(elem);
+        auto elem_size = mesh.element_size(elem);
 
-        // Corner order: (xmin,ymin), (xmax,ymin), (xmax,ymax), (xmin,ymax) - VTK quad order
-        f << std::setprecision(12);
-        f << "          " << bounds.xmin << " " << bounds.ymin << " " << z(0) << "\n";  // 0,0
-        f << "          " << bounds.xmax << " " << bounds.ymin << " " << z(1) << "\n";  // 1,0
-        f << "          " << bounds.xmax << " " << bounds.ymax << " " << z(3) << "\n";  // 1,1
-        f << "          " << bounds.xmin << " " << bounds.ymax << " " << z(2) << "\n";  // 0,1
+        // Points: 4 corners per quad (VTK quad order)
+        points.push_back(bounds.xmin); points.push_back(bounds.ymin); points.push_back(z(0));
+        points.push_back(bounds.xmax); points.push_back(bounds.ymin); points.push_back(z(1));
+        points.push_back(bounds.xmax); points.push_back(bounds.ymax); points.push_back(z(3));
+        points.push_back(bounds.xmin); points.push_back(bounds.ymax); points.push_back(z(2));
+
+        // Connectivity
+        Index base = elem * 4;
+        connectivity.push_back(base);
+        connectivity.push_back(base + 1);
+        connectivity.push_back(base + 2);
+        connectivity.push_back(base + 3);
+
+        // Offsets
+        offsets.push_back((elem + 1) * 4);
+
+        // Types (VTK_QUAD = 9)
+        types.push_back(9);
+
+        // Cell data
+        level.push_back(elem_level.max_level());
+        element_id.push_back(elem);
+        area.push_back(elem_size(0) * elem_size(1));
     }
-    f << "        </DataArray>\n";
+
+    // Write VTK file
+    write_header(f, npoints, ncells);
+
+    // Points
+    f << "      <Points>\n        ";
+    vtk::write_binary_points(f, points);
     f << "      </Points>\n";
 
     // Cells
-    f << "      <Cells>\n";
-    f << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        Index base = elem * 4;
-        f << "          " << base << " " << base+1 << " " << base+2 << " " << base+3 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          " << (elem + 1) * 4 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          9\n";  // VTK_QUAD = 9
-    }
-    f << "        </DataArray>\n";
+    f << "      <Cells>\n        ";
+    vtk::write_binary_int64(f, "connectivity", connectivity);
+    f << "        ";
+    vtk::write_binary_int64(f, "offsets", offsets);
+    f << "        ";
+    vtk::write_binary_uint8(f, "types", types);
     f << "      </Cells>\n";
 
     // Cell data
-    f << "      <CellData>\n";
-
-    // Refinement level
-    f << "        <DataArray type=\"Int32\" Name=\"level\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto level = mesh.element_level(elem);
-        f << "          " << level.max_level() << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Element index
-    f << "        <DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          " << elem << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Element area
-    f << "        <DataArray type=\"Float64\" Name=\"area\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto size = mesh.element_size(elem);
-        f << "          " << (size(0) * size(1)) << "\n";
-    }
-    f << "        </DataArray>\n";
-
+    f << "      <CellData>\n        ";
+    vtk::write_binary_int32(f, "level", level);
+    f << "        ";
+    vtk::write_binary_int64(f, "element_id", element_id);
+    f << "        ";
+    vtk::write_binary_float64(f, "area", 1, area);
     f << "      </CellData>\n";
 
-    // Close tags
-    f << "    </Piece>\n";
-    f << "  </UnstructuredGrid>\n";
-    f << "</VTKFile>\n";
-
+    write_footer(f);
     f.close();
 }
 
@@ -111,19 +147,16 @@ void QuadtreeVTKWriter::write_water_only(const std::string& filename,
             "Provide a valid depth function.");
     }
 
-    // First pass: identify water elements and store depths
+    // First pass: identify water elements
     std::vector<Index> water_elements;
-    std::vector<Real> element_depths;
+    water_elements.reserve(static_cast<size_t>(mesh.num_elements()));
 
     for (Index elem = 0; elem < mesh.num_elements(); ++elem) {
         const auto& bounds = mesh.element_bounds(elem);
         Real cx = 0.5 * (bounds.xmin + bounds.xmax);
         Real cy = 0.5 * (bounds.ymin + bounds.ymax);
-        Real depth = depth_func(cx, cy);
-
-        if (depth > 0.0) {
+        if (depth_func(cx, cy) > 0.0) {
             water_elements.push_back(elem);
-            element_depths.push_back(depth);
         }
     }
 
@@ -135,7 +168,8 @@ void QuadtreeVTKWriter::write_water_only(const std::string& filename,
     }
 
     std::string full_path = filename + ".vtu";
-    std::ofstream f(full_path);
+    std::vector<char> file_buffer;
+    std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
         throw std::runtime_error(
             "QuadtreeVTKWriter::write_water_only: could not open '" + full_path + "' for writing.");
@@ -144,98 +178,105 @@ void QuadtreeVTKWriter::write_water_only(const std::string& filename,
     Index ncells = static_cast<Index>(water_elements.size());
     Index npoints = ncells * 4;
 
-    // VTK XML header
-    f << "<?xml version=\"1.0\"?>\n";
-    f << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
-    f << "  <UnstructuredGrid>\n";
-    f << "    <Piece NumberOfPoints=\"" << npoints << "\" NumberOfCells=\"" << ncells << "\">\n";
+    // Pre-allocate all data buffers
+    std::vector<Real> points;
+    points.reserve(static_cast<size_t>(npoints) * 3);
 
-    // Points
-    f << "      <Points>\n";
-    f << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-    for (size_t i = 0; i < water_elements.size(); ++i) {
-        Index elem = water_elements[i];
+    std::vector<int64_t> connectivity;
+    connectivity.reserve(static_cast<size_t>(npoints));
+
+    std::vector<int64_t> offsets;
+    offsets.reserve(static_cast<size_t>(ncells));
+
+    std::vector<uint8_t> types;
+    types.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> depth;
+    depth.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int32_t> level;
+    level.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int64_t> element_id;
+    element_id.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> area;
+    area.reserve(static_cast<size_t>(ncells));
+
+    // Single-pass data collection
+    for (Index i = 0; i < ncells; ++i) {
+        Index elem = water_elements[static_cast<size_t>(i)];
         const auto& bounds = mesh.element_bounds(elem);
         Eigen::Vector4d z = surface.element_coefficients(elem);
+        auto elem_level = mesh.element_level(elem);
+        auto elem_size = mesh.element_size(elem);
 
-        f << std::setprecision(12);
-        f << "          " << bounds.xmin << " " << bounds.ymin << " " << z(0) << "\n";
-        f << "          " << bounds.xmax << " " << bounds.ymin << " " << z(1) << "\n";
-        f << "          " << bounds.xmax << " " << bounds.ymax << " " << z(3) << "\n";
-        f << "          " << bounds.xmin << " " << bounds.ymax << " " << z(2) << "\n";
+        Real cx = 0.5 * (bounds.xmin + bounds.xmax);
+        Real cy = 0.5 * (bounds.ymin + bounds.ymax);
+
+        // Points
+        points.push_back(bounds.xmin); points.push_back(bounds.ymin); points.push_back(z(0));
+        points.push_back(bounds.xmax); points.push_back(bounds.ymin); points.push_back(z(1));
+        points.push_back(bounds.xmax); points.push_back(bounds.ymax); points.push_back(z(3));
+        points.push_back(bounds.xmin); points.push_back(bounds.ymax); points.push_back(z(2));
+
+        // Connectivity
+        Index base = i * 4;
+        connectivity.push_back(base);
+        connectivity.push_back(base + 1);
+        connectivity.push_back(base + 2);
+        connectivity.push_back(base + 3);
+
+        // Offsets
+        offsets.push_back((i + 1) * 4);
+
+        // Types
+        types.push_back(9);
+
+        // Cell data
+        depth.push_back(depth_func(cx, cy));
+        level.push_back(elem_level.max_level());
+        element_id.push_back(elem);
+        area.push_back(elem_size(0) * elem_size(1));
     }
-    f << "        </DataArray>\n";
+
+    // Write VTK file
+    write_header(f, npoints, ncells);
+
+    // Points
+    f << "      <Points>\n        ";
+    vtk::write_binary_points(f, points);
     f << "      </Points>\n";
 
     // Cells
-    f << "      <Cells>\n";
-    f << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (Index i = 0; i < ncells; ++i) {
-        Index base = i * 4;
-        f << "          " << base << " " << base+1 << " " << base+2 << " " << base+3 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (Index i = 0; i < ncells; ++i) {
-        f << "          " << (i + 1) * 4 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (Index i = 0; i < ncells; ++i) {
-        f << "          9\n";
-    }
-    f << "        </DataArray>\n";
+    f << "      <Cells>\n        ";
+    vtk::write_binary_int64(f, "connectivity", connectivity);
+    f << "        ";
+    vtk::write_binary_int64(f, "offsets", offsets);
+    f << "        ";
+    vtk::write_binary_uint8(f, "types", types);
     f << "      </Cells>\n";
 
     // Cell data
-    f << "      <CellData>\n";
-
-    // Depth field
-    f << "        <DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
-    for (size_t i = 0; i < element_depths.size(); ++i) {
-        f << "          " << std::setprecision(12) << element_depths[i] << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Refinement level
-    f << "        <DataArray type=\"Int32\" Name=\"level\" format=\"ascii\">\n";
-    for (size_t i = 0; i < water_elements.size(); ++i) {
-        auto level = mesh.element_level(water_elements[i]);
-        f << "          " << level.max_level() << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Element index (original mesh index)
-    f << "        <DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
-    for (size_t i = 0; i < water_elements.size(); ++i) {
-        f << "          " << water_elements[i] << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Element area
-    f << "        <DataArray type=\"Float64\" Name=\"area\" format=\"ascii\">\n";
-    for (size_t i = 0; i < water_elements.size(); ++i) {
-        auto size = mesh.element_size(water_elements[i]);
-        f << "          " << (size(0) * size(1)) << "\n";
-    }
-    f << "        </DataArray>\n";
-
+    f << "      <CellData>\n        ";
+    vtk::write_binary_float64(f, "depth", 1, depth);
+    f << "        ";
+    vtk::write_binary_int32(f, "level", level);
+    f << "        ";
+    vtk::write_binary_int64(f, "element_id", element_id);
+    f << "        ";
+    vtk::write_binary_float64(f, "area", 1, area);
     f << "      </CellData>\n";
 
-    // Close tags
-    f << "    </Piece>\n";
-    f << "  </UnstructuredGrid>\n";
-    f << "</VTKFile>\n";
-
+    write_footer(f);
     f.close();
 }
 
 void QuadtreeVTKWriter::write_mesh_only(const std::string& filename,
                                          const QuadtreeAdapter& mesh) {
     std::string full_path = filename + ".vtu";
-    std::ofstream f(full_path);
+    std::vector<char> file_buffer;
+    std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
         std::cerr << "Error: Could not open " << full_path << " for writing" << std::endl;
         return;
@@ -244,62 +285,73 @@ void QuadtreeVTKWriter::write_mesh_only(const std::string& filename,
     Index ncells = mesh.num_elements();
     Index npoints = ncells * 4;
 
-    // VTK XML header
-    f << "<?xml version=\"1.0\"?>\n";
-    f << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
-    f << "  <UnstructuredGrid>\n";
-    f << "    <Piece NumberOfPoints=\"" << npoints << "\" NumberOfCells=\"" << ncells << "\">\n";
+    // Pre-allocate all data buffers
+    std::vector<Real> points;
+    points.reserve(static_cast<size_t>(npoints) * 3);
 
-    // Points (z=0 for mesh only)
-    f << "      <Points>\n";
-    f << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    std::vector<int64_t> connectivity;
+    connectivity.reserve(static_cast<size_t>(npoints));
+
+    std::vector<int64_t> offsets;
+    offsets.reserve(static_cast<size_t>(ncells));
+
+    std::vector<uint8_t> types;
+    types.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int32_t> level;
+    level.reserve(static_cast<size_t>(ncells));
+
+    // Single-pass data collection
     for (Index elem = 0; elem < ncells; ++elem) {
         const auto& bounds = mesh.element_bounds(elem);
-        f << std::setprecision(12);
-        f << "          " << bounds.xmin << " " << bounds.ymin << " 0\n";
-        f << "          " << bounds.xmax << " " << bounds.ymin << " 0\n";
-        f << "          " << bounds.xmax << " " << bounds.ymax << " 0\n";
-        f << "          " << bounds.xmin << " " << bounds.ymax << " 0\n";
+        auto elem_level = mesh.element_level(elem);
+
+        // Points (z=0 for mesh only)
+        points.push_back(bounds.xmin); points.push_back(bounds.ymin); points.push_back(0.0);
+        points.push_back(bounds.xmax); points.push_back(bounds.ymin); points.push_back(0.0);
+        points.push_back(bounds.xmax); points.push_back(bounds.ymax); points.push_back(0.0);
+        points.push_back(bounds.xmin); points.push_back(bounds.ymax); points.push_back(0.0);
+
+        // Connectivity
+        Index base = elem * 4;
+        connectivity.push_back(base);
+        connectivity.push_back(base + 1);
+        connectivity.push_back(base + 2);
+        connectivity.push_back(base + 3);
+
+        // Offsets
+        offsets.push_back((elem + 1) * 4);
+
+        // Types
+        types.push_back(9);
+
+        // Cell data
+        level.push_back(elem_level.max_level());
     }
-    f << "        </DataArray>\n";
+
+    // Write VTK file
+    write_header(f, npoints, ncells);
+
+    // Points
+    f << "      <Points>\n        ";
+    vtk::write_binary_points(f, points);
     f << "      </Points>\n";
 
     // Cells
-    f << "      <Cells>\n";
-    f << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        Index base = elem * 4;
-        f << "          " << base << " " << base+1 << " " << base+2 << " " << base+3 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          " << (elem + 1) * 4 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          9\n";
-    }
-    f << "        </DataArray>\n";
+    f << "      <Cells>\n        ";
+    vtk::write_binary_int64(f, "connectivity", connectivity);
+    f << "        ";
+    vtk::write_binary_int64(f, "offsets", offsets);
+    f << "        ";
+    vtk::write_binary_uint8(f, "types", types);
     f << "      </Cells>\n";
 
     // Cell data
-    f << "      <CellData>\n";
-    f << "        <DataArray type=\"Int32\" Name=\"level\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto level = mesh.element_level(elem);
-        f << "          " << level.max_level() << "\n";
-    }
-    f << "        </DataArray>\n";
+    f << "      <CellData>\n        ";
+    vtk::write_binary_int32(f, "level", level);
     f << "      </CellData>\n";
 
-    f << "    </Piece>\n";
-    f << "  </UnstructuredGrid>\n";
-    f << "</VTKFile>\n";
-
+    write_footer(f);
     f.close();
 }
 
@@ -310,7 +362,8 @@ void QuadtreeVTKWriter::write_with_errors(const std::string& filename,
                                            std::function<Real(Real, Real)> depth_func,
                                            std::function<int(Real, Real)> source_id_func) {
     std::string full_path = filename + ".vtu";
-    std::ofstream f(full_path);
+    std::vector<char> file_buffer;
+    std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
         std::cerr << "Error: Could not open " << full_path << " for writing" << std::endl;
         return;
@@ -319,150 +372,152 @@ void QuadtreeVTKWriter::write_with_errors(const std::string& filename,
     Index ncells = mesh.num_elements();
     Index npoints = ncells * 4;
 
-    // Build error lookup map (element index -> error value)
-    std::vector<Real> error_values(ncells, 0.0);
+    // Build error lookup (element index -> error value)
+    std::vector<Real> error_lookup(static_cast<size_t>(ncells), 0.0);
     for (const auto& err : errors) {
         if (err.element >= 0 && err.element < ncells) {
-            error_values[err.element] = err.error;
+            error_lookup[static_cast<size_t>(err.element)] = err.error;
         }
     }
 
-    // VTK XML header
-    f << "<?xml version=\"1.0\"?>\n";
-    f << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
-    f << "  <UnstructuredGrid>\n";
-    f << "    <Piece NumberOfPoints=\"" << npoints << "\" NumberOfCells=\"" << ncells << "\">\n";
+    // Pre-allocate all data buffers
+    std::vector<Real> points;
+    points.reserve(static_cast<size_t>(npoints) * 3);
 
-    // Points
-    f << "      <Points>\n";
-    f << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    std::vector<int64_t> connectivity;
+    connectivity.reserve(static_cast<size_t>(npoints));
+
+    std::vector<int64_t> offsets;
+    offsets.reserve(static_cast<size_t>(ncells));
+
+    std::vector<uint8_t> types;
+    types.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> error_data;
+    error_data.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> depth_data;
+    std::vector<Real> surface_z_data;
+    if (depth_func) {
+        depth_data.reserve(static_cast<size_t>(ncells));
+        surface_z_data.reserve(static_cast<size_t>(ncells));
+    }
+
+    std::vector<int32_t> level;
+    level.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int64_t> element_id;
+    element_id.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> area;
+    area.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> element_size_x;
+    element_size_x.reserve(static_cast<size_t>(ncells));
+
+    std::vector<Real> element_size_y;
+    element_size_y.reserve(static_cast<size_t>(ncells));
+
+    std::vector<int32_t> source_id_data;
+    if (source_id_func) {
+        source_id_data.reserve(static_cast<size_t>(ncells));
+    }
+
+    // Single-pass data collection
     for (Index elem = 0; elem < ncells; ++elem) {
         const auto& bounds = mesh.element_bounds(elem);
         Eigen::Vector4d z = surface.element_coefficients(elem);
+        auto elem_level = mesh.element_level(elem);
+        auto elem_size = mesh.element_size(elem);
 
-        f << std::setprecision(12);
-        f << "          " << bounds.xmin << " " << bounds.ymin << " " << z(0) << "\n";
-        f << "          " << bounds.xmax << " " << bounds.ymin << " " << z(1) << "\n";
-        f << "          " << bounds.xmax << " " << bounds.ymax << " " << z(3) << "\n";
-        f << "          " << bounds.xmin << " " << bounds.ymax << " " << z(2) << "\n";
+        Real cx = 0.5 * (bounds.xmin + bounds.xmax);
+        Real cy = 0.5 * (bounds.ymin + bounds.ymax);
+
+        // Points
+        points.push_back(bounds.xmin); points.push_back(bounds.ymin); points.push_back(z(0));
+        points.push_back(bounds.xmax); points.push_back(bounds.ymin); points.push_back(z(1));
+        points.push_back(bounds.xmax); points.push_back(bounds.ymax); points.push_back(z(3));
+        points.push_back(bounds.xmin); points.push_back(bounds.ymax); points.push_back(z(2));
+
+        // Connectivity
+        Index base = elem * 4;
+        connectivity.push_back(base);
+        connectivity.push_back(base + 1);
+        connectivity.push_back(base + 2);
+        connectivity.push_back(base + 3);
+
+        // Offsets
+        offsets.push_back((elem + 1) * 4);
+
+        // Types
+        types.push_back(9);
+
+        // Cell data
+        error_data.push_back(error_lookup[static_cast<size_t>(elem)]);
+
+        if (depth_func) {
+            depth_data.push_back(depth_func(cx, cy));
+            surface_z_data.push_back(surface.evaluate(cx, cy));
+        }
+
+        level.push_back(elem_level.max_level());
+        element_id.push_back(elem);
+        area.push_back(elem_size(0) * elem_size(1));
+        element_size_x.push_back(elem_size(0));
+        element_size_y.push_back(elem_size(1));
+
+        if (source_id_func) {
+            source_id_data.push_back(source_id_func(cx, cy));
+        }
     }
-    f << "        </DataArray>\n";
+
+    // Write VTK file
+    write_header(f, npoints, ncells);
+
+    // Points
+    f << "      <Points>\n        ";
+    vtk::write_binary_points(f, points);
     f << "      </Points>\n";
 
     // Cells
-    f << "      <Cells>\n";
-    f << "        <DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        Index base = elem * 4;
-        f << "          " << base << " " << base+1 << " " << base+2 << " " << base+3 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          " << (elem + 1) * 4 << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          9\n";
-    }
-    f << "        </DataArray>\n";
+    f << "      <Cells>\n        ";
+    vtk::write_binary_int64(f, "connectivity", connectivity);
+    f << "        ";
+    vtk::write_binary_int64(f, "offsets", offsets);
+    f << "        ";
+    vtk::write_binary_uint8(f, "types", types);
     f << "      </Cells>\n";
 
     // Cell data
-    f << "      <CellData>\n";
+    f << "      <CellData>\n        ";
+    vtk::write_binary_float64(f, "error", 1, error_data);
 
-    // Error field (primary field of interest)
-    f << "        <DataArray type=\"Float64\" Name=\"error\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          " << std::setprecision(6) << error_values[elem] << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Depth field (if depth function provided)
     if (depth_func) {
-        f << "        <DataArray type=\"Float64\" Name=\"depth\" format=\"ascii\">\n";
-        for (Index elem = 0; elem < ncells; ++elem) {
-            const auto& bounds = mesh.element_bounds(elem);
-            Real cx = 0.5 * (bounds.xmin + bounds.xmax);
-            Real cy = 0.5 * (bounds.ymin + bounds.ymax);
-            Real depth = depth_func(cx, cy);
-            f << "          " << std::setprecision(6) << depth << "\n";
-        }
-        f << "        </DataArray>\n";
-
-        // Surface elevation at center (for comparison)
-        f << "        <DataArray type=\"Float64\" Name=\"surface_z\" format=\"ascii\">\n";
-        for (Index elem = 0; elem < ncells; ++elem) {
-            const auto& bounds = mesh.element_bounds(elem);
-            Real cx = 0.5 * (bounds.xmin + bounds.xmax);
-            Real cy = 0.5 * (bounds.ymin + bounds.ymax);
-            Real z = surface.evaluate(cx, cy);
-            f << "          " << std::setprecision(6) << z << "\n";
-        }
-        f << "        </DataArray>\n";
+        f << "        ";
+        vtk::write_binary_float64(f, "depth", 1, depth_data);
+        f << "        ";
+        vtk::write_binary_float64(f, "surface_z", 1, surface_z_data);
     }
 
-    // Refinement level
-    f << "        <DataArray type=\"Int32\" Name=\"level\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto level = mesh.element_level(elem);
-        f << "          " << level.max_level() << "\n";
-    }
-    f << "        </DataArray>\n";
+    f << "        ";
+    vtk::write_binary_int32(f, "level", level);
+    f << "        ";
+    vtk::write_binary_int64(f, "element_id", element_id);
+    f << "        ";
+    vtk::write_binary_float64(f, "area", 1, area);
+    f << "        ";
+    vtk::write_binary_float64(f, "element_size_x", 1, element_size_x);
+    f << "        ";
+    vtk::write_binary_float64(f, "element_size_y", 1, element_size_y);
 
-    // Element index
-    f << "        <DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        f << "          " << elem << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Element area
-    f << "        <DataArray type=\"Float64\" Name=\"area\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto size = mesh.element_size(elem);
-        f << "          " << (size(0) * size(1)) << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Element size (width and height)
-    f << "        <DataArray type=\"Float64\" Name=\"element_size_x\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto size = mesh.element_size(elem);
-        f << "          " << size(0) << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    f << "        <DataArray type=\"Float64\" Name=\"element_size_y\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < ncells; ++elem) {
-        auto size = mesh.element_size(elem);
-        f << "          " << size(1) << "\n";
-    }
-    f << "        </DataArray>\n";
-
-    // Source ID field (which TIF file provides data for this element)
     if (source_id_func) {
-        f << "        <DataArray type=\"Int32\" Name=\"source_id\" format=\"ascii\">\n";
-        for (Index elem = 0; elem < ncells; ++elem) {
-            const auto& bounds = mesh.element_bounds(elem);
-            Real cx = 0.5 * (bounds.xmin + bounds.xmax);
-            Real cy = 0.5 * (bounds.ymin + bounds.ymax);
-            int source_id = source_id_func(cx, cy);
-            f << "          " << source_id << "\n";
-        }
-        f << "        </DataArray>\n";
+        f << "        ";
+        vtk::write_binary_int32(f, "source_id", source_id_data);
     }
 
     f << "      </CellData>\n";
 
-    // Close tags
-    f << "    </Piece>\n";
-    f << "  </UnstructuredGrid>\n";
-    f << "</VTKFile>\n";
-
+    write_footer(f);
     f.close();
     std::cout << "Wrote error field to: " << full_path << std::endl;
 }
