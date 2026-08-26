@@ -1,4 +1,5 @@
 #include "io/water_vtk_writer.hpp"
+#include "io/vtk_binary_utils.hpp"
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
@@ -6,48 +7,6 @@
 #include <stdexcept>
 
 namespace drifter {
-
-namespace {
-
-const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                            "abcdefghijklmnopqrstuvwxyz"
-                            "0123456789+/";
-
-std::string base64_encode(const unsigned char* data, size_t len) {
-    std::string result;
-    result.reserve((len + 2) / 3 * 4);
-
-    for (size_t i = 0; i < len; i += 3) {
-        unsigned int n = data[i] << 16;
-        if (i + 1 < len)
-            n |= data[i + 1] << 8;
-        if (i + 2 < len)
-            n |= data[i + 2];
-
-        result += base64_chars[(n >> 18) & 0x3F];
-        result += base64_chars[(n >> 12) & 0x3F];
-        result += (i + 1 < len) ? base64_chars[(n >> 6) & 0x3F] : '=';
-        result += (i + 2 < len) ? base64_chars[n & 0x3F] : '=';
-    }
-
-    return result;
-}
-
-void write_data_array_binary(std::ostream& out, const std::string& name, int num_components,
-                             const std::vector<Real>& data) {
-    out << "<DataArray type=\"Float64\" Name=\"" << name << "\" NumberOfComponents=\""
-        << num_components << "\" format=\"binary\">";
-
-    uint64_t size = data.size() * sizeof(Real);
-    std::vector<unsigned char> buffer(sizeof(uint64_t) + size);
-    std::memcpy(buffer.data(), &size, sizeof(uint64_t));
-    std::memcpy(buffer.data() + sizeof(uint64_t), data.data(), size);
-
-    out << base64_encode(buffer.data(), buffer.size());
-    out << "</DataArray>\n";
-}
-
-} // namespace
 
 WaterVTKWriter::WaterVTKWriter(const std::string& basename, int polynomial_order)
     : basename_(basename), order_(polynomial_order) {
@@ -259,7 +218,7 @@ void WaterVTKWriter::write_vtu(const std::string& filename, Real time) {
 
     file << "<?xml version=\"1.0\"?>\n";
     file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
-         << "byte_order=\"LittleEndian\">\n";
+         << "byte_order=\"LittleEndian\" header_type=\"UInt64\">\n";
 
     file << "<UnstructuredGrid>\n";
     file << "<FieldData>\n";
@@ -281,7 +240,7 @@ void WaterVTKWriter::write_vtu(const std::string& filename, Real time) {
         point_data.push_back(pt(1));
         point_data.push_back(pt(2));
     }
-    write_data_array_binary(file, "Points", 3, point_data);
+    vtk::write_binary_float64(file, "Points", 3, point_data);
     file << "</Points>\n";
 
     // Cells
@@ -321,7 +280,7 @@ void WaterVTKWriter::write_vtu(const std::string& filename, Real time) {
         file << "<PointData>\n";
         for (const auto& [name, field] : point_fields_) {
             if (!field.data.empty()) {
-                write_data_array_binary(file, name, field.num_components, field.data);
+                vtk::write_binary_float64(file, name, field.num_components, field.data);
             }
         }
         file << "</PointData>\n";
@@ -330,11 +289,11 @@ void WaterVTKWriter::write_vtu(const std::string& filename, Real time) {
     // Cell data (always include depth)
     file << "<CellData>\n";
     // Write depth field
-    write_data_array_binary(file, "depth", 1, element_depths_);
+    vtk::write_binary_float64(file, "depth", 1, element_depths_);
     // Write user-defined cell fields
     for (const auto& [name, field] : cell_fields_) {
         if (!field.data.empty()) {
-            write_data_array_binary(file, name, field.num_components, field.data);
+            vtk::write_binary_float64(file, name, field.num_components, field.data);
         }
     }
     file << "</CellData>\n";

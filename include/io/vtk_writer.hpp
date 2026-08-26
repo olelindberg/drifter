@@ -48,9 +48,7 @@ enum class VTKCellType {
 };
 
 /// @brief VTK data encoding
-enum class VTKEncoding { ASCII,
-                         Binary,
-                         Base64 };
+enum class VTKEncoding { ASCII, Binary };
 
 /// @brief VTK output format
 enum class VTKFormat {
@@ -154,8 +152,6 @@ private:
     void write_data_array_ascii(std::ostream &out, const std::string &name, int num_components,
                                 const std::vector<Real> &data);
     void write_data_array_binary(std::ostream &out, const std::string &name, int num_components,
-                                 const std::vector<Real> &data);
-    void write_data_array_base64(std::ostream &out, const std::string &name, int num_components,
                                  const std::vector<Real> &data);
 
     // VTK node ordering for high-order elements
