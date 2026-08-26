@@ -324,6 +324,10 @@ $M_e$ is applied once to the accumulated element block, not per quadrature point
 
 ## 7. The smoothness operator $H$
 
+> Derived in full — element basis, quadrature and closed Kronecker form, assembly, null spaces —
+> in [hermite_smoothness_operator.md](hermite_smoothness_operator.md), for all three orders. This
+> section states the result.
+
 The energies are unchanged: membrane (Dirichlet) for $r=0$, thin plate for $r \ge 1$. Only the
 congruence is new. Writing $\hat H_{ab,cd} = \hat D_{ab}^\top \hat W \hat D_{cd}$ for the
 reference-element blocks that
@@ -692,6 +696,7 @@ equilibration of §11 to be in place.
 
 ## See also
 
+- [hermite_smoothness_operator.md](hermite_smoothness_operator.md) — full discretization of the smoothness operator $H$ (§7)
 - [cg_bezier_matrix_system.md](cg_bezier_matrix_system.md) — the system this one replaces
 - [cg_bezier_solver_verification.md](cg_bezier_solver_verification.md) — solver and multigrid benchmarks
 - [references/paper-audit.md](references/paper-audit.md) — single-core audit against the AMR literature
