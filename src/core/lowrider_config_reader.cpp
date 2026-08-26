@@ -100,6 +100,7 @@ LowriderConfig LowriderConfigReader::load(const std::string &path) {
     config.coastline.srs            = coast.get<std::string>("srs", "");
     config.coastline.max_level      = coast.get<int>("max_level", 10);
     config.coastline.min_polygon_area = coast.get<Real>("min_polygon_area", 0.0);
+    config.coastline.min_curvature_radius = coast.get<Real>("min_curvature_radius", 1000.0);
   }
 
   config.verbose = tree.get<bool>("verbose", true);
@@ -141,6 +142,7 @@ void print_lowrider_config(const LowriderConfig &config) {
       std::cout << "  Coastline SRS: " << config.coastline.srs << "\n";
     }
     std::cout << "  Coastline max level: " << config.coastline.max_level << "\n";
+    std::cout << "  Coastline min curvature radius: " << config.coastline.min_curvature_radius << " m\n";
     if (config.coastline.min_polygon_area > 0.0) {
       std::cout << "  Coastline min polygon area: " << config.coastline.min_polygon_area << "\n";
     }

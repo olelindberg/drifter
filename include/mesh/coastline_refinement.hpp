@@ -12,6 +12,11 @@
 
 namespace drifter {
 
+/// @brief Configuration for curvature comb visualization
+struct CurvatureCombConfig {
+    Real scale = 0.01;  // Scale factor for comb line lengths
+};
+
 // Forward declarations for PIMPL
 class CoastlineIndex;
 
@@ -76,6 +81,14 @@ public:
     /// @param filename Output filename (without extension)
     void write_vtk(const std::string &filename) const;
 
+    /// @brief Write curvature comb visualization to VTK file
+    /// Shows curvature radius at each coastline vertex as line segments
+    /// extending in the normal direction (toward center of curvature)
+    /// @param filename Output filename (without extension, .vtp added)
+    /// @param config Visualization parameters (scale, radius limits)
+    void write_curvature_comb_vtk(const std::string &filename,
+                                   const CurvatureCombConfig &config = {}) const;
+
     /// @brief Check if GDAL/OGR is available
     static bool is_available();
 
@@ -102,8 +115,19 @@ public:
     /// @brief Check if a box intersects any coastline segment
     bool intersects(Real xmin, Real ymin, Real xmax, Real ymax) const;
 
+    /// @brief Query minimum curvature radius within a bounding box
+    /// @param xmin, ymin, xmax, ymax Query bounding box
+    /// @param min_radius Minimum radius threshold (ignore smaller values as noise)
+    /// @return Minimum curvature radius >= min_radius in the box,
+    ///         or infinity if no qualifying curvature points are present
+    Real min_curvature_radius(Real xmin, Real ymin, Real xmax, Real ymax,
+                               Real min_radius = 0.0) const;
+
     /// @brief Get number of segments in the index
     size_t num_segments() const;
+
+    /// @brief Get number of curvature points in the index
+    size_t num_curvature_points() const;
 
 private:
     friend class CoastlineReader;

@@ -1305,3 +1305,20 @@ TEST_F(IOTest, CoastlineRefinementMaxLevel) {
     EXPECT_FALSE(refinement.should_refine(bounds, max_level + 1));
 }
 
+TEST_F(IOTest, CoastlineCurvatureCombEmptyReader) {
+    CoastlineReader reader;
+
+    // Empty reader should generate empty comb file without crashing
+    std::string comb_path = (test_dir_ / "empty_comb").string();
+    reader.write_curvature_comb_vtk(comb_path);
+
+    // Verify file was created
+    std::ifstream file(comb_path + ".vtp");
+    EXPECT_TRUE(file.good());
+
+    // Read and verify it has 0 lines
+    std::string content((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("NumberOfLines=\"0\""), std::string::npos);
+}
+

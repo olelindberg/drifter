@@ -12,10 +12,13 @@
 #include <boost/geometry/geometries/segment.hpp>
 #include <boost/geometry/index/rtree.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace drifter {
@@ -40,6 +43,10 @@ struct SegmentInfo {
 using SegmentValue = std::pair<Segment2D, SegmentInfo>;
 using SegmentRTree = bgi::rtree<SegmentValue, bgi::rstar<16>>;
 
+// Curvature point: location + curvature radius
+using CurvatureValue = std::pair<Point2D, double>;
+using CurvatureRTree = bgi::rtree<CurvatureValue, bgi::rstar<16>>;
+
 // PIMPL implementation structs
 struct CoastlineReader::Impl {
     std::vector<Segment2D> segments;  // Store segments directly, no polygon overhead
@@ -48,7 +55,9 @@ struct CoastlineReader::Impl {
 
 struct CoastlineIndex::Impl {
     std::shared_ptr<SegmentRTree> rtree;
+    std::shared_ptr<CurvatureRTree> curvature_rtree;
     size_t num_segments = 0;
+    size_t num_curvature_points = 0;
 };
 
 // Internal utility functions (moved from public header)
@@ -397,15 +406,287 @@ void CoastlineReader::write_vtk(const std::string &filename) const {
     std::cout << "Wrote coastline to " << vtk_filename << " (" << total_segments << " segments)\n";
 }
 
+namespace {
+
+// Hash function for vertex positions (with tolerance)
+struct VertexHash {
+    double tolerance = 1e-8;
+    size_t operator()(const Point2D &p) const {
+        // Round to tolerance grid for hashing
+        int64_t ix = static_cast<int64_t>(std::round(bg::get<0>(p) / tolerance));
+        int64_t iy = static_cast<int64_t>(std::round(bg::get<1>(p) / tolerance));
+        return std::hash<int64_t>()(ix) ^ (std::hash<int64_t>()(iy) << 1);
+    }
+};
+
+struct VertexEqual {
+    double tolerance = 1e-8;
+    bool operator()(const Point2D &a, const Point2D &b) const {
+        return std::abs(bg::get<0>(a) - bg::get<0>(b)) < tolerance &&
+               std::abs(bg::get<1>(a) - bg::get<1>(b)) < tolerance;
+    }
+};
+
+// Build ordered vertex chains from segment soup
+std::vector<std::vector<Point2D>> build_vertex_chains(const std::vector<Segment2D> &segments) {
+    if (segments.empty())
+        return {};
+
+    // Build adjacency: vertex -> list of segment indices
+    std::unordered_map<Point2D, std::vector<size_t>, VertexHash, VertexEqual> adjacency;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        adjacency[segments[i].first].push_back(i);
+        adjacency[segments[i].second].push_back(i);
+    }
+
+    std::vector<bool> used(segments.size(), false);
+    std::vector<std::vector<Point2D>> chains;
+
+    for (size_t start_seg = 0; start_seg < segments.size(); ++start_seg) {
+        if (used[start_seg])
+            continue;
+
+        // Start a new chain
+        std::vector<Point2D> chain;
+        size_t current_seg = start_seg;
+        Point2D current_vertex = segments[current_seg].first;
+        chain.push_back(current_vertex);
+
+        while (true) {
+            used[current_seg] = true;
+
+            // Get the other endpoint of current segment
+            Point2D next_vertex;
+            if (VertexEqual()(segments[current_seg].first, current_vertex)) {
+                next_vertex = segments[current_seg].second;
+            } else {
+                next_vertex = segments[current_seg].first;
+            }
+            chain.push_back(next_vertex);
+
+            // Find next segment from next_vertex
+            auto it = adjacency.find(next_vertex);
+            if (it == adjacency.end())
+                break;
+
+            size_t next_seg = SIZE_MAX;
+            for (size_t seg_idx : it->second) {
+                if (!used[seg_idx]) {
+                    next_seg = seg_idx;
+                    break;
+                }
+            }
+
+            if (next_seg == SIZE_MAX)
+                break;
+
+            current_seg = next_seg;
+            current_vertex = next_vertex;
+        }
+
+        if (chain.size() >= 3) {
+            chains.push_back(std::move(chain));
+        }
+    }
+
+    return chains;
+}
+
+// Compute curvature radius from 3 consecutive points
+double compute_curvature_radius(const Point2D &p0, const Point2D &p1, const Point2D &p2) {
+    double x0 = bg::get<0>(p0), y0 = bg::get<1>(p0);
+    double x1 = bg::get<0>(p1), y1 = bg::get<1>(p1);
+    double x2 = bg::get<0>(p2), y2 = bg::get<1>(p2);
+
+    // Vectors
+    double v1x = x1 - x0, v1y = y1 - y0;
+    double v2x = x2 - x1, v2y = y2 - y1;
+
+    // Side lengths
+    double a = std::sqrt(v1x * v1x + v1y * v1y);
+    double b = std::sqrt(v2x * v2x + v2y * v2y);
+    double cx = x2 - x0, cy = y2 - y0;
+    double c = std::sqrt(cx * cx + cy * cy);
+
+    // 2D cross product (twice the signed area)
+    double cross = v1x * v2y - v1y * v2x;
+
+    // Guard against collinear points
+    if (std::abs(cross) < 1e-12 * a * b) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    // Circumradius formula: R = abc / (4 * Area)
+    return (a * b * c) / (2.0 * std::abs(cross));
+}
+
+// Compute normal direction pointing toward center of curvature
+Point2D compute_normal(const Point2D &p0, const Point2D &p1, const Point2D &p2) {
+    double x0 = bg::get<0>(p0), y0 = bg::get<1>(p0);
+    double x1 = bg::get<0>(p1), y1 = bg::get<1>(p1);
+    double x2 = bg::get<0>(p2), y2 = bg::get<1>(p2);
+
+    // Normalized direction vectors
+    double v1x = x1 - x0, v1y = y1 - y0;
+    double v2x = x2 - x1, v2y = y2 - y1;
+
+    double len1 = std::sqrt(v1x * v1x + v1y * v1y);
+    double len2 = std::sqrt(v2x * v2x + v2y * v2y);
+
+    if (len1 < 1e-12 || len2 < 1e-12) {
+        return Point2D(0, 0);
+    }
+
+    v1x /= len1;
+    v1y /= len1;
+    v2x /= len2;
+    v2y /= len2;
+
+    // Average tangent direction
+    double tx = v1x + v2x, ty = v1y + v2y;
+    double tlen = std::sqrt(tx * tx + ty * ty);
+    if (tlen < 1e-12) {
+        // Vectors point in opposite directions (hairpin)
+        tx = -v1y;
+        ty = v1x;
+        tlen = 1.0;
+    }
+    tx /= tlen;
+    ty /= tlen;
+
+    // Normal is perpendicular to tangent
+    double nx = -ty, ny = tx;
+
+    // Check which side the center is on using cross product
+    double cross = v1x * v2y - v1y * v2x;
+    if (cross < 0) {
+        nx = -nx;
+        ny = -ny;
+    }
+
+    return Point2D(nx, ny);
+}
+
+} // anonymous namespace
+
+void CoastlineReader::write_curvature_comb_vtk(const std::string &filename,
+                                                const CurvatureCombConfig &config) const {
+    std::string vtk_filename = filename + ".vtp";
+    std::ofstream out(vtk_filename);
+    if (!out) {
+        std::cerr << "Failed to open " << vtk_filename << " for writing\n";
+        return;
+    }
+
+    // Build vertex chains from segments
+    auto chains = build_vertex_chains(impl_->segments);
+
+    // Collect curvature data for all interior vertices
+    struct CombLine {
+        double x0, y0;  // Start point (on coastline)
+        double x1, y1;  // End point (comb tip)
+        double radius;  // Curvature radius
+    };
+    std::vector<CombLine> comb_lines;
+
+    for (const auto &chain : chains) {
+        // Compute curvature at interior vertices (skip endpoints)
+        for (size_t i = 1; i + 1 < chain.size(); ++i) {
+            double radius = compute_curvature_radius(chain[i - 1], chain[i], chain[i + 1]);
+            Point2D normal = compute_normal(chain[i - 1], chain[i], chain[i + 1]);
+
+            // Skip infinite radii (straight sections)
+            if (std::isinf(radius)) {
+                continue;
+            }
+
+            // Clamp comb line length for visualization (max 10km)
+            double length = std::min(radius * config.scale, 10000.0);
+            double x0 = bg::get<0>(chain[i]);
+            double y0 = bg::get<1>(chain[i]);
+            double x1 = x0 + bg::get<0>(normal) * length;
+            double y1 = y0 + bg::get<1>(normal) * length;
+
+            comb_lines.push_back({x0, y0, x1, y1, radius});
+        }
+    }
+
+    size_t num_lines = comb_lines.size();
+    size_t num_points = num_lines * 2;
+
+    // VTK XML header
+    out << "<?xml version=\"1.0\"?>\n";
+    out << "<VTKFile type=\"PolyData\" version=\"1.0\" byte_order=\"LittleEndian\">\n";
+    out << "  <PolyData>\n";
+    out << "    <Piece NumberOfPoints=\"" << num_points
+        << "\" NumberOfVerts=\"0\" NumberOfLines=\"" << num_lines
+        << "\" NumberOfStrips=\"0\" NumberOfPolys=\"0\">\n";
+
+    // Points
+    out << "      <Points>\n";
+    out << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    for (const auto &line : comb_lines) {
+        out << "          " << line.x0 << " " << line.y0 << " 0\n";
+        out << "          " << line.x1 << " " << line.y1 << " 0\n";
+    }
+    out << "        </DataArray>\n";
+    out << "      </Points>\n";
+
+    // Lines
+    out << "      <Lines>\n";
+    out << "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n";
+    for (size_t i = 0; i < num_lines; ++i) {
+        out << "          " << (i * 2) << " " << (i * 2 + 1) << "\n";
+    }
+    out << "        </DataArray>\n";
+    out << "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n";
+    for (size_t i = 0; i < num_lines; ++i) {
+        out << "          " << ((i + 1) * 2) << "\n";
+    }
+    out << "        </DataArray>\n";
+    out << "      </Lines>\n";
+
+    // Cell data: curvature radius
+    out << "      <CellData>\n";
+    out << "        <DataArray type=\"Float64\" Name=\"curvature_radius\" format=\"ascii\">\n";
+    for (const auto &line : comb_lines) {
+        out << "          " << line.radius << "\n";
+    }
+    out << "        </DataArray>\n";
+    out << "      </CellData>\n";
+
+    out << "    </Piece>\n";
+    out << "  </PolyData>\n";
+    out << "</VTKFile>\n";
+
+    out.close();
+    std::cout << "Wrote curvature comb to " << vtk_filename << " (" << num_lines
+              << " comb lines from " << chains.size() << " chains)\n";
+}
+
 std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
     auto index = std::make_shared<CoastlineIndex>();
     index->impl_->rtree = std::make_shared<SegmentRTree>();
+    index->impl_->curvature_rtree = std::make_shared<CurvatureRTree>();
     index->impl_->num_segments = 0;
+    index->impl_->num_curvature_points = 0;
 
     // Insert all segments into R-tree
     for (size_t i = 0; i < impl_->segments.size(); ++i) {
         index->impl_->rtree->insert({impl_->segments[i], {i, 0, 0}});
         ++index->impl_->num_segments;
+    }
+
+    // Build curvature index from vertex chains
+    auto chains = build_vertex_chains(impl_->segments);
+    for (const auto& chain : chains) {
+        for (size_t i = 1; i + 1 < chain.size(); ++i) {
+            double radius = compute_curvature_radius(chain[i - 1], chain[i], chain[i + 1]);
+            if (!std::isinf(radius)) {
+                index->impl_->curvature_rtree->insert({chain[i], radius});
+                ++index->impl_->num_curvature_points;
+            }
+        }
     }
 
     return index;
@@ -415,7 +696,9 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
     Real domain_xmin, Real domain_ymin, Real domain_xmax, Real domain_ymax) const {
     auto index = std::make_shared<CoastlineIndex>();
     index->impl_->rtree = std::make_shared<SegmentRTree>();
+    index->impl_->curvature_rtree = std::make_shared<CurvatureRTree>();
     index->impl_->num_segments = 0;
+    index->impl_->num_curvature_points = 0;
 
     // Create domain bounding box for filtering
     Box2D domain_box(Point2D(domain_xmin, domain_ymin),
@@ -429,6 +712,18 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
         }
     }
 
+    // Build curvature index from vertex chains
+    auto chains = build_vertex_chains(impl_->segments);
+    for (const auto& chain : chains) {
+        for (size_t i = 1; i + 1 < chain.size(); ++i) {
+            double radius = compute_curvature_radius(chain[i - 1], chain[i], chain[i + 1]);
+            if (!std::isinf(radius)) {
+                index->impl_->curvature_rtree->insert({chain[i], radius});
+                ++index->impl_->num_curvature_points;
+            }
+        }
+    }
+
     return index;
 }
 
@@ -437,6 +732,33 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
 // =============================================================================
 
 size_t CoastlineIndex::num_segments() const { return impl_->num_segments; }
+
+size_t CoastlineIndex::num_curvature_points() const { return impl_->num_curvature_points; }
+
+Real CoastlineIndex::min_curvature_radius(Real xmin, Real ymin, Real xmax, Real ymax,
+                                           Real min_threshold) const {
+    if (!impl_->curvature_rtree || impl_->curvature_rtree->empty()) {
+        return std::numeric_limits<Real>::infinity();
+    }
+
+    Box2D box(Point2D(xmin, ymin), Point2D(xmax, ymax));
+    std::vector<CurvatureValue> candidates;
+    impl_->curvature_rtree->query(bgi::intersects(box), std::back_inserter(candidates));
+
+    if (candidates.empty()) {
+        return std::numeric_limits<Real>::infinity();
+    }
+
+    // Find true minimum curvature radius
+    Real min_radius = std::numeric_limits<Real>::infinity();
+    for (const auto& [point, radius] : candidates) {
+        min_radius = std::min(min_radius, radius);
+    }
+
+    // Apply floor threshold to prevent over-refinement from noise
+    // (e.g., if min_threshold=100m and min_radius=10m, return 100m)
+    return std::max(min_radius, min_threshold);
+}
 
 bool CoastlineIndex::intersects(Real xmin, Real ymin, Real xmax, Real ymax) const {
     if (!impl_->rtree)

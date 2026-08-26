@@ -114,6 +114,10 @@ int Lowrider::run() {
     generator.write_vtk(config_.output.vtk_file, config_.output.vtk_writer_type);
     std::cout << "Output written to        : " << config_.output.vtk_file << ".vtu" << std::endl;
 
+    // Write VTK with per-element error and depth for visualization
+    std::string error_vtk_file = config_.output.vtk_file + "_errors";
+    generator.write_vtk_with_errors(error_vtk_file);
+
     std::cout << "\nMesh generation complete.\n";
     return 0;
 }

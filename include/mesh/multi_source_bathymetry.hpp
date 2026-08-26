@@ -139,6 +139,16 @@ public:
     /// @return true if inside primary bounds
     bool is_in_primary(Real x, Real y) const;
 
+    /// @brief Get source index for a point (0=primary, 1..N=tiles, -1=none)
+    ///
+    /// Returns an integer identifying which bathymetry source covers the point.
+    /// Unlike get_source_for_point(), this does not trigger lazy loading of tiles.
+    ///
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return 0 for primary, 1..N for tiles, -1 if no source covers the point
+    int get_source_index(Real x, Real y) const;
+
     /// @brief Transform a point from EPSG:3034 to EPSG:4326
     /// @param x Input/output: X coordinate (EPSG:3034 in, longitude out)
     /// @param y Input/output: Y coordinate (EPSG:3034 in, latitude out)

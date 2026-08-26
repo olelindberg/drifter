@@ -62,6 +62,7 @@ struct LowriderCoastlineConfig {
     std::string srs;               ///< Target SRS (e.g., "EPSG:3034")
     int max_level = 10;            ///< Max refinement level near coastline
     Real min_polygon_area = 0.0;   ///< Filter small polygons (0 = no filter)
+    Real min_curvature_radius = 1000.0;  ///< Minimum curvature radius to consider (meters)
 
     bool enabled() const { return !file.empty(); }
 };

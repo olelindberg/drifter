@@ -104,18 +104,25 @@ void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) 
         reader.remove_small_polygons(config.min_polygon_area);
     }
 
-    std::cout << "Loaded coastline: " << reader.num_polygons() << " polygons\n";
+    std::cout << "Loaded coastline: " << reader.num_polygons() << " segments\n";
 
     // Write coastline to VTK for debugging
     reader.write_vtk("/tmp/coastline_debug");
+
+    // Write curvature comb visualization
+    CurvatureCombConfig comb_config;
+    comb_config.scale = 0.1;  // 10% of curvature radius
+    reader.write_curvature_comb_vtk("/tmp/coastline_curvature_comb", comb_config);
 
     // Build R-tree with domain filter (segments already filtered during load)
     coastline_index_ = reader.build_index(domain.xmin, domain.ymin,
                                            domain.xmax, domain.ymax);
     coastline_max_level_ = config.max_level;
+    coastline_min_curvature_radius_ = config.min_curvature_radius;
 
     std::cout << "Built coastline index: " << coastline_index_->num_segments()
-              << " segments (filtered to domain)\n";
+              << " segments, " << coastline_index_->num_curvature_points()
+              << " curvature points (filtered to domain)\n";
 }
 
 int LinearMeshGenerator::refine_coastline() {
@@ -147,14 +154,22 @@ int LinearMeshGenerator::refine_coastline() {
                 if (min_size > 0.0) {
                     auto size = mesh_.element_size(elem);
                     Real elem_min_size = std::min(size(0), size(1));
-                    if (elem_min_size <= min_size) {
-                        continue;  // Already at or below pixel resolution
+                    // Check if CHILDREN would be below pixel resolution
+                    if (elem_min_size < 2.0 * min_size) {
+                        continue;  // Children would be below pixel resolution
                     }
                 }
             }
 
-            if (coastline_index_->intersects(bounds.xmin, bounds.ymin,
-                                              bounds.xmax, bounds.ymax)) {
+            // Curvature-based refinement: refine if smallest curvature radius
+            // within the element is smaller than the element side length.
+            Real element_side = std::min(bounds.xmax - bounds.xmin,
+                                          bounds.ymax - bounds.ymin);
+            Real min_curvature = coastline_index_->min_curvature_radius(
+                bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
+                coastline_min_curvature_radius_);
+
+            if (min_curvature < element_side) {
                 to_refine.push_back(elem);
             }
         }
@@ -515,8 +530,10 @@ std::vector<Index> LinearMeshGenerator::select_for_refinement(
             if (min_size > 0.0) {
                 auto size = mesh_.element_size(elem);
                 Real elem_min_size = std::min(size(0), size(1));
-                if (elem_min_size <= min_size) {
-                    continue;  // Already at or below pixel resolution for this source
+                // Check if CHILDREN would be below pixel resolution
+                // Refinement splits element in half, so children are elem_size/2
+                if (elem_min_size < 2.0 * min_size) {
+                    continue;  // Children would be below pixel resolution
                 }
             }
         }
@@ -590,6 +607,26 @@ void LinearMeshGenerator::write_vtk(const std::string& filename,
     } else {
         writer.write_mesh_only(filename, mesh_);
     }
+}
+
+void LinearMeshGenerator::write_vtk_with_errors(const std::string& filename) const {
+    QuadtreeVTKWriter writer;
+    if (!surface_ || !surface_->is_fitted()) {
+        throw std::runtime_error(
+            "LinearMeshGenerator::write_vtk_with_errors: surface not fitted");
+    }
+
+    auto errors = get_errors();
+
+    // Create source ID function if multi-source bathymetry is available
+    std::function<int(Real, Real)> source_id_func;
+    if (multi_bathy_) {
+        source_id_func = [this](Real x, Real y) {
+            return multi_bathy_->get_source_index(x, y);
+        };
+    }
+
+    writer.write_with_errors(filename, mesh_, *surface_, errors, depth_func_, source_id_func);
 }
 
 } // namespace drifter

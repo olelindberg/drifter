@@ -283,6 +283,31 @@ bool MultiSourceBathymetry::is_in_primary(Real x, Real y) const {
     return Impl::is_inside_bounds(impl_->primary, x, y);
 }
 
+int MultiSourceBathymetry::get_source_index(Real x, Real y) const {
+    // Check primary source first (EPSG:3034)
+    if (Impl::is_inside_bounds(impl_->primary, x, y)) {
+        float val = impl_->primary.interpolate(x, y);
+        if (!Impl::is_nodata(val, impl_->primary.nodata_value)) {
+            return 0;  // Primary source
+        }
+    }
+
+    // Transform to EPSG:4326 for tile lookup
+    double lon = x, lat = y;
+    if (!impl_->to_4326->Transform(1, &lon, &lat)) {
+        return -1;
+    }
+
+    // Check tile bounds (without triggering lazy loading)
+    for (size_t i = 0; i < impl_->tiles.size(); ++i) {
+        if (Impl::is_inside_bounds(impl_->tiles[i].bounds, lon, lat)) {
+            return static_cast<int>(i + 1);  // Tile indices start at 1
+        }
+    }
+
+    return -1;  // No source covers this point
+}
+
 bool MultiSourceBathymetry::transform_to_4326(double& x, double& y) const {
     return impl_->to_4326->Transform(1, &x, &y) != 0;
 }
@@ -290,7 +315,11 @@ bool MultiSourceBathymetry::transform_to_4326(double& x, double& y) const {
 const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y) const {
     // Check primary source first (EPSG:3034)
     if (Impl::is_inside_bounds(impl_->primary, x, y)) {
-        return &impl_->primary;
+        // Only return primary if it has valid data at this point
+        float val = impl_->primary.interpolate(x, y);
+        if (!Impl::is_nodata(val, impl_->primary.nodata_value)) {
+            return &impl_->primary;
+        }
     }
 
     // Transform to EPSG:4326 for tile lookup
@@ -337,35 +366,79 @@ const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y
 }
 
 Real MultiSourceBathymetry::get_min_element_size_meters(Real x, Real y) const {
-    const BathymetryData* source = get_source_for_point(x, y);
-    if (!source) {
+    // Check primary source first (EPSG:3034 - projected, meters)
+    if (Impl::is_inside_bounds(impl_->primary, x, y)) {
+        float val = impl_->primary.interpolate(x, y);
+        if (!Impl::is_nodata(val, impl_->primary.nodata_value)) {
+            // Primary is in projected CRS - pixel size already in meters
+            return impl_->primary.min_element_size();
+        }
+    }
+
+    // Transform to EPSG:4326 for tile lookup
+    double lon = x, lat = y;
+    if (!impl_->to_4326->Transform(1, &lon, &lat)) {
         return 0.0;
     }
 
-    Real min_pixel_size = source->min_element_size();
+    // Check tiles - use bounds.is_geographic (correctly set at startup)
+    // instead of tile.data->is_geographic (may be incorrectly set during lazy load)
+    for (auto &tile : impl_->tiles) {
+        if (Impl::is_inside_bounds(tile.bounds, lon, lat)) {
+            // Load tile data if not already loaded (need pixel size)
+            if (!tile.data.has_value()) {
+                auto start = std::chrono::high_resolution_clock::now();
+                std::cout << "[MultiSourceBathymetry] Loading tile on demand: " << tile.path
+                          << std::endl;
 
-    // If source is in projected CRS, pixel size is already in meters
-    if (!source->is_geographic) {
-        return min_pixel_size;
+                tile.data = impl_->reader.load(tile.path);
+
+                auto end = std::chrono::high_resolution_clock::now();
+                double ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+                if (tile.data->is_valid()) {
+                    size_t bytes = tile.data->elevation.size() * sizeof(float);
+                    std::cout << "[MultiSourceBathymetry] Tile loaded: " << tile.data->sizex << "x"
+                              << tile.data->sizey << " (" << bytes / (1024 * 1024) << " MB) in "
+                              << ms << " ms" << std::endl;
+
+                    impl_->tiles_loaded++;
+                    impl_->total_bytes_loaded += bytes;
+                } else {
+                    std::cout << "[MultiSourceBathymetry] Warning: Failed to load tile: "
+                              << tile.path << std::endl;
+                }
+            }
+
+            if (!tile.data->is_valid()) {
+                continue;
+            }
+
+            // Use tile.bounds.is_geographic (always correctly set at startup)
+            // instead of tile.data->is_geographic (may be incorrect)
+            if (!tile.bounds.is_geographic) {
+                // Tile is in projected CRS - pixel size already in meters
+                return tile.data->min_element_size();
+            }
+
+            // Tile is in geographic CRS - convert from degrees to meters
+            constexpr double EARTH_RADIUS_M = 6371000.0;
+            constexpr double DEG_TO_RAD = M_PI / 180.0;
+
+            double lat_rad = lat * DEG_TO_RAD;
+            double meters_per_degree_lat = EARTH_RADIUS_M * DEG_TO_RAD;  // ~111,320 m
+            double meters_per_degree_lon = meters_per_degree_lat * std::cos(lat_rad);
+
+            Real pixel_x_m = tile.data->pixel_size_x() * meters_per_degree_lon;
+            Real pixel_y_m = tile.data->pixel_size_y() * meters_per_degree_lat;
+
+            // Use max to get the coarsest pixel dimension - refining beyond this
+            // doesn't add real bathymetry information
+            return std::max(pixel_x_m, pixel_y_m);
+        }
     }
 
-    // Convert from degrees to meters at the point's latitude
-    double lon = x, lat = y;
-    if (!impl_->to_4326->Transform(1, &lon, &lat)) {
-        lat = 55.0;  // Fallback: Danish waters
-    }
-
-    constexpr double EARTH_RADIUS_M = 6371000.0;
-    constexpr double DEG_TO_RAD = M_PI / 180.0;
-
-    double lat_rad = lat * DEG_TO_RAD;
-    double meters_per_degree_lat = EARTH_RADIUS_M * DEG_TO_RAD;  // ~111,320 m
-    double meters_per_degree_lon = meters_per_degree_lat * std::cos(lat_rad);
-
-    Real pixel_x_m = source->pixel_size_x() * meters_per_degree_lon;
-    Real pixel_y_m = source->pixel_size_y() * meters_per_degree_lat;
-
-    return std::min(pixel_x_m, pixel_y_m);
+    return 0.0;
 }
 
 } // namespace drifter

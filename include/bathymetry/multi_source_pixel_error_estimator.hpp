@@ -16,6 +16,7 @@
 #include "mesh/multi_source_bathymetry.hpp"
 #include <cmath>
 #include <functional>
+#include <stdexcept>
 
 namespace drifter {
 
@@ -133,39 +134,25 @@ private:
         Real max_error = 0.0;
         int sample_count = 0;
 
-        // Sample on a regular grid using bilinear mapping to tile CRS
+        // Sample on a regular grid in EPSG:3034 coordinates
+        // Use multi_bathy_.evaluate() for consistency with surface fitting
         for (int iy = 0; iy <= ny; ++iy) {
             Real v = static_cast<Real>(iy) / ny;  // [0, 1]
-            Real one_minus_v = 1.0 - v;
 
             for (int ix = 0; ix <= nx; ++ix) {
                 Real u = static_cast<Real>(ix) / nx;  // [0, 1]
-                Real one_minus_u = 1.0 - u;
 
-                // Bilinear interpolation for position in EPSG:4326 (tile CRS)
-                Real lon = one_minus_u * one_minus_v * x00 +
-                           u * one_minus_v * x10 +
-                           one_minus_u * v * x01 +
-                           u * v * x11;
-                Real lat = one_minus_u * one_minus_v * y00 +
-                           u * one_minus_v * y10 +
-                           one_minus_u * v * y01 +
-                           u * v * y11;
+                // Sample position in EPSG:3034
+                Real x_3034 = bounds.xmin + (bounds.xmax - bounds.xmin) * u;
+                Real y_3034 = bounds.ymin + (bounds.ymax - bounds.ymin) * v;
 
-                // Direct interpolation from source (no CRS transform or tile search!)
-                float raw_val = source->interpolate(lon, lat);
-
-                // Check for NoData
-                if (std::abs(raw_val - source->nodata_value) < 1e-6f || raw_val > 1e30f) {
-                    continue;
-                }
-
-                // Convert to depth using source's sign convention
+                // Use multi_bathy_.evaluate() for consistent depth sampling
+                // This ensures we use the same function as surface fitting
                 Real depth;
-                if (source->is_depth_positive) {
-                    depth = raw_val > 0.0f ? static_cast<Real>(raw_val) : 0.0;
-                } else {
-                    depth = raw_val < 0.0f ? static_cast<Real>(-raw_val) : 0.0;
+                try {
+                    depth = multi_bathy_.evaluate(x_3034, y_3034);
+                } catch (const std::out_of_range&) {
+                    continue;  // Point outside all sources
                 }
 
                 // Skip land (depth = 0)
@@ -175,10 +162,6 @@ private:
 
                 // Convert depth (positive downward) to elevation (negative below sea level)
                 Real z_data = -depth;
-
-                // Get sample position in EPSG:3034 for surface evaluation
-                Real x_3034 = bounds.xmin + (bounds.xmax - bounds.xmin) * u;
-                Real y_3034 = bounds.ymin + (bounds.ymax - bounds.ymin) * v;
 
                 // Evaluate surface (in EPSG:3034)
                 Real z_surface = surface_.evaluate(x_3034, y_3034);
