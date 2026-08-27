@@ -50,6 +50,28 @@ LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -V
 
 The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home/ole/.local/lib`.
 
+There is a third test executable, `./build/tests/drifter_benchmarks` (ctest label `benchmark`),
+built from `tests/benchmarks/`. It is long-running and excluded from CI.
+
+## Running the Application
+
+The `drifter` executable is currently an **adaptive bathymetry smoother** driver (not a full
+ocean simulation): it loads GeoTIFF bathymetry, fits an adaptive CG Bezier surface, and writes
+VTK output.
+
+```bash
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/drifter config/example.json
+```
+
+Config is JSON, parsed by `ConfigReader` (`src/core/config_reader.cpp`) into `DrifterConfig`;
+sections are `data`, `domain`, `initial_grid`, `adaptive`, `smoother`, `output`.
+
+## Python Scripts
+
+`scr/` holds the plotting/report scripts used to regenerate the docs figures (matplotlib,
+numpy, pandas; managed with `uv`, see `scr/pyproject.toml`). `docs/regenerate_figures.sh`
+runs the relevant gtest filters and then these scripts.
+
 ## Code Formatting
 
 The project uses clang-format for code style. CI checks formatting with clang-format-15:
@@ -106,7 +128,9 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 
 **io/** - Input/output
 - `VTKWriter` - VTU output with high-order Lagrange hexahedra support
-- `SeabedVTKWriter` - High-resolution seabed surface visualization
+- `SeabedVTKWriter` - High-resolution seabed surface visualization (also in `io/vtk_writer.hpp`,
+  alongside `HighOrderVTKWriter`, `OceanVTKWriter`, `XDMFWriter`)
+- `BathymetryVTKWriter` (`io/bathymetry_vtk_writer.hpp`) - quadtree/octree bathymetry surface output
 - `ZarrWriter` - Zarr v3 output (optional, requires zarrs_ffi)
 
 **amr/** - Adaptive mesh refinement
@@ -201,6 +225,31 @@ config.transfer_strategy = TransferOperatorStrategy::BezierSubdivision;
 config.coarse_grid_strategy = CoarseGridStrategy::CachedRediscretization;
 ```
 
+**Iterative solver stack (`bathymetry/`):** the smoothers share a small solver framework, all
+under `include/bathymetry/`:
+- `IIterativeMethod` (`iterative_method.hpp`) - common interface for smoothers and standalone
+  solvers, built via `IterativeMethodFactory`. Implementations: `JacobiMethod`, `SchwarzMethod`
+  (block builder in `schwarz_block_builder.hpp`), selected by `SmootherType` (Jacobi,
+  MultiplicativeSchwarz, AdditiveSchwarz, ColoredMultiplicativeSchwarz).
+- `FlexibleCG` - flexible CG, needed because the MG preconditioner is non-stationary.
+- Schur preconditioners for the KKT system: `SchurPreconditioner` base with
+  `DiagonalApproxCGSchurPreconditioner` and `BlockDiagApproxCGSchurPreconditioner`.
+- `ConstraintCondenser` - hanging-node/constraint condensation shared by the smoothers.
+- Basis and energy operators are split into base + concrete pairs
+  (`bezier_basis_2d_base.hpp` / `cubic_bezier_basis_2d.hpp` / `linear_bezier_basis_2d.hpp`;
+  `bezier_hessian_base.hpp` / `thin_plate_hessian.hpp` / `cubic_thin_plate_hessian.hpp`), so a
+  new smoother degree means adding a basis + Hessian pair, not editing the assembler.
+
+**Documentation index (`docs/`):**
+| File | Contents |
+|------|----------|
+| `cg_bezier_matrix_system.md` | Full derivation of the assembled CG Bezier system |
+| `hermite_smoothness_operator.md` | Derivation of H in the Hermite basis |
+| `cg_bezier_solver_verification.md` | Direct vs iterative vs MG solver comparison |
+| `cg_cubic_bezier_uniform_evaluation.md` | Uniform-grid accuracy/timing tables |
+| `uniform_vs_adaptive_convergence.md` | Uniform vs AMR convergence on synthetic bathymetry |
+| `hermite_bathymetry_system.md` | **Design study only, not implemented** — corner elevation/derivative DOFs as an alternative that makes C^r structural and removes the KKT system |
+
 **Matrix System:** See `docs/cg_bezier_matrix_system.md` for the full derivation of the assembled system - least-squares data term, thin plate/membrane energy, C⁰/C¹ continuity, hanging-node constraints, boundary conditions, and KKT layout.
 
 **Verification Report:** See `docs/cg_bezier_solver_verification.md` for solver comparison results (Direct vs Iterative+LU vs Iterative+MG) and iterative method benchmarks. Regenerate figures with `./docs/regenerate_figures.sh`.
@@ -230,7 +279,6 @@ Test files in `tests/integration/`:
 | `test_adaptive_cg_cubic_bezier_smoother.cpp` | Adaptive refinement for CG cubic smoother |
 | `test_adaptive_cg_linear_bezier_smoother.cpp` | Adaptive refinement for CG linear smoother |
 | `test_multi_source_bathymetry.cpp` | Multi-source bathymetry loading and blending |
-| `test_bathymetry.cpp` | GeoTIFF loading, coastline-adaptive refinement, seabed VTK output |
 | `test_mesh.cpp` | Octree mesh creation, face connectivity |
 | `test_dg_operators.cpp` | Gradient/divergence operators, mass matrix, face interpolation, discrete Green's identity |
 | `test_initial_conditions.cpp` | Quiescent, Kelvin wave, lock exchange initial conditions |
@@ -248,8 +296,14 @@ Optional: VTK, zarrs_ffi (Zarr output), netCDF, HDF5
 
 CMake build options (set with `-D`):
 - `DRIFTER_USE_MPI=ON` - MPI parallelization (default ON)
-- `DRIFTER_USE_OPENMP=ON` - OpenMP threading (default ON)
+- `DRIFTER_USE_OPENMP` - OpenMP threading. The option defaults ON but is **unconditionally
+  overridden to OFF** at `CMakeLists.txt:25`; `-D` on the command line will not enable it.
 - `DRIFTER_USE_CUDA=OFF` - CUDA GPU acceleration (default OFF)
 - `DRIFTER_USE_ZARR=ON` - Zarr v3 output via zarrs_ffi (default ON)
 - `DRIFTER_USE_VTK=ON` - VTK output (default ON)
+- `DRIFTER_USE_METIS=ON` - METIS ordering for sparse solvers (default ON, found QUIET)
+- `DRIFTER_BUILD_TESTS=ON` / `DRIFTER_BUILD_DOCS=OFF`
 - `ZARRS_FFI_DIR=/path` - Custom path to zarrs_ffi library
+
+GDAL is a hard `REQUIRED` dependency regardless of options (CI passes a `DRIFTER_USE_GDAL`
+flag that no longer exists).
