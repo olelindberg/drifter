@@ -1,10 +1,10 @@
 #include "bathymetry/linear_mesh_generator.hpp"
 #include "bathymetry/multi_source_pixel_error_estimator.hpp"
+#include "core/logger.hpp"
 #include "io/quadtree_vtk_writer.hpp"
 #include "mesh/multi_source_bathymetry.hpp"
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <numeric>
 #include <stdexcept>
 
@@ -35,7 +35,7 @@ void LinearMeshGenerator::load_bathymetry(const std::string& geotiff_path) {
 
 void LinearMeshGenerator::load_bathymetry(const LowriderDataConfig& data_config) {
     if (data_config.primary_file.empty()) {
-        std::cerr << "Warning: No primary bathymetry file specified" << std::endl;
+        LOG_WARNING("No primary bathymetry file specified");
         return;
     }
 
@@ -46,8 +46,8 @@ void LinearMeshGenerator::load_bathymetry(const LowriderDataConfig& data_config)
         tile_paths.push_back(data_config.data_dir + tile);
     }
 
-    std::cout << "Loading bathymetry from: " << primary_path << std::endl;
-    std::cout << "  with " << tile_paths.size() << " tile files" << std::endl;
+    LOG_INFO("Loading bathymetry from: " << primary_path);
+    LOG_INFO("  with " << tile_paths.size() << " tile files");
 
     // Use MultiSourceBathymetry for blended data
     multi_bathy_ = std::make_shared<MultiSourceBathymetry>(primary_path, tile_paths);
@@ -95,8 +95,7 @@ void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) 
     // Use load overload with domain bounds for GDAL spatial filter
     if (!reader.load(config.file, config.layer, config.srs,
                      domain.xmin, domain.ymin, domain.xmax, domain.ymax)) {
-        std::cerr << "Warning: Failed to load coastline: "
-                  << reader.last_error() << std::endl;
+        LOG_WARNING("Failed to load coastline: " << reader.last_error());
         return;
     }
 
@@ -104,7 +103,7 @@ void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) 
         reader.remove_small_polygons(config.min_polygon_area);
     }
 
-    std::cout << "Loaded coastline: " << reader.num_polygons() << " segments\n";
+    LOG_INFO("Loaded coastline: " << reader.num_polygons() << " segments");
 
     // Write coastline to VTK for debugging
     reader.write_vtk("/tmp/coastline_debug");
@@ -120,9 +119,9 @@ void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) 
     coastline_max_level_ = config.max_level;
     coastline_min_curvature_radius_ = config.min_curvature_radius;
 
-    std::cout << "Built coastline index: " << coastline_index_->num_segments()
-              << " segments, " << coastline_index_->num_curvature_points()
-              << " curvature points (filtered to domain)\n";
+    LOG_INFO("Built coastline index: " << coastline_index_->num_segments() << " segments, "
+                                       << coastline_index_->num_curvature_points()
+                                       << " curvature points (filtered to domain)");
 }
 
 int LinearMeshGenerator::refine_coastline() {
@@ -179,9 +178,8 @@ int LinearMeshGenerator::refine_coastline() {
             changed = true;
             ++iterations;
 
-            std::cout << "  Coastline iteration " << iterations
-                      << ": refined " << to_refine.size() << " elements, "
-                      << mesh_.num_elements() << " total\n";
+            LOG_INFO("Coastline iteration " << iterations << ": refined " << to_refine.size()
+                                              << " elements, " << mesh_.num_elements() << " total");
         }
     }
 
@@ -291,7 +289,7 @@ LowriderAdaptiveResult LinearMeshGenerator::solve_adaptive() {
     result.converged = false;
 
     if (!bathymetry_) {
-        std::cerr << "Warning: No bathymetry data loaded, cannot compute error" << std::endl;
+        LOG_WARNING("No bathymetry data loaded, cannot compute error");
         result.num_elements = mesh_.num_elements();
         result.max_error = 0.0;
         result.mean_error = 0.0;
@@ -300,7 +298,7 @@ LowriderAdaptiveResult LinearMeshGenerator::solve_adaptive() {
         return result;
     }
 
-    std::cout << "\nStarting adaptive refinement..." << std::endl;
+    LOG_INFO("Starting adaptive refinement...");
 
     // Initialize error cache
     cached_errors_.clear();
@@ -322,8 +320,8 @@ LowriderAdaptiveResult LinearMeshGenerator::solve_adaptive() {
         Real max_err = max_error_from(errors);
         Real mean_err = mean_error_from(errors);
 
-        std::cout << "Iteration " << iteration_ << ": elements=" << mesh_.num_elements()
-                  << ", max_error=" << max_err << " m, mean_error=" << mean_err << " m" << std::endl;
+        LOG_INFO("Iteration " << iteration_ << ": elements=" << mesh_.num_elements() << ", max_error=" << max_err
+                              << " m, mean_error=" << mean_err << " m");
 
         // Check stopping criteria
         std::string reason = check_convergence(max_err);
@@ -566,7 +564,7 @@ void LinearMeshGenerator::refine_elements(const std::vector<Index>& elements_to_
         return;
     }
 
-    std::cout << "  Refining " << elements_to_refine.size() << " elements" << std::endl;
+    LOG_INFO("Refining " << elements_to_refine.size() << " elements");
 
     // Use QuadtreeAdapter's refine() method which handles:
     // - Splitting each element into 4 children
@@ -577,7 +575,7 @@ void LinearMeshGenerator::refine_elements(const std::vector<Index>& elements_to_
     // Store new element indices for incremental error/surface updates
     last_new_elements_ = std::move(result.new_elements);
 
-    std::cout << "  Refined " << result.num_refined << " elements, new total: " << mesh_.num_elements() << std::endl;
+    LOG_INFO("Refined " << result.num_refined << " elements, new total: " << mesh_.num_elements());
 }
 
 std::string LinearMeshGenerator::check_convergence(Real max_err) const {

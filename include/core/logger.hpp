@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file logger.hpp
-/// @brief Logging utilities with file/line/function context
+/// @brief Logging utilities with function context
 
 #include <iomanip>
 #include <iostream>
@@ -20,17 +20,16 @@ class Logger {
     void set_level(LogLevel level) { min_level_ = level; }
     LogLevel level() const { return min_level_; }
 
-    void log(LogLevel level, const char* file, int line, const char* func, const std::string& message);
+    void log(LogLevel level, const char* func, const std::string& message);
 
   private:
     Logger() = default;
     LogLevel min_level_ = LogLevel::INFO; // DEBUG disabled by default
     std::mutex mutex_;
 
-    static std::string_view basename(const char* path);
     static const char* level_string(LogLevel level);
 
-    static constexpr int context_width_ = 40; // [file:line func] column width
+    static constexpr int context_width_ = 30; // [func] column width
     static constexpr int level_width_   = 7;  // [LEVEL] column width
 };
 
@@ -42,7 +41,7 @@ class Logger {
         if (drifter::Logger::instance().level() <= drifter::LogLevel::DEBUG) {                                         \
             std::ostringstream _ss;                                                                                    \
             _ss << msg;                                                                                                \
-            drifter::Logger::instance().log(drifter::LogLevel::DEBUG, __FILE__, __LINE__, __func__, _ss.str());        \
+            drifter::Logger::instance().log(drifter::LogLevel::DEBUG, __func__, _ss.str());                            \
         }                                                                                                              \
     } while (0)
 
@@ -51,7 +50,7 @@ class Logger {
         if (drifter::Logger::instance().level() <= drifter::LogLevel::INFO) {                                          \
             std::ostringstream _ss;                                                                                    \
             _ss << msg;                                                                                                \
-            drifter::Logger::instance().log(drifter::LogLevel::INFO, __FILE__, __LINE__, __func__, _ss.str());         \
+            drifter::Logger::instance().log(drifter::LogLevel::INFO, __func__, _ss.str());                             \
         }                                                                                                              \
     } while (0)
 
@@ -60,7 +59,7 @@ class Logger {
         if (drifter::Logger::instance().level() <= drifter::LogLevel::WARNING) {                                       \
             std::ostringstream _ss;                                                                                    \
             _ss << msg;                                                                                                \
-            drifter::Logger::instance().log(drifter::LogLevel::WARNING, __FILE__, __LINE__, __func__, _ss.str());      \
+            drifter::Logger::instance().log(drifter::LogLevel::WARNING, __func__, _ss.str());                          \
         }                                                                                                              \
     } while (0)
 
@@ -68,5 +67,5 @@ class Logger {
     do {                                                                                                               \
         std::ostringstream _ss;                                                                                        \
         _ss << msg;                                                                                                    \
-        drifter::Logger::instance().log(drifter::LogLevel::ERROR, __FILE__, __LINE__, __func__, _ss.str());            \
+        drifter::Logger::instance().log(drifter::LogLevel::ERROR, __func__, _ss.str());                                \
     } while (0)

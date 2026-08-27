@@ -1,8 +1,8 @@
 #include "mesh/multi_source_bathymetry.hpp"
 
+#include "core/logger.hpp"
 #include <chrono>
 #include <cmath>
-#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -71,7 +71,7 @@ MultiSourceBathymetry::MultiSourceBathymetry(const std::string &primary_file,
                                              const std::vector<std::string> &tile_files)
     : impl_(std::make_unique<Impl>()) {
     // Load primary source (always loaded eagerly)
-    std::cout << "[MultiSourceBathymetry] Loading primary source: " << primary_file << std::endl;
+    LOG_INFO("Loading primary source: " << primary_file);
     auto start = std::chrono::high_resolution_clock::now();
 
     impl_->primary = impl_->reader.load(primary_file);
@@ -83,13 +83,11 @@ MultiSourceBathymetry::MultiSourceBathymetry(const std::string &primary_file,
     auto end = std::chrono::high_resolution_clock::now();
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
     size_t bytes = impl_->primary.elevation.size() * sizeof(float);
-    std::cout << "[MultiSourceBathymetry] Primary loaded: " << impl_->primary.sizex << "x"
-              << impl_->primary.sizey << " (" << bytes / (1024 * 1024) << " MB) in " << ms << " ms"
-              << std::endl;
+    LOG_INFO("Primary loaded: " << impl_->primary.sizex << "x" << impl_->primary.sizey << " ("
+                                << bytes / (1024 * 1024) << " MB) in " << ms << " ms");
 
     // Read tile bounds only (deferred loading)
-    std::cout << "[MultiSourceBathymetry] Reading bounds for " << tile_files.size()
-              << " tiles (deferred loading)..." << std::endl;
+    LOG_INFO("Reading bounds for " << tile_files.size() << " tiles (deferred loading)...");
     start = std::chrono::high_resolution_clock::now();
 
     impl_->tiles.reserve(tile_files.size());
@@ -107,9 +105,8 @@ MultiSourceBathymetry::MultiSourceBathymetry(const std::string &primary_file,
 
     end = std::chrono::high_resolution_clock::now();
     ms = std::chrono::duration<double, std::milli>(end - start).count();
-    std::cout << "[MultiSourceBathymetry] Tile bounds loaded in " << ms << " ms" << std::endl;
-    std::cout << "[MultiSourceBathymetry] Ready: 1 primary + " << tile_files.size()
-              << " tiles available for on-demand loading" << std::endl;
+    LOG_INFO("Tile bounds loaded in " << ms << " ms");
+    LOG_INFO("Ready: 1 primary + " << tile_files.size() << " tiles available for on-demand loading");
 
     // Setup CRS transformation from EPSG:3034 to EPSG:4326
     OGRSpatialReference srcSRS, dstSRS;
@@ -147,12 +144,11 @@ MultiSourceBathymetry::~MultiSourceBathymetry() {
                 total_bytes += tile.data->elevation.size() * sizeof(float);
             }
         }
-        std::cout << "[MultiSourceBathymetry] Summary: " << loaded << "/" << impl_->tiles.size()
-                  << " tiles were actually loaded (" << total_bytes / (1024 * 1024) << " MB)"
-                  << std::endl;
+        LOG_INFO("Summary: " << loaded << "/" << impl_->tiles.size() << " tiles were actually loaded ("
+                             << total_bytes / (1024 * 1024) << " MB)");
         if (loaded < impl_->tiles.size()) {
-            std::cout << "[MultiSourceBathymetry] Memory saved by deferred loading: "
-                      << (impl_->tiles.size() - loaded) << " tiles not loaded" << std::endl;
+            LOG_INFO("Memory saved by deferred loading: " << (impl_->tiles.size() - loaded)
+                                                          << " tiles not loaded");
         }
     }
 }
@@ -187,8 +183,7 @@ Real MultiSourceBathymetry::evaluate(Real x, Real y) const {
             // Load tile data if not already loaded (lazy loading)
             if (!tile.data.has_value()) {
                 auto start = std::chrono::high_resolution_clock::now();
-                std::cout << "[MultiSourceBathymetry] Loading tile on demand: " << tile.path
-                          << std::endl;
+                LOG_INFO("Loading tile on demand: " << tile.path);
 
                 tile.data = impl_->reader.load(tile.path);
 
@@ -197,16 +192,13 @@ Real MultiSourceBathymetry::evaluate(Real x, Real y) const {
 
                 if (tile.data->is_valid()) {
                     size_t bytes = tile.data->elevation.size() * sizeof(float);
-                    std::cout << "[MultiSourceBathymetry] Tile loaded: " << tile.data->sizex << "x"
-                              << tile.data->sizey << " (" << bytes / (1024 * 1024) << " MB) in "
-                              << ms << " ms" << std::endl;
+                    LOG_INFO("Tile loaded: " << tile.data->sizex << "x" << tile.data->sizey << " ("
+                                             << bytes / (1024 * 1024) << " MB) in " << ms << " ms");
 
                     impl_->tiles_loaded++;
                     impl_->total_bytes_loaded += bytes;
                 } else {
-                    std::cout << "[MultiSourceBathymetry] Warning: Failed to "
-                                 "load tile: "
-                              << tile.path << std::endl;
+                    LOG_WARNING("Failed to load tile: " << tile.path);
                 }
             }
 
@@ -334,8 +326,7 @@ const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y
             // Load tile data if not already loaded
             if (!tile.data.has_value()) {
                 auto start = std::chrono::high_resolution_clock::now();
-                std::cout << "[MultiSourceBathymetry] Loading tile on demand: " << tile.path
-                          << std::endl;
+                LOG_INFO("Loading tile on demand: " << tile.path);
 
                 tile.data = impl_->reader.load(tile.path);
 
@@ -344,15 +335,13 @@ const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y
 
                 if (tile.data->is_valid()) {
                     size_t bytes = tile.data->elevation.size() * sizeof(float);
-                    std::cout << "[MultiSourceBathymetry] Tile loaded: " << tile.data->sizex << "x"
-                              << tile.data->sizey << " (" << bytes / (1024 * 1024) << " MB) in "
-                              << ms << " ms" << std::endl;
+                    LOG_INFO("Tile loaded: " << tile.data->sizex << "x" << tile.data->sizey << " ("
+                                             << bytes / (1024 * 1024) << " MB) in " << ms << " ms");
 
                     impl_->tiles_loaded++;
                     impl_->total_bytes_loaded += bytes;
                 } else {
-                    std::cout << "[MultiSourceBathymetry] Warning: Failed to load tile: "
-                              << tile.path << std::endl;
+                    LOG_WARNING("Failed to load tile: " << tile.path);
                 }
             }
 
@@ -388,8 +377,7 @@ Real MultiSourceBathymetry::get_min_element_size_meters(Real x, Real y) const {
             // Load tile data if not already loaded (need pixel size)
             if (!tile.data.has_value()) {
                 auto start = std::chrono::high_resolution_clock::now();
-                std::cout << "[MultiSourceBathymetry] Loading tile on demand: " << tile.path
-                          << std::endl;
+                LOG_INFO("Loading tile on demand: " << tile.path);
 
                 tile.data = impl_->reader.load(tile.path);
 
@@ -398,15 +386,13 @@ Real MultiSourceBathymetry::get_min_element_size_meters(Real x, Real y) const {
 
                 if (tile.data->is_valid()) {
                     size_t bytes = tile.data->elevation.size() * sizeof(float);
-                    std::cout << "[MultiSourceBathymetry] Tile loaded: " << tile.data->sizex << "x"
-                              << tile.data->sizey << " (" << bytes / (1024 * 1024) << " MB) in "
-                              << ms << " ms" << std::endl;
+                    LOG_INFO("Tile loaded: " << tile.data->sizex << "x" << tile.data->sizey << " ("
+                                             << bytes / (1024 * 1024) << " MB) in " << ms << " ms");
 
                     impl_->tiles_loaded++;
                     impl_->total_bytes_loaded += bytes;
                 } else {
-                    std::cout << "[MultiSourceBathymetry] Warning: Failed to load tile: "
-                              << tile.path << std::endl;
+                    LOG_WARNING("Failed to load tile: " << tile.path);
                 }
             }
 
