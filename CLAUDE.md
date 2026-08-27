@@ -50,27 +50,54 @@ LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -V
 
 The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home/ole/.local/lib`.
 
-There is a third test executable, `./build/tests/drifter_benchmarks` (ctest label `benchmark`),
-built from `tests/benchmarks/`. It is long-running and excluded from CI.
+Two further test executables exist beyond unit/integration:
+- `./build/tests/drifter_benchmarks` (ctest label `benchmark`) from `tests/benchmarks/` -
+  long-running, excluded from CI.
+- `./build/tests/drifter_tools` (ctest label `tool`) from `tests/tools/` - developer
+  diagnostics, currently matrix sparsity dumps (Matrix Market + plots).
 
-## Running the Application
+## Applications
 
-The `drifter` executable is currently an **adaptive bathymetry smoother** driver (not a full
-ocean simulation): it loads GeoTIFF bathymetry, fits an adaptive CG Bezier surface, and writes
-VTK output.
+There is no `drifter` executable. The library `drifter_lib` backs **two** apps under `apps/`,
+both of which are bathymetry mesh tools, not ocean simulations:
+
+| Target | Source | What it does | Config |
+|--------|--------|--------------|--------|
+| `highrider` | `apps/highrider/main.cpp` → `Drifter` (`src/core/drifter.cpp`) | High-order path: adaptive **CG cubic Bezier** smoothing of GeoTIFF bathymetry (the KKT/multigrid machinery) | `config/highrider_example.json` |
+| `lowrider` | `apps/lowrider/main.cpp` → `Lowrider` (`src/core/lowrider.cpp`) | Low-order path: adaptive **bilinear** mesh generation — no smoothing solve, just refine-and-sample | `config/lowrider_example.json` |
 
 ```bash
-LD_LIBRARY_PATH=/home/ole/.local/lib ./build/drifter config/example.json
+./build/apps/highrider/highrider config/highrider_example.json
+./build/apps/lowrider/lowrider  config/lowrider_example.json
 ```
 
-Config is JSON, parsed by `ConfigReader` (`src/core/config_reader.cpp`) into `DrifterConfig`;
-sections are `data`, `domain`, `initial_grid`, `adaptive`, `smoother`, `output`.
+Each app has its own config struct and reader — `DrifterConfig`/`ConfigReader` vs
+`LowriderConfig`/`LowriderConfigReader` (`include/core/lowrider_config.hpp`). They are
+independent; adding a knob to one does not add it to the other.
+
+**Lowrider pipeline** (`LinearMeshGenerator`, `bathymetry/linear_mesh_generator.hpp`) runs in
+two stages, which is why its config has both a `coastline` and a `refinement` section:
+1. **Coastline refinement** — refine near land boundaries, driven by coastline curvature radius.
+2. **Error-driven seabed refinement** — Dörfler marking (`dorfler_theta`) on per-element error
+   until `error_threshold`, `max_elements`, `max_level`, or the GeoTIFF pixel resolution limit
+   is hit (`ConvergenceReason` records which).
+
+`LinearBezierSurface` holds 4 corner DOFs per element shared for C⁰ continuity, and is fitted
+by *sampling* the bathymetry at corners — refinement re-fits only new DOFs incrementally.
+
+`BUILD_SHARED_LIBS=ON` additionally builds `libdrifter.so` for external projects linking to
+DRIFTER.
 
 ## Python Scripts
 
 `scr/` holds the plotting/report scripts used to regenerate the docs figures (matplotlib,
-numpy, pandas; managed with `uv`, see `scr/pyproject.toml`). `docs/regenerate_figures.sh`
-runs the relevant gtest filters and then these scripts.
+numpy, pandas, scipy; managed with `uv`, see `scr/pyproject.toml`). Two driver scripts run the
+relevant gtest filters and then the plotters:
+- `docs/regenerate_figures.sh` - solver verification report and figures
+- `scr/run_hierarchical_benchmark.sh` - hierarchical ordering benchmark
+  (`scr/plot_hierarchical_benchmark.py`)
+
+`scr/plot_matrix_sparsity.py` renders the `.mtx` dumps produced by `tests/tools/`.
 
 ## Code Formatting
 
@@ -107,13 +134,29 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 - `OctreeAdapter` - Directional (anisotropic) AMR octree with per-axis refinement levels
 - `ElementBounds` - Physical bounds of hexahedral elements
 - `FaceConnection` - Face connectivity with conforming/non-conforming support
-- `GeoTiffReader` - Bathymetry loading via GDAL
-- `CoastlineRefinement` - R-tree based coastline-adaptive mesh refinement
+- `GeoTiffReader` - Bathymetry loading via GDAL. Exposes `pixel_size_x/y()` and
+  `min_element_size()`, the resolution floor below which refinement gains nothing
+- `MultiSourceBathymetry` - Primary GeoTIFF plus higher-resolution tiles, with per-source
+  `source_id` carried into VTK output for provenance
+- `CoastlineRefinement` - R-tree based coastline-adaptive mesh refinement. Loading and indexing
+  are **domain-filtered** (bounds passed to `load()`/`build_index()`) — required for global
+  datasets. Also provides `min_curvature_radius()` over a box, which drives lowrider's
+  coastline stage, and curvature-comb VTK debug output
+- `Hilbert2D` (`mesh/hilbert.hpp`) - 2D Hilbert encode/decode, alongside the Morton codes used
+  for quadtree leaf ordering
 
 **bathymetry/** - 2D bathymetry surface fitting (uses `QuadtreeAdapter`, not `OctreeAdapter`)
-- `QuadtreeAdapter` - 2D AMR quadtree for bathymetry mesh refinement
+- `QuadtreeAdapter` - 2D AMR quadtree. Point location is by **Morton code** over sorted leaves;
+  the former Boost R-tree PIMPL is gone. Supports `refine(elements)` / `refine_where(pred)`,
+  which rebalance to 2:1 and report the newly created leaves so surfaces can re-fit incrementally
 - `CGCubicBezierBathymetrySmoother` - Cubic Bezier (C¹ continuity)
 - `CGLinearBezierBathymetrySmoother` - Linear Bezier (C⁰ continuity)
+- `LinearBezierSurface` + `LinearMeshGenerator` - the lowrider low-order path (see Applications)
+- `ElementErrorEstimator` - polymorphic per-element error, built by `create_error_estimator()`
+  from an `ErrorMetricType`. Two families: Gauss-quadrature
+  (`NormalizedError`, `MeanDifference`, `VolumeChange`) and pixel-based
+  (`PixelRMSE`, `PixelMaxError`) which evaluate at GeoTIFF pixel centers rather than quadrature
+  points. Add a metric by adding an estimator + a factory case, not by editing the refiners
 - See detailed documentation in the "CG Bezier Bathymetry Smoother" section below
 
 **physics/** - Ocean physics
@@ -131,6 +174,11 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 - `SeabedVTKWriter` - High-resolution seabed surface visualization (also in `io/vtk_writer.hpp`,
   alongside `HighOrderVTKWriter`, `OceanVTKWriter`, `XDMFWriter`)
 - `BathymetryVTKWriter` (`io/bathymetry_vtk_writer.hpp`) - quadtree/octree bathymetry surface output
+- `QuadtreeVTKWriter` - linear quad cells (VTK type 9) for the lowrider mesh, with per-element
+  level/error/depth cell data
+- `WaterVTKWriter` - writes only elements whose depth > 0, via an injected depth query
+- `write_matrix_market()` (`io/matrix_market_writer.hpp`) - dump a `SpMat` to `.mtx` for the
+  sparsity tooling in `tests/tools/` and `scr/plot_matrix_sparsity.py`
 - `ZarrWriter` - Zarr v3 output (optional, requires zarrs_ffi)
 
 **amr/** - Adaptive mesh refinement
@@ -240,6 +288,20 @@ under `include/bathymetry/`:
   `bezier_hessian_base.hpp` / `thin_plate_hessian.hpp` / `cubic_thin_plate_hessian.hpp`), so a
   new smoother degree means adding a basis + Hessian pair, not editing the assembler.
 
+**DOF ordering and static condensation (both default OFF — leave them off):**
+`CGCubicBezierSmootherConfig` exposes two experimental switches:
+- `use_hierarchical_ordering` - orders DOFs by (level, is_constrained, type, Hilbert key)
+  instead of the default Morton order. Benchmarked at **0.99x average speedup** — the multigrid
+  preconditioner already exploits the quadtree hierarchy, so reordering only adds overhead.
+  See `docs/hierarchical_ordering_benchmark.md`. May still help direct solvers (untested).
+- `use_static_condensation` - eliminates the 4 interior/bubble DOFs of each cubic element via an
+  element Schur complement (`StaticCondensationManager`), a 25% DOF reduction. **Only works on
+  single-element meshes**; it is auto-disabled for multi-element meshes because the C¹ edge
+  constraints couple interior DOFs across elements.
+
+The smoother also exposes `H_global()`, `BtWB_global()`, `Q_global()`, and `condensed_system()`
+for diagnostics — these are what the sparsity tooling and the docs figures consume.
+
 **Documentation index (`docs/`):**
 | File | Contents |
 |------|----------|
@@ -248,6 +310,7 @@ under `include/bathymetry/`:
 | `cg_bezier_solver_verification.md` | Direct vs iterative vs MG solver comparison |
 | `cg_cubic_bezier_uniform_evaluation.md` | Uniform-grid accuracy/timing tables |
 | `uniform_vs_adaptive_convergence.md` | Uniform vs AMR convergence on synthetic bathymetry |
+| `hierarchical_ordering_benchmark.md` | Hierarchical vs Morton DOF ordering — concludes no benefit |
 | `hermite_bathymetry_system.md` | **Design study only, not implemented** — corner elevation/derivative DOFs as an alternative that makes C^r structural and removes the KKT system |
 
 **Matrix System:** See `docs/cg_bezier_matrix_system.md` for the full derivation of the assembled system - least-squares data term, thin plate/membrane energy, C⁰/C¹ continuity, hanging-node constraints, boundary conditions, and KKT layout.
@@ -288,6 +351,10 @@ Test files in `tests/integration/`:
 
 Run specific tests with gtest filter: `./build/tests/drifter_integration_tests --gtest_filter="CG*Bezier*"`
 
+The lowrider path is covered by unit tests instead: `test_linear_mesh.cpp`,
+`test_pixel_error_estimator.cpp`, `test_pixel_max_error_estimator.cpp`, and
+`test_hierarchical_ordering.cpp` (Morton/Hilbert ordering and static condensation).
+
 ## Dependencies
 
 Required: Eigen3, Boost (Geometry), GDAL
@@ -303,6 +370,7 @@ CMake build options (set with `-D`):
 - `DRIFTER_USE_VTK=ON` - VTK output (default ON)
 - `DRIFTER_USE_METIS=ON` - METIS ordering for sparse solvers (default ON, found QUIET)
 - `DRIFTER_BUILD_TESTS=ON` / `DRIFTER_BUILD_DOCS=OFF`
+- `BUILD_SHARED_LIBS=OFF` - also build `libdrifter.so` alongside the static `drifter_lib`
 - `ZARRS_FFI_DIR=/path` - Custom path to zarrs_ffi library
 
 GDAL is a hard `REQUIRED` dependency regardless of options (CI passes a `DRIFTER_USE_GDAL`
