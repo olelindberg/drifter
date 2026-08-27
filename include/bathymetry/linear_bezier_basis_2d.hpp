@@ -7,7 +7,7 @@
 /// elements for bathymetry representation with C0 continuity.
 /// Uses analytic Bernstein polynomial evaluation.
 
-#include "bathymetry/bezier_basis_2d_base.hpp"
+#include "bathymetry/basis_2d_base.hpp"
 #include "core/types.hpp"
 #include <array>
 #include <vector>
@@ -32,7 +32,7 @@ namespace drifter {
 ///      left  right
 ///     (u=0) (u=1)
 /// ```
-class LinearBezierBasis2D : public BezierBasis2DBase {
+class LinearBezierBasis2D : public Basis2DBase {
 public:
     static constexpr int DEGREE = 1; ///< Polynomial degree
     static constexpr int N1D = 2; ///< Control points per direction (degree + 1)

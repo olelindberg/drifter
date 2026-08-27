@@ -1,5 +1,5 @@
 #include "bathymetry/adaptive_cg_linear_bezier_smoother.hpp"
-#include "bathymetry/bezier_basis_2d_base.hpp"
+#include "bathymetry/basis_2d_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
@@ -318,7 +318,7 @@ Real AdaptiveCGLinearBezierSmoother::mean_error() const {
 // Base class virtual implementations
 // =============================================================================
 
-const BezierBasis2DBase &AdaptiveCGLinearBezierSmoother::get_basis_impl() const {
+const Basis2DBase &AdaptiveCGLinearBezierSmoother::get_basis_impl() const {
     return smoother_->get_basis();
 }
 
@@ -643,7 +643,7 @@ const CGLinearBezierBathymetrySmoother &AdaptiveCGLinearBezierSmoother::smoother
     return *smoother_;
 }
 
-// evaluate() is inherited from AdaptiveCGBezierSmootherBase
+// evaluate() is inherited from AdaptiveCGSmootherBase
 
 void AdaptiveCGLinearBezierSmoother::write_vtk(const std::string &filename, int resolution) const {
     if (!smoother_ || !smoother_->is_solved()) {

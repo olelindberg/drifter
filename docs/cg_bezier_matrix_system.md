@@ -20,7 +20,7 @@ The smoother finds Bézier control values $x$ minimizing a weighted combination 
 thin-plate (or membrane) smoothness energy and a data-fitting residual, subject to linear
 continuity and boundary constraints.
 
-**Primal operator and right-hand side** — [cg_bezier_smoother_base.cpp:396-405](../src/bathymetry/cg_bezier_smoother_base.cpp#L396-L405):
+**Primal operator and right-hand side** — [cg_smoother_base.cpp:396-405](../src/bathymetry/cg_smoother_base.cpp#L396-L405):
 
 $$
 Q \;=\; \alpha H \;+\; \lambda\left(B^\top W B + \varepsilon I\right),
@@ -52,12 +52,12 @@ homogeneous. There is no inhomogeneous constraint anywhere in the assembled syst
 | Symbol | Meaning | Size | Built at |
 |---|---|---|---|
 | $n_g$ | Global (shared) DOFs | — | [cg_cubic_bezier_dof_manager.cpp:11-30](../src/bathymetry/cg_cubic_bezier_dof_manager.cpp#L11-L30) |
-| $n_f$ | Free DOFs ($n_g - m_h$) | — | [cg_bezier_dof_manager_base.cpp:98-110](../src/bathymetry/cg_bezier_dof_manager_base.cpp#L98-L110) |
-| $H$ | Smoothness (thin-plate / membrane) operator | $n_g \times n_g$ | [cg_bezier_smoother_base.cpp:260-302](../src/bathymetry/cg_bezier_smoother_base.cpp#L260-L302) |
-| $B^\top W B$ | Data-fitting normal equations | $n_g \times n_g$ | [cg_bezier_smoother_base.cpp:308-390](../src/bathymetry/cg_bezier_smoother_base.cpp#L308-L390) |
+| $n_f$ | Free DOFs ($n_g - m_h$) | — | [cg_surface_dof_manager_base.cpp:98-110](../src/bathymetry/cg_surface_dof_manager_base.cpp#L98-L110) |
+| $H$ | Smoothness (thin-plate / membrane) operator | $n_g \times n_g$ | [cg_smoother_base.cpp:260-302](../src/bathymetry/cg_smoother_base.cpp#L260-L302) |
+| $B^\top W B$ | Data-fitting normal equations | $n_g \times n_g$ | [cg_smoother_base.cpp:308-390](../src/bathymetry/cg_smoother_base.cpp#L308-L390) |
 | $B^\top W z$ | Data-fitting RHS | $n_g$ | same |
 | $z^\top W z$ | Data energy scalar | — | same |
-| $Q$ | Primal operator | $n_g \times n_g$ | [:396-403](../src/bathymetry/cg_bezier_smoother_base.cpp#L396-L403) |
+| $Q$ | Primal operator | $n_g \times n_g$ | [:396-403](../src/bathymetry/cg_smoother_base.cpp#L396-L403) |
 | $Q_{\text{red}}$ | Hanging-node condensed operator | $n_f \times n_f$ | [constraint_condenser.cpp:83-84](../src/bathymetry/constraint_condenser.cpp#L83-L84) |
 | $A_h$ | Hanging-node constraints ($m_h$ rows) | $m_h \times n_g$ | [cg_cubic_bezier_bathymetry_smoother.cpp:672-691](../src/bathymetry/cg_cubic_bezier_bathymetry_smoother.cpp#L672-L691) |
 | $A_e$ | C¹ edge derivative constraints ($m_e$ rows) | $m_e \times n_f$ | [:798-836](../src/bathymetry/cg_cubic_bezier_bathymetry_smoother.cpp#L798-L836) |
@@ -120,7 +120,7 @@ with the other basis will silently transpose the control lattice.
 ## 3. Least-squares data-fitting term
 
 Assembled by `assemble_data_fitting_global()`
-([cg_bezier_smoother_base.cpp:308-390](../src/bathymetry/cg_bezier_smoother_base.cpp#L308-L390)).
+([cg_smoother_base.cpp:308-390](../src/bathymetry/cg_smoother_base.cpp#L308-L390)).
 
 The fitted surface on element $e$ with bounds $[x_{\min}, x_{\max}] \times [y_{\min}, y_{\max}]$ is
 
@@ -149,11 +149,11 @@ $$
 $$
 
 with $I = g(e,i)$, $J = g(e,j)$. The scalar $z^\top W z = \sum_q w_q d_q^2$ is accumulated in
-parallel ([:350](../src/bathymetry/cg_bezier_smoother_base.cpp#L350)) and used only by the
+parallel ([:350](../src/bathymetry/cg_smoother_base.cpp#L350)) and used only by the
 `data_residual()` diagnostic.
 
 The weight matrix is therefore **implicitly diagonal**
-([:346](../src/bathymetry/cg_bezier_smoother_base.cpp#L346)):
+([:346](../src/bathymetry/cg_smoother_base.cpp#L346)):
 
 $$
 W = \operatorname{diag}(w_q), \qquad
@@ -167,7 +167,7 @@ Reference weights on $[0,1]$ sum to 1, so $\sum_q w_q = |\Omega_e|$ per element 
 There is **no scattered-point binning** in this path. The data is a callback
 `std::function<Real(Real,Real)> bathy_func` evaluated *at the element's own quadrature points* —
 the mesh defines the sample locations, so binning is trivial by construction.
-`set_scattered_points()` ([:83-102](../src/bathymetry/cg_bezier_smoother_base.cpp#L83-L102))
+`set_scattered_points()` ([:83-102](../src/bathymetry/cg_smoother_base.cpp#L83-L102))
 converts a point cloud into a brute-force nearest-neighbour lookup function (O(N) per
 evaluation) which is then sampled the same way.
 
@@ -176,7 +176,7 @@ Default `ngauss_data` is 4 (cubic) and 2 (linear), giving $4^2 = 16$ or $2^2 = 4
 ### Boundary relaxation — the only inhomogeneous part of $W$
 
 `compute_relaxation_factor()`
-([:445-474](../src/bathymetry/cg_bezier_smoother_base.cpp#L445-L474)) reduces data fitting near
+([:445-474](../src/bathymetry/cg_smoother_base.cpp#L445-L474)) reduces data fitting near
 selected domain edges, letting the surface relax toward pure smoothness there. With $s$ the
 distance to the nearest enabled boundary and $\delta$ the relaxation width:
 
@@ -193,7 +193,7 @@ The smoothstep $t^2(3-2t)$ has zero derivative at both ends, so $r$ is C¹. Disa
 ## 4. Smoothness term $H$
 
 Assembled by `assemble_hessian_global()`
-([cg_bezier_smoother_base.cpp:260-302](../src/bathymetry/cg_bezier_smoother_base.cpp#L260-L302)),
+([cg_smoother_base.cpp:260-302](../src/bathymetry/cg_smoother_base.cpp#L260-L302)),
 which scatters a per-element matrix `hessian.scaled_hessian(dx, dy)` into the global CG pattern,
 dropping entries below $10^{-16}$.
 
@@ -266,7 +266,7 @@ This is a *soap film*, not a thin plate: it minimizes surface area rather than c
 
 $H$ and $B^\top W B$ have completely different physical units and magnitudes. $\alpha$
 normalizes them so that $\lambda$ is a dimensionless, mesh-independent knob
-([cg_bezier_smoother_base.cpp:386-389](../src/bathymetry/cg_bezier_smoother_base.cpp#L386-L389)):
+([cg_smoother_base.cpp:386-389](../src/bathymetry/cg_smoother_base.cpp#L386-L389)):
 
 $$
 \alpha = \frac{\lVert B^\top W B \rVert_F}{\lVert H \rVert_F}
@@ -305,7 +305,7 @@ definite, and it is the **only** null-space handling in the code — there is no
 null-space projection or pinning.
 
 Applied uniformly to every diagonal entry
-([:399-401](../src/bathymetry/cg_bezier_smoother_base.cpp#L399-L401)):
+([:399-401](../src/bathymetry/cg_smoother_base.cpp#L399-L401)):
 
 $$
 Q_{ii} \mathrel{+}= \lambda \varepsilon, \qquad \varepsilon = 10^{-4} \text{ (default)}
@@ -552,7 +552,7 @@ source tree but play **no part in the solve**. Verified by grep over `src/` and 
 
 ### Known inconsistency: $\alpha$ missing from cached element matrices
 
-[cg_bezier_smoother_base.cpp:367-377](../src/bathymetry/cg_bezier_smoother_base.cpp#L367-L377)
+[cg_smoother_base.cpp:367-377](../src/bathymetry/cg_smoother_base.cpp#L367-L377)
 caches per-element matrices as
 
 $$
@@ -585,11 +585,11 @@ in others.
 
 | Location | Range | Out of range | Used for |
 |---|---|---|---|
-| [cg_bezier_smoother_base.cpp:28-59](../src/bathymetry/cg_bezier_smoother_base.cpp#L28-L59) | 1–4 | **clamps to 4** | Data fitting ($B^\top W B$) |
+| [cg_smoother_base.cpp:28-59](../src/bathymetry/cg_smoother_base.cpp#L28-L59) | 1–4 | **clamps to 4** | Data fitting ($B^\top W B$) |
 | [cubic_thin_plate_hessian.cpp:18-69](../src/bathymetry/cubic_thin_plate_hessian.cpp#L18-L69) | 2–6 | throws | Cubic thin-plate $H$ |
 | [dirichlet_hessian.cpp:17-52](../src/bathymetry/dirichlet_hessian.cpp#L17-L52) | 1–4 | throws | Linear membrane $H$ |
 | [cg_cubic_bezier_dof_manager.cpp:349-365](../src/bathymetry/cg_cubic_bezier_dof_manager.cpp#L349-L365) (×3) | 2–4 | **clamps to 4** | C¹ edge, curvature BC, gradient BC (**abscissae only**) |
-| [adaptive_cg_bezier_smoother_base.cpp:47-84](../src/bathymetry/adaptive_cg_bezier_smoother_base.cpp#L47-L84) | 1–6 | — | Adaptive error estimation |
+| [adaptive_cg_smoother_base.cpp:47-84](../src/bathymetry/adaptive_cg_smoother_base.cpp#L47-L84) | 1–6 | — | Adaptive error estimation |
 | [bezier_data_fitting.cpp:124-170](../src/bathymetry/bezier_data_fitting.cpp#L124-L170) | 1–6 | — | *(dead code)* |
 
 Setting `ngauss_data = 6` therefore does **not** give 6-point quadrature — it silently gives 4.
@@ -617,7 +617,7 @@ The linear smoother's defaults differ: `lambda = 1.0`, `ngauss_data = 2`, `ngaus
 ## 13. Diagnostic identities
 
 Useful as sanity checks when validating an implementation change
-([cg_bezier_smoother_base.cpp:237-254](../src/bathymetry/cg_bezier_smoother_base.cpp#L237-L254)):
+([cg_smoother_base.cpp:237-254](../src/bathymetry/cg_smoother_base.cpp#L237-L254)):
 
 $$
 \text{data\_residual} = x^\top B^\top W B x - 2 x^\top B^\top W z + z^\top W z

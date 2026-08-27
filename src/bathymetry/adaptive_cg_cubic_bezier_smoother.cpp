@@ -1,5 +1,5 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
-#include "bathymetry/bezier_basis_2d_base.hpp"
+#include "bathymetry/basis_2d_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include "bathymetry/pixel_error_estimator.hpp"
 #include "core/scoped_timer.hpp"
@@ -90,7 +90,7 @@ void AdaptiveCGCubicBezierSmoother::apply_bathymetry_to_smoother() {
     smoother_->set_bathymetry_data(bathy_func_);
 }
 
-const BezierBasis2DBase &AdaptiveCGCubicBezierSmoother::get_basis_impl() const {
+const Basis2DBase &AdaptiveCGCubicBezierSmoother::get_basis_impl() const {
     return smoother_->get_basis();
 }
 
@@ -641,7 +641,7 @@ const CGCubicBezierBathymetrySmoother &AdaptiveCGCubicBezierSmoother::smoother()
     return *smoother_;
 }
 
-// evaluate() is inherited from AdaptiveCGBezierSmootherBase
+// evaluate() is inherited from AdaptiveCGSmootherBase
 
 void AdaptiveCGCubicBezierSmoother::write_vtk(const std::string &filename, int resolution) const {
     if (!smoother_ || !smoother_->is_solved()) {

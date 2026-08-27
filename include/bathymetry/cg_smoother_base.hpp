@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file cg_bezier_smoother_base.hpp
+/// @file cg_smoother_base.hpp
 /// @brief Abstract base class for CG Bezier bathymetry smoothers
 ///
 /// Provides common functionality shared between CGLinearBezierBathymetrySmoother
@@ -25,8 +25,8 @@ namespace drifter {
 class OctreeAdapter;
 class BathymetrySource;
 struct BathymetryPoint;
-class BezierHessianBase;
-class BezierBasis2DBase;
+class HessianBase;
+class Basis2DBase;
 
 /// @brief Configuration for boundary relaxation zone
 ///
@@ -61,9 +61,9 @@ struct BoundaryRelaxationConfig {
 /// - evaluate_scalar() - evaluates Bezier surface at parametric coords
 /// - evaluate_gradient_uv() - evaluates gradient at parametric coords
 /// - dof_manager accessors
-class CGBezierSmootherBase {
+class CGSmootherBase {
 public:
-    virtual ~CGBezierSmootherBase() = default;
+    virtual ~CGSmootherBase() = default;
 
     // =========================================================================
     // Data input - implemented in base
@@ -138,10 +138,25 @@ public:
         element_matrix_cache_ = cache;
     }
 
-    /// @brief Get element control point values
-    /// @return Vector of DOF values for this element
+    /// @brief Get element coefficients in the *parametric* basis
+    ///
+    /// For a Bernstein basis these are the control point values verbatim. For a
+    /// Hermite basis, whose DOFs are physical derivatives, the raw DOF values are
+    /// pre-multiplied by element_dof_scaling() so that the result can be paired
+    /// with the parametric basis evaluation - i.e. these are always coefficients
+    /// of basis().evaluate(u, v).
+    ///
+    /// @return Vector of coefficients for this element
     /// @note Public so adaptive smoothers can access coefficients
     VecX element_coefficients(Index elem) const;
+
+    /// @brief Get element coefficients in the Bernstein control-point basis
+    ///
+    /// Identical to element_coefficients() for the Bezier smoothers. The Hermite
+    /// smoother overrides this with the change of basis c_e = M_e q_e, so that
+    /// consumers requiring Bernstein control values (SeabedSurface, the control
+    /// point VTK writer) keep working. See docs/hermite_bathymetry_system.md S5.
+    virtual VecX element_bernstein_coefficients(Index elem) const;
 
 protected:
     // =========================================================================
@@ -207,8 +222,8 @@ protected:
     virtual const std::vector<Index> &element_global_dofs(Index elem) const = 0;
 
     /// @brief Get reference to the basis object
-    /// @return Reference to BezierBasis2DBase (LinearBezierBasis2D or CubicBezierBasis2D)
-    virtual const BezierBasis2DBase &basis() const = 0;
+    /// @return Reference to Basis2DBase (LinearBezierBasis2D or CubicBezierBasis2D)
+    virtual const Basis2DBase &basis() const = 0;
 
     /// @brief Get number of Gauss points for data fitting
     virtual int ngauss_data() const = 0;
@@ -220,6 +235,32 @@ protected:
     virtual Real ridge_epsilon() const = 0;
 
     // =========================================================================
+    // Basis-dependent hooks - defaulted so Bernstein bases need not override
+    // =========================================================================
+
+    /// @brief Per-element diagonal DOF scaling (Lambda_e)
+    ///
+    /// A Bernstein basis is element-size independent, so the default is all ones
+    /// and the Bezier path is unaffected. A Hermite basis whose DOFs are *physical*
+    /// derivatives is not: its shape functions are
+    /// N_I(u,v) = Nhat_I(u,v) * h_x^a * h_y^b, and this hook supplies the diagonal
+    /// h_x^a h_y^b factors. See docs/hermite_bathymetry_system.md S4.
+    ///
+    /// @param dx, dy Element dimensions
+    /// @return Diagonal scaling of length basis().num_dofs()
+    virtual VecX element_dof_scaling(Real dx, Real dy) const;
+
+    /// @brief Diagonal of the ridge term added to Q
+    ///
+    /// Default is a uniform lambda*epsilon on every DOF. The Hermite smoother
+    /// overrides this because its DOFs carry different physical units, which makes
+    /// a uniform ridge dimensionally inconsistent - it penalises z and z_xy with
+    /// the same weight. See docs/hermite_bathymetry_system.md S11.
+    ///
+    /// @return Ridge diagonal of length dof_manager_num_global_dofs()
+    virtual VecX ridge_diagonal() const;
+
+    // =========================================================================
     // Helper methods - implemented in base
     // =========================================================================
 
@@ -229,7 +270,7 @@ protected:
     /// to build the sparse global hessian matrix.
     ///
     /// @param hessian The hessian object (DirichletHessian or CubicThinPlateHessian)
-    void assemble_hessian_global(const BezierHessianBase &hessian);
+    void assemble_hessian_global(const HessianBase &hessian);
 
     /// @brief Assemble data fitting matrices BtWB_global_, BtWd_global_, dTWd_global_
     ///
@@ -268,14 +309,22 @@ protected:
 
 public:
     /// @brief Evaluate in a specific element (skips element lookup)
+    ///
+    /// Parametric coordinates are clamped to [0,1], so evaluating exactly on a
+    /// shared edge yields that element's one-sided trace. This is how interface
+    /// continuity is measured without probing at two nearby points, which would
+    /// pick up the surface's own variation across the gap.
+    ///
     /// @param elem Element index
     /// @param x, y World coordinates within element
     /// @return Surface value at (x, y)
     Real evaluate_in_element(Index elem, Real x, Real y) const;
 
-protected:
     /// @brief Evaluate gradient in a specific element
+    /// @see evaluate_in_element for the one-sided trace semantics
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
+
+protected:
 
     /// @brief Store element matrix in external cache
     /// @param elem Element index

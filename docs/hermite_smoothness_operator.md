@@ -21,7 +21,7 @@ there, and $M(h)$ / $M_e$ is the Bernstein↔Hermite change of basis of §5 ther
 ## 1. Where $H$ sits
 
 $H$ is the discrete smoothness (regularization) operator in the smoothness-first system assembled
-by [`assemble_Q`](../src/bathymetry/cg_bezier_smoother_base.cpp#L396-L405):
+by [`assemble_Q`](../src/bathymetry/cg_smoother_base.cpp#L396-L405):
 
 $$
 Q = \alpha H + \lambda\big(B^\top W B + \varepsilon I\big),
@@ -399,7 +399,7 @@ type terms.
 |---|---|---|---|---|---|
 | 0 | 1 | membrane | 2 | 2 | `DirichletHessian` accepts 1–4, defaults to 2 — **sufficient** |
 | 1 | 3 | thin plate | 6 | 4 | `CubicThinPlateHessian` accepts 2–6, defaults to 4 — **exactly sufficient** |
-| 2 | 5 | thin plate | 10 | 6 | `CubicThinPlateHessian` caps at 6 ([:57](../src/bathymetry/cubic_thin_plate_hessian.cpp#L57)) — sufficient, but the smoother base's `gauss_legendre_01` silently truncates any request $\ge 4$ to 4 points ([:44-48](../src/bathymetry/cg_bezier_smoother_base.cpp#L44-L48)) — **insufficient there** |
+| 2 | 5 | thin plate | 10 | 6 | `CubicThinPlateHessian` caps at 6 ([:57](../src/bathymetry/cubic_thin_plate_hessian.cpp#L57)) — sufficient, but the smoother base's `gauss_legendre_01` silently truncates any request $\ge 4$ to 4 points ([:44-48](../src/bathymetry/cg_smoother_base.cpp#L44-L48)) — **insufficient there** |
 
 Two failure modes follow from under-integration, and they differ:
 
@@ -418,11 +418,11 @@ Both disappear under the closed form of §5.
 
 For each element, scatter $H_e$ into the global sparse operator over the element's global DOF map,
 exactly as
-[`assemble_hessian_global`](../src/bathymetry/cg_bezier_smoother_base.cpp#L260-L302) does today:
+[`assemble_hessian_global`](../src/bathymetry/cg_smoother_base.cpp#L260-L302) does today:
 build triplets $(I_i, I_j, [H_e]_{ij})$, discard entries below $10^{-16}$, and set the sparse
 matrix from triplets. Nothing about this loop is basis-specific; it depends only on
 `num_dofs()` and `scaled_hessian(dx, dy)`, the two methods of
-[`BezierHessianBase`](../include/bathymetry/bezier_hessian_base.hpp).
+[`HessianBase`](../include/bathymetry/hessian_base.hpp).
 
 Two Hermite-specific points:
 
@@ -497,8 +497,8 @@ applied as $SHS$ — and it should be built in from the start rather than retrof
 
 | Component | Status under the Hermite formulation |
 |---|---|
-| [`BezierHessianBase`](../include/bathymetry/bezier_hessian_base.hpp) interface (`num_dofs`, `scaled_hessian`) | unchanged — the abstraction is basis-agnostic |
-| [`assemble_hessian_global`](../src/bathymetry/cg_bezier_smoother_base.cpp#L260-L302) | unchanged |
+| [`HessianBase`](../include/bathymetry/hessian_base.hpp) interface (`num_dofs`, `scaled_hessian`) | unchanged — the abstraction is basis-agnostic |
+| [`assemble_hessian_global`](../src/bathymetry/cg_smoother_base.cpp#L260-L302) | unchanged |
 | [`CubicThinPlateHessian`](../src/bathymetry/cubic_thin_plate_hessian.cpp#L131-L166) | reusable as-is via the §6 congruence; superseded by §5 if the closed form is implemented |
 | [`DirichletHessian`](../src/bathymetry/dirichlet_hessian.cpp#L116-L133) | unchanged — at $r=0$, $M_e = \Lambda_e = I$ and the Hermite element *is* the linear Bézier element |
 | $\Lambda_e$ / $M_e$ per-element congruence | **new** (only if the §6 reuse route is taken) |

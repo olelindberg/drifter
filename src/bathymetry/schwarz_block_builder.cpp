@@ -3,7 +3,7 @@
 namespace drifter {
 
 SchwarzBlockData SchwarzBlockBuilder::build(const SpMat &Q,
-                                            const CGBezierDofManagerBase &dof_manager,
+                                            const CGSurfaceDofManagerBase &dof_manager,
                                             bool compute_coloring) {
     SchwarzBlockData data;
     build_element_blocks(data, Q, dof_manager);
@@ -16,7 +16,7 @@ SchwarzBlockData SchwarzBlockBuilder::build(const SpMat &Q,
 }
 
 void SchwarzBlockBuilder::build_element_blocks(SchwarzBlockData &data, const SpMat &Q,
-                                               const CGBezierDofManagerBase &dof_manager) {
+                                               const CGSurfaceDofManagerBase &dof_manager) {
     const auto &all_elem_dofs = dof_manager.all_element_dofs();
     size_t num_elements = all_elem_dofs.size();
 

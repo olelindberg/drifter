@@ -1,24 +1,25 @@
 #pragma once
 
-/// @file bezier_basis_2d_base.hpp
-/// @brief Abstract base class for 2D tensor-product Bezier basis functions
+/// @file basis_2d_base.hpp
+/// @brief Abstract base class for 2D tensor-product surface basis functions
 ///
-/// Both LinearBezierBasis2D and CubicBezierBasis2D implement this interface,
-/// enabling polymorphic access to common Bezier basis functionality.
+/// LinearBezierBasis2D, CubicBezierBasis2D and HermiteBasis2D implement this
+/// interface, enabling polymorphic access to common basis functionality. The
+/// interface is basis-agnostic; "control point" below means "DOF" generally, and
+/// for a Hermite basis several DOFs share one nodal position.
 
 #include "core/types.hpp"
 #include <vector>
 
 namespace drifter {
 
-/// @brief Abstract base class for 2D tensor-product Bezier basis functions
+/// @brief Abstract base class for 2D tensor-product surface basis functions
 ///
-/// Provides a common interface for evaluating Bezier basis functions and their
-/// derivatives. Both LinearBezierBasis2D (degree 1) and CubicBezierBasis2D
-/// (degree 3) inherit from this class.
-class BezierBasis2DBase {
+/// Provides a common interface for evaluating basis functions and their
+/// derivatives on the parameter domain [0,1]^2.
+class Basis2DBase {
 public:
-    virtual ~BezierBasis2DBase() = default;
+    virtual ~Basis2DBase() = default;
 
     // =========================================================================
     // Basic properties

@@ -1,27 +1,27 @@
 #pragma once
 
-/// @file bezier_hessian_base.hpp
-/// @brief Abstract base class for Bezier surface energy Hessians
+/// @file hessian_base.hpp
+/// @brief Abstract base class for surface energy Hessians
 ///
-/// Both DirichletHessian (linear Bezier) and CubicThinPlateHessian (cubic Bezier)
-/// implement this interface, enabling the common hessian assembly loop to be
-/// shared in CGBezierSmootherBase.
+/// DirichletHessian (linear Bezier), CubicThinPlateHessian (cubic Bezier) and
+/// HermiteHessian (Hermite) implement this interface, enabling the common hessian
+/// assembly loop to be shared in CGSmootherBase. The interface is basis-agnostic:
+/// it depends only on num_dofs() and scaled_hessian(dx, dy).
 
 #include "core/types.hpp"
 
 namespace drifter {
 
-/// @brief Abstract base class for Bezier surface energy Hessians
+/// @brief Abstract base class for surface energy Hessians
 ///
 /// Provides a common interface for computing energy Hessian matrices used in
-/// bathymetry surface regularization. Both DirichletHessian (for linear Bezier)
-/// and CubicThinPlateHessian (for cubic Bezier) inherit from this class.
-class BezierHessianBase {
+/// bathymetry surface regularization.
+class HessianBase {
 public:
-    virtual ~BezierHessianBase() = default;
+    virtual ~HessianBase() = default;
 
     /// @brief Get number of DOFs (basis-specific)
-    /// @return 4 for linear Bezier, 16 for cubic Bezier
+    /// @return 4 for linear Bezier / C0 Hermite, 16 for cubic Bezier / C1 Hermite
     virtual int num_dofs() const = 0;
 
     /// @brief Compute scaled Hessian for a physical element

@@ -10,7 +10,7 @@ static constexpr Real POSITION_SCALE = 1e8;
 
 CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh,
                                                    bool use_hierarchical_ordering)
-    : CGBezierDofManagerBase(mesh) {
+    : CGSurfaceDofManagerBase(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {

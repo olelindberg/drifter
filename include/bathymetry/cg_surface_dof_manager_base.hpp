@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file cg_bezier_dof_manager_base.hpp
+/// @file cg_surface_dof_manager_base.hpp
 /// @brief Abstract base class for CG Bezier DOF managers
 ///
 /// Provides common functionality shared between CGLinearBezierDofManager
@@ -80,9 +80,9 @@ struct HierarchicalOrdering {
 /// - quantize_position() - position hashing strategy
 /// - Constraint accessors (basis-specific constraint types)
 /// - DOF assignment methods (basis-specific algorithm)
-class CGBezierDofManagerBase {
+class CGSurfaceDofManagerBase {
 public:
-    virtual ~CGBezierDofManagerBase() = default;
+    virtual ~CGSurfaceDofManagerBase() = default;
 
     // =========================================================================
     // DOF queries - implemented in base
@@ -178,7 +178,7 @@ protected:
 
     /// @brief Construct DOF manager base
     /// @param mesh 2D quadtree mesh
-    explicit CGBezierDofManagerBase(const QuadtreeAdapter &mesh);
+    explicit CGSurfaceDofManagerBase(const QuadtreeAdapter &mesh);
 
     // =========================================================================
     // Shared state

@@ -8,7 +8,7 @@
 /// shared DOFs. Uses Dirichlet/Laplace energy for smoothing instead of thin
 /// plate energy.
 
-#include "bathymetry/cg_bezier_smoother_base.hpp"
+#include "bathymetry/cg_smoother_base.hpp"
 #include "bathymetry/cg_linear_bezier_dof_manager.hpp"
 #include "bathymetry/dirichlet_hessian.hpp"
 #include "bathymetry/linear_bezier_basis_2d.hpp"
@@ -65,7 +65,7 @@ struct CGLinearBezierSmootherConfig {
 /// using Continuous Galerkin assembly. Uses Dirichlet energy (gradient
 /// magnitude) for smoothing, which is the natural choice for piecewise
 /// linear surfaces (thin plate energy would be zero for linear elements).
-class CGLinearBezierBathymetrySmoother : public CGBezierSmootherBase {
+class CGLinearBezierBathymetrySmoother : public CGSmootherBase {
 public:
     /// @brief Construct smoother for a quadtree mesh
     explicit CGLinearBezierBathymetrySmoother(const QuadtreeAdapter &mesh,
@@ -133,11 +133,11 @@ public:
 
     /// @brief Get reference to the Bezier basis
     /// @return Reference to the LinearBezierBasis2D
-    const BezierBasis2DBase &get_basis() const { return *basis_; }
+    const Basis2DBase &get_basis() const { return *basis_; }
 
 protected:
     // =========================================================================
-    // CGBezierSmootherBase virtual method implementations
+    // CGSmootherBase virtual method implementations
     // =========================================================================
 
     void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) override;
@@ -147,7 +147,7 @@ protected:
     const std::vector<Index> &element_global_dofs(Index elem) const override {
         return dof_manager_->element_dofs(elem);
     }
-    const BezierBasis2DBase &basis() const override { return *basis_; }
+    const Basis2DBase &basis() const override { return *basis_; }
     int ngauss_data() const override { return config_.ngauss_data; }
     Real lambda() const override { return config_.lambda; }
     Real ridge_epsilon() const override { return config_.ridge_epsilon; }

@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file adaptive_cg_bezier_smoother_base.hpp
+/// @file adaptive_cg_smoother_base.hpp
 /// @brief Abstract base class for adaptive CG Bezier bathymetry smoothers
 ///
 /// Provides common functionality shared between AdaptiveCGLinearBezierSmoother
@@ -23,7 +23,7 @@ namespace drifter {
 
 // Forward declarations
 class BathymetrySource;
-class BezierBasis2DBase;
+class Basis2DBase;
 
 /// @brief Abstract base class for adaptive CG Bezier bathymetry smoothers
 ///
@@ -37,9 +37,9 @@ class BezierBasis2DBase;
 /// - is_solved() - check if smoother has solution
 /// - smoother_evaluate() - evaluate at a point
 /// - rebuild_smoother() - recreate smoother for current mesh
-class AdaptiveCGBezierSmootherBase {
+class AdaptiveCGSmootherBase {
 public:
-    virtual ~AdaptiveCGBezierSmootherBase() = default;
+    virtual ~AdaptiveCGSmootherBase() = default;
 
     // =========================================================================
     // Data input - implemented in base
@@ -176,8 +176,8 @@ protected:
     virtual VecX get_element_coefficients_impl(Index elem) const = 0;
 
     /// @brief Get reference to the basis object for evaluating stored solutions
-    /// @return Reference to BezierBasis2DBase (LinearBezierBasis2D or CubicBezierBasis2D)
-    virtual const BezierBasis2DBase &get_basis_impl() const = 0;
+    /// @return Reference to Basis2DBase (LinearBezierBasis2D or CubicBezierBasis2D)
+    virtual const Basis2DBase &get_basis_impl() const = 0;
 
     // =========================================================================
     // Coarsening metrics - implemented in base

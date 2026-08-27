@@ -287,7 +287,7 @@ parametric-to-physical scaling entirely; there is no separate scaling matrix.
 ## 6. The data-fitting term
 
 Structurally unchanged from
-[cg_bezier_smoother_base.cpp:308-390](../src/bathymetry/cg_bezier_smoother_base.cpp#L308-L390).
+[cg_smoother_base.cpp:308-390](../src/bathymetry/cg_smoother_base.cpp#L308-L390).
 As in the Bézier system there is no explicit $B$ or $W$; the normal equations accumulate directly
 at quadrature points. With $\hat B(u_q, v_q)$ the existing Bernstein evaluation,
 
@@ -302,13 +302,13 @@ w_q = \hat w_i\, \hat w_j \cdot \underbrace{(h_x h_y)}_{\text{Jacobian}} \cdot\;
 $$
 
 with $r$ the boundary relaxation factor
-([:445](../src/bathymetry/cg_bezier_smoother_base.cpp#L445)), the only inhomogeneous part of $W$.
+([:445](../src/bathymetry/cg_smoother_base.cpp#L445)), the only inhomogeneous part of $W$.
 $M_e$ is applied once to the accumulated element block, not per quadrature point.
 
 > **Quadrature adequacy — the 4-point clamp matters only at $r = 2$.**
-> [`gauss_legendre_01`](../src/bathymetry/cg_bezier_smoother_base.cpp#L28-L59) silently truncates
+> [`gauss_legendre_01`](../src/bathymetry/cg_smoother_base.cpp#L28-L59) silently truncates
 > any request of 4 or more points to exactly 4 (`pts.resize(4)` at
-> [:48](../src/bathymetry/cg_bezier_smoother_base.cpp#L48)), which is exact to degree
+> [:48](../src/bathymetry/cg_smoother_base.cpp#L48)), which is exact to degree
 > $2\cdot4-1 = 7$. The data-term integrand $N_i N_j$ has degree $2p$ per direction:
 >
 > | $r$ | $p$ | integrand degree | points needed | 4-point clamp |
@@ -504,7 +504,7 @@ Two observations against the current configuration surface:
 ## 10. Assembly and solve
 
 The operator and right-hand side are unchanged in form
-([cg_bezier_smoother_base.cpp:396-405](../src/bathymetry/cg_bezier_smoother_base.cpp#L396-L405)):
+([cg_smoother_base.cpp:396-405](../src/bathymetry/cg_smoother_base.cpp#L396-L405)):
 
 $$
 Q = \alpha H + \lambda\big(B^\top W B + \varepsilon I\big),

@@ -12,7 +12,7 @@
 ///
 /// For C¹ continuity constraints (derivatives z_u, z_v, z_uv).
 
-#include "bathymetry/cg_bezier_dof_manager_base.hpp"
+#include "bathymetry/cg_surface_dof_manager_base.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include <vector>
 
@@ -64,7 +64,7 @@ struct BoundaryGradientConstraint {
 ///
 /// Manages global DOF numbering with sharing at element interfaces.
 /// Uses 3-pass algorithm: vertex DOFs → edge DOFs → interior DOFs
-class CGCubicBezierDofManager : public CGBezierDofManagerBase {
+class CGCubicBezierDofManager : public CGSurfaceDofManagerBase {
 public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh

@@ -32,7 +32,10 @@ set(UNIT_TESTS
     unit/test_hierarchical_ordering.cpp
     unit/test_linear_mesh.cpp
     unit/test_pixel_error_estimator.cpp
-    unit/test_pixel_max_error_estimator.cpp)
+    unit/test_pixel_max_error_estimator.cpp
+    unit/test_hermite_basis.cpp
+    unit/test_hermite_energy.cpp
+    unit/test_hermite_constraints.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS
@@ -49,7 +52,10 @@ set(INTEGRATION_TESTS
     integration/test_cg_linear_bezier_bathymetry_smoother.cpp
     integration/test_adaptive_cg_linear_bezier_smoother.cpp
     # Multi-source bathymetry lookup
-    integration/test_multi_source_bathymetry.cpp)
+    integration/test_multi_source_bathymetry.cpp
+    # CG Hermite bathymetry smoother (C⁰ and C¹, structural continuity)
+    integration/test_cg_hermite_bathymetry_smoother.cpp
+    integration/test_adaptive_cg_hermite_smoother.cpp)
 
 # Benchmark tests (run manually, excluded from CI by default)
 set(BENCHMARK_TESTS

@@ -10,7 +10,7 @@
 ///
 /// For C0 continuity only (no derivative constraints needed).
 
-#include "bathymetry/cg_bezier_dof_manager_base.hpp"
+#include "bathymetry/cg_surface_dof_manager_base.hpp"
 #include "bathymetry/linear_bezier_basis_2d.hpp"
 #include <vector>
 
@@ -27,7 +27,7 @@ struct LinearHangingNodeConstraint {
 ///
 /// Manages global DOF numbering with sharing at element interfaces.
 /// For linear elements, all DOFs are corners, so only vertex sharing is needed.
-class CGLinearBezierDofManager : public CGBezierDofManagerBase {
+class CGLinearBezierDofManager : public CGSurfaceDofManagerBase {
 public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh

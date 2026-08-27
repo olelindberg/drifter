@@ -147,9 +147,9 @@ set(BATHYMETRY_SOURCES
     # CG Bezier DOF manager (shared by cubic smoother)
     src/bathymetry/cg_bezier_dof_manager.cpp
     # Base classes for CG Bezier bathymetry smoothers
-    src/bathymetry/cg_bezier_dof_manager_base.cpp
-    src/bathymetry/cg_bezier_smoother_base.cpp
-    src/bathymetry/adaptive_cg_bezier_smoother_base.cpp
+    src/bathymetry/cg_surface_dof_manager_base.cpp
+    src/bathymetry/cg_smoother_base.cpp
+    src/bathymetry/adaptive_cg_smoother_base.cpp
     # CG Bezier bathymetry smoother (cubic with C¹ continuity)
     src/bathymetry/cubic_bezier_basis_2d.cpp
     src/bathymetry/cubic_thin_plate_hessian.cpp
@@ -163,6 +163,14 @@ set(BATHYMETRY_SOURCES
     src/bathymetry/cg_linear_bezier_dof_manager.cpp
     src/bathymetry/cg_linear_bezier_bathymetry_smoother.cpp
     src/bathymetry/adaptive_cg_linear_bezier_smoother.cpp
+    # CG Hermite bathymetry smoother (C⁰ and C¹, structural continuity, SPD system)
+    src/bathymetry/hermite_basis_1d.cpp
+    src/bathymetry/hermite_basis_2d.cpp
+    src/bathymetry/hermite_energy_matrices.cpp
+    src/bathymetry/hermite_hessian.cpp
+    src/bathymetry/cg_hermite_dof_manager.cpp
+    src/bathymetry/cg_hermite_bathymetry_smoother.cpp
+    src/bathymetry/adaptive_cg_hermite_smoother.cpp
     # Standalone iterative methods for smoothing/solving
     src/bathymetry/jacobi_method.cpp
     src/bathymetry/schwarz_method.cpp

@@ -15,7 +15,7 @@
 /// the energy functional. Cubic elements (degree 3) have 16 DOFs per element
 /// and support C1 continuity.
 
-#include "bathymetry/adaptive_cg_bezier_smoother_base.hpp"
+#include "bathymetry/adaptive_cg_smoother_base.hpp"
 #include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
@@ -196,7 +196,7 @@ struct CGCubicAdaptationResult {
 ///
 /// smoother.write_vtk("/tmp/adaptive_cg_cubic_bathymetry", 10);
 /// @endcode
-class AdaptiveCGCubicBezierSmoother : public AdaptiveCGBezierSmootherBase {
+class AdaptiveCGCubicBezierSmoother : public AdaptiveCGSmootherBase {
 public:
   /// @brief Construct from domain bounds with initial uniform mesh
   /// @param xmin, xmax X domain bounds
@@ -279,7 +279,7 @@ public:
 
 protected:
   // =========================================================================
-  // AdaptiveCGBezierSmootherBase virtual method implementations
+  // AdaptiveCGSmootherBase virtual method implementations
   // =========================================================================
 
   bool is_solved_impl() const override {
@@ -295,7 +295,7 @@ protected:
     return smoother_->element_coefficients(elem);
   }
 
-  const BezierBasis2DBase &get_basis_impl() const override;
+  const Basis2DBase &get_basis_impl() const override;
 
   // =========================================================================
   // Profiling

@@ -7,7 +7,7 @@
 namespace drifter {
 
 CGLinearBezierDofManager::CGLinearBezierDofManager(const QuadtreeAdapter &mesh)
-    : CGBezierDofManagerBase(mesh) {
+    : CGSurfaceDofManagerBase(mesh) {
 
     Index num_elements = mesh_.num_elements();
     if (num_elements == 0) {

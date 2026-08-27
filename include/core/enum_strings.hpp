@@ -6,6 +6,7 @@
 #include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/bezier_multigrid_preconditioner.hpp"
 #include "bathymetry/cg_cubic_bezier_bathymetry_smoother.hpp"
+#include "bathymetry/cg_hermite_bathymetry_smoother.hpp"
 #include "bathymetry/smoother_types.hpp"
 #include <stdexcept>
 #include <string>
@@ -44,6 +45,44 @@ inline ErrorMetricType error_metric_type_from_string(const std::string &s) {
   if (s == "PixelMaxError")
     return ErrorMetricType::PixelMaxError;
   throw std::invalid_argument("Unknown ErrorMetricType: '" + s + "'. Valid values: NormalizedError, MeanDifference, VolumeChange, PixelRMSE, PixelMaxError");
+}
+
+// =============================================================================
+// BathySmootherKind
+// =============================================================================
+
+/// @brief Which bathymetry smoother family the application should use
+///
+/// CubicBezier is the historical default: Bernstein control values with C1
+/// imposed by collocation, solved as an indefinite KKT system. The Hermite kinds
+/// use corner value/derivative DOFs, which makes continuity structural and the
+/// system SPD. See docs/hermite_bathymetry_system.md.
+enum class BathySmootherKind {
+  CubicBezier, ///< Cubic Bezier, approximate C1 via KKT (default)
+  HermiteC0,   ///< Bilinear Hermite, exact C0, SPD
+  HermiteC1    ///< Bicubic Bogner-Fox-Schmit Hermite, exact C1, SPD
+};
+
+inline std::string to_string(BathySmootherKind e) {
+  switch (e) {
+  case BathySmootherKind::CubicBezier:
+    return "CubicBezier";
+  case BathySmootherKind::HermiteC0:
+    return "HermiteC0";
+  case BathySmootherKind::HermiteC1:
+    return "HermiteC1";
+  }
+  throw std::invalid_argument("Unknown BathySmootherKind");
+}
+
+inline BathySmootherKind bathy_smoother_kind_from_string(const std::string &s) {
+  if (s == "CubicBezier")
+    return BathySmootherKind::CubicBezier;
+  if (s == "HermiteC0")
+    return BathySmootherKind::HermiteC0;
+  if (s == "HermiteC1")
+    return BathySmootherKind::HermiteC1;
+  throw std::invalid_argument("Unknown BathySmootherKind: '" + s + "'. Valid values: CubicBezier, HermiteC0, HermiteC1");
 }
 
 // =============================================================================

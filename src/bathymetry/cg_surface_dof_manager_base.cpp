@@ -1,4 +1,4 @@
-#include "bathymetry/cg_bezier_dof_manager_base.hpp"
+#include "bathymetry/cg_surface_dof_manager_base.hpp"
 #include "mesh/hilbert.hpp"
 #include "mesh/morton.hpp"
 #include <algorithm>
@@ -9,48 +9,48 @@
 
 namespace drifter {
 
-CGBezierDofManagerBase::CGBezierDofManagerBase(const QuadtreeAdapter &mesh) : mesh_(mesh) {}
+CGSurfaceDofManagerBase::CGSurfaceDofManagerBase(const QuadtreeAdapter &mesh) : mesh_(mesh) {}
 
-Index CGBezierDofManagerBase::global_dof(Index elem, int local_dof) const {
+Index CGSurfaceDofManagerBase::global_dof(Index elem, int local_dof) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range("CGBezierDofManagerBase: element index out of range");
+        throw std::out_of_range("CGSurfaceDofManagerBase: element index out of range");
     }
     if (local_dof < 0 || local_dof >= num_element_dofs()) {
-        throw std::out_of_range("CGBezierDofManagerBase: local DOF index out of range");
+        throw std::out_of_range("CGSurfaceDofManagerBase: local DOF index out of range");
     }
     return elem_to_global_[elem][local_dof];
 }
 
-const std::vector<Index> &CGBezierDofManagerBase::element_dofs(Index elem) const {
+const std::vector<Index> &CGSurfaceDofManagerBase::element_dofs(Index elem) const {
     if (elem < 0 || elem >= static_cast<Index>(elem_to_global_.size())) {
-        throw std::out_of_range("CGBezierDofManagerBase: element index out of range");
+        throw std::out_of_range("CGSurfaceDofManagerBase: element index out of range");
     }
     return elem_to_global_[elem];
 }
 
-bool CGBezierDofManagerBase::is_boundary_dof(Index dof) const {
+bool CGSurfaceDofManagerBase::is_boundary_dof(Index dof) const {
     return boundary_dof_set_.count(dof) > 0;
 }
 
-bool CGBezierDofManagerBase::is_constrained(Index dof) const {
+bool CGSurfaceDofManagerBase::is_constrained(Index dof) const {
     return constrained_dofs_.count(dof) > 0;
 }
 
-Index CGBezierDofManagerBase::global_to_free(Index global_dof) const {
+Index CGSurfaceDofManagerBase::global_to_free(Index global_dof) const {
     if (global_dof < 0 || global_dof >= num_global_dofs_) {
         return -1;
     }
     return global_to_free_[global_dof];
 }
 
-Index CGBezierDofManagerBase::free_to_global(Index free_dof) const {
+Index CGSurfaceDofManagerBase::free_to_global(Index free_dof) const {
     if (free_dof < 0 || free_dof >= num_free_dofs_) {
         return -1;
     }
     return free_to_global_[free_dof];
 }
 
-SpMat CGBezierDofManagerBase::build_constraint_matrix() const {
+SpMat CGSurfaceDofManagerBase::build_constraint_matrix() const {
     Index nrows = num_constraints();
     Index ncols = num_global_dofs_;
 
@@ -66,7 +66,7 @@ SpMat CGBezierDofManagerBase::build_constraint_matrix() const {
     return A;
 }
 
-Index CGBezierDofManagerBase::find_dof_at_position(const Vec2 &pos) const {
+Index CGSurfaceDofManagerBase::find_dof_at_position(const Vec2 &pos) const {
     auto key = quantize_position(pos);
     auto it = position_to_dof_.find(key);
     if (it != position_to_dof_.end()) {
@@ -75,7 +75,7 @@ Index CGBezierDofManagerBase::find_dof_at_position(const Vec2 &pos) const {
     return -1;
 }
 
-Index CGBezierDofManagerBase::register_dof_at_position(const Vec2 &pos) {
+Index CGSurfaceDofManagerBase::register_dof_at_position(const Vec2 &pos) {
     auto key = quantize_position(pos);
     Index dof = num_global_dofs_++;
     position_to_dof_[key] = dof;
@@ -83,14 +83,14 @@ Index CGBezierDofManagerBase::register_dof_at_position(const Vec2 &pos) {
     return dof;
 }
 
-void CGBezierDofManagerBase::register_dof_position(Index dof, const Vec2 &pos) {
+void CGSurfaceDofManagerBase::register_dof_position(Index dof, const Vec2 &pos) {
     if (dof >= static_cast<Index>(dof_positions_.size())) {
         dof_positions_.resize(dof + 1);
     }
     dof_positions_[dof] = pos;
 }
 
-void CGBezierDofManagerBase::identify_boundary_dofs_impl(
+void CGSurfaceDofManagerBase::identify_boundary_dofs_impl(
     const std::function<std::vector<int>(int)> &get_edge_dofs) {
     boundary_dofs_.clear();
     boundary_dof_set_.clear();
@@ -108,7 +108,7 @@ void CGBezierDofManagerBase::identify_boundary_dofs_impl(
     std::sort(boundary_dofs_.begin(), boundary_dofs_.end());
 }
 
-void CGBezierDofManagerBase::build_dof_mappings() {
+void CGSurfaceDofManagerBase::build_dof_mappings() {
     global_to_free_.resize(num_global_dofs_, -1);
     free_to_global_.clear();
     free_to_global_.reserve(num_global_dofs_);
@@ -122,14 +122,14 @@ void CGBezierDofManagerBase::build_dof_mappings() {
     }
 }
 
-void CGBezierDofManagerBase::initialize_elem_to_global(Index num_elements, int ndof) {
+void CGSurfaceDofManagerBase::initialize_elem_to_global(Index num_elements, int ndof) {
     elem_to_global_.resize(num_elements);
     for (Index e = 0; e < num_elements; ++e) {
         elem_to_global_[e].resize(ndof, -1);
     }
 }
 
-std::vector<Index> CGBezierDofManagerBase::reorder_dofs_by_morton() {
+std::vector<Index> CGSurfaceDofManagerBase::reorder_dofs_by_morton() {
     Index n = num_global_dofs_;
     if (n == 0) {
         return {};
@@ -207,7 +207,7 @@ std::vector<Index> CGBezierDofManagerBase::reorder_dofs_by_morton() {
     return perm;
 }
 
-std::vector<Index> CGBezierDofManagerBase::reorder_dofs_hierarchical(
+std::vector<Index> CGSurfaceDofManagerBase::reorder_dofs_hierarchical(
     const std::function<DOFType(int)> &classify_dof) {
 
     Index n = num_global_dofs_;

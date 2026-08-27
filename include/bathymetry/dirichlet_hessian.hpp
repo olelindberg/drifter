@@ -12,7 +12,7 @@
 /// The energy is quadratic in the control point values: E(z) = z^T * H * z
 /// where H is the precomputed Hessian matrix (4x4 for linear Bezier).
 
-#include "bathymetry/bezier_hessian_base.hpp"
+#include "bathymetry/hessian_base.hpp"
 #include "bathymetry/linear_bezier_basis_2d.hpp"
 #include "core/types.hpp"
 #include <memory>
@@ -27,13 +27,13 @@ namespace drifter {
 ///
 /// This can be written as E = c^T * H * c where H is a 4x4 symmetric positive
 /// semi-definite matrix that depends only on the basis functions.
-class DirichletHessian : public BezierHessianBase {
+class DirichletHessian : public HessianBase {
 public:
     /// @brief Construct Dirichlet Hessian with specified quadrature order
     /// @param ngauss Number of Gauss points per direction (default 2 for linear)
     explicit DirichletHessian(int ngauss = 2);
 
-    // BezierHessianBase interface
+    // HessianBase interface
     int num_dofs() const override { return LinearBezierBasis2D::NDOF; }
     const MatX &element_hessian() const override { return H_; }
 

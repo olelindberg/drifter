@@ -15,7 +15,7 @@
 /// energy functional. Linear elements (degree 1) have 4 DOFs per element and
 /// support C0 continuity.
 
-#include "bathymetry/adaptive_cg_bezier_smoother_base.hpp"
+#include "bathymetry/adaptive_cg_smoother_base.hpp"
 #include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
@@ -157,7 +157,7 @@ struct CGLinearAdaptationResult {
 ///
 /// smoother.write_vtk("/tmp/adaptive_cg_linear_bathymetry", 10);
 /// @endcode
-class AdaptiveCGLinearBezierSmoother : public AdaptiveCGBezierSmootherBase {
+class AdaptiveCGLinearBezierSmoother : public AdaptiveCGSmootherBase {
 public:
     /// @brief Construct from domain bounds with initial uniform mesh
     /// @param xmin, xmax X domain bounds
@@ -244,7 +244,7 @@ public:
 
 protected:
     // =========================================================================
-    // AdaptiveCGBezierSmootherBase virtual method implementations
+    // AdaptiveCGSmootherBase virtual method implementations
     // =========================================================================
 
     bool is_solved_impl() const override { return smoother_ && smoother_->is_solved(); }
@@ -326,7 +326,7 @@ private:
         return smoother_->element_coefficients(elem);
     }
 
-    const BezierBasis2DBase &get_basis_impl() const override;
+    const Basis2DBase &get_basis_impl() const override;
 };
 
 } // namespace drifter

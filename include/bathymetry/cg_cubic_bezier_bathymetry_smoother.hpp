@@ -7,7 +7,7 @@
 /// shared. Cubic Bezier (degree 3, 4×4 = 16 DOFs) with C¹ constraints.
 
 #include "bathymetry/bezier_multigrid_preconditioner.hpp"
-#include "bathymetry/cg_bezier_smoother_base.hpp"
+#include "bathymetry/cg_smoother_base.hpp"
 #include "bathymetry/cg_cubic_bezier_dof_manager.hpp"
 #include "bathymetry/constraint_condenser.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
@@ -194,7 +194,7 @@ struct CGCubicBezierSmootherConfig {
 ///
 /// Fits cubic Bezier surfaces (16 DOFs per element) to bathymetry data
 /// using Continuous Galerkin assembly with optional C¹ constraints.
-class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
+class CGCubicBezierBathymetrySmoother : public CGSmootherBase {
   public:
   /// @brief Construct smoother for a quadtree mesh
   explicit CGCubicBezierBathymetrySmoother(const QuadtreeAdapter &mesh, const CGCubicBezierSmootherConfig &config = {});
@@ -265,7 +265,7 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
 
   /// @brief Get reference to the Bezier basis
   /// @return Reference to the CubicBezierBasis2D
-  const BezierBasis2DBase &get_basis() const { return *basis_; }
+  const Basis2DBase &get_basis() const { return *basis_; }
 
   // =========================================================================
   // Matrix accessors (for diagnostics / visualization)
@@ -296,7 +296,7 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
 
   protected:
   // =========================================================================
-  // CGBezierSmootherBase virtual method implementations
+  // CGSmootherBase virtual method implementations
   // =========================================================================
 
   void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) override;
@@ -304,7 +304,7 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
   Index dof_manager_num_free_dofs() const override { return dof_manager_->num_free_dofs(); }
   Index dof_manager_num_constraints() const override { return dof_manager_->num_constraints(); }
   const std::vector<Index> &element_global_dofs(Index elem) const override { return dof_manager_->element_dofs(elem); }
-  const BezierBasis2DBase &basis() const override { return *basis_; }
+  const Basis2DBase &basis() const override { return *basis_; }
   int ngauss_data() const override { return config_.ngauss_data; }
   Real lambda() const override { return config_.lambda; }
   Real ridge_epsilon() const override { return config_.ridge_epsilon; }

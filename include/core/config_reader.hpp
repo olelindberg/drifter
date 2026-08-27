@@ -4,6 +4,8 @@
 /// @brief JSON configuration file reader for DRIFTER bathymetry smoother
 
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
+#include "bathymetry/adaptive_cg_hermite_smoother.hpp"
+#include "core/enum_strings.hpp"
 #include "core/types.hpp"
 #include <string>
 #include <vector>
@@ -35,7 +37,17 @@ struct DrifterConfig {
   // =========================================================================
   // Adaptive smoother configuration
   // =========================================================================
+
+  /// Which smoother family to run. Defaults to the historical cubic Bezier path.
+  BathySmootherKind smoother_kind = BathySmootherKind::CubicBezier;
+
+  /// Config for the cubic Bezier path (smoother_kind == CubicBezier)
   AdaptiveCGCubicBezierConfig adaptive;
+
+  /// Config for the Hermite path (smoother_kind == HermiteC0 / HermiteC1).
+  /// The adaptive fields are parsed from the same JSON "adaptive" section as
+  /// `adaptive`; only the nested smoother config differs.
+  AdaptiveCGHermiteConfig hermite_adaptive;
 
   // =========================================================================
   // Output

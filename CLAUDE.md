@@ -20,35 +20,36 @@ DRIFTER is a 3D Discontinuous Galerkin (DG) adaptive multi-resolution coastal oc
 cmake -B build
 
 # Build (use max 6 parallel jobs to avoid memory issues)
-LD_LIBRARY_PATH=/home/ole/.local/lib cmake --build build --parallel 6
+cmake --build build --parallel 6
 
 # Run all tests
-LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure
 
-# Run only unit tests
-LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -L unit --output-on-failure
-
-# Run only integration tests
-LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -L integration --output-on-failure
+# Run only unit / integration tests
+ctest --test-dir build -L unit --output-on-failure
+ctest --test-dir build -L integration --output-on-failure
 
 # Run a single test by name
-LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -R "TestName" --output-on-failure
+ctest --test-dir build -R "TestName" --output-on-failure
 
 # List available test names
-LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -N
+ctest --test-dir build -N
 
 # Run test executable directly (shows all logging output)
-LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_unit_tests
-LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_integration_tests
+./build/tests/drifter_unit_tests
+./build/tests/drifter_integration_tests
 
 # Run specific test(s) with gtest filter
-LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_unit_tests --gtest_filter="TestName*"
+./build/tests/drifter_unit_tests --gtest_filter="TestName*"
 
 # Run tests with verbose output
-LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -V
+ctest --test-dir build -V
 ```
 
-The `LD_LIBRARY_PATH` is needed for GDAL and other libraries installed in `/home/ole/.local/lib`.
+Note: README.md and older notes prefix every command with
+`LD_LIBRARY_PATH=/home/ole/.local/lib`. That path does not exist on this machine — GDAL and the
+other dependencies resolve from the system lib dir, so the prefix is unnecessary. Only re-add a
+`LD_LIBRARY_PATH` if a link/run actually fails to find a library.
 
 Two further test executables exist beyond unit/integration:
 - `./build/tests/drifter_benchmarks` (ctest label `benchmark`) from `tests/benchmarks/` -
@@ -63,11 +64,12 @@ both of which are bathymetry mesh tools, not ocean simulations:
 
 | Target | Source | What it does | Config |
 |--------|--------|--------------|--------|
-| `highrider` | `apps/highrider/main.cpp` → `Drifter` (`src/core/drifter.cpp`) | High-order path: adaptive **CG cubic Bezier** smoothing of GeoTIFF bathymetry (the KKT/multigrid machinery) | `config/highrider_example.json` |
+| `highrider` | `apps/highrider/main.cpp` → `Drifter` (`src/core/drifter.cpp`) | High-order path: adaptive smoothing of GeoTIFF bathymetry. `"smoother": {"type": ...}` selects **CG cubic Bezier** (default, the KKT/multigrid machinery) or **CG Hermite** C⁰/C¹ (direct SPD solve) | `config/highrider_example.json`, `config/highrider_hermite_example.json` |
 | `lowrider` | `apps/lowrider/main.cpp` → `Lowrider` (`src/core/lowrider.cpp`) | Low-order path: adaptive **bilinear** mesh generation — no smoothing solve, just refine-and-sample | `config/lowrider_example.json` |
 
 ```bash
 ./build/apps/highrider/highrider config/highrider_example.json
+./build/apps/highrider/highrider config/highrider_hermite_example.json
 ./build/apps/lowrider/lowrider  config/lowrider_example.json
 ```
 
@@ -157,7 +159,8 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
   (`NormalizedError`, `MeanDifference`, `VolumeChange`) and pixel-based
   (`PixelRMSE`, `PixelMaxError`) which evaluate at GeoTIFF pixel centers rather than quadrature
   points. Add a metric by adding an estimator + a factory case, not by editing the refiners
-- See detailed documentation in the "CG Bezier Bathymetry Smoother" section below
+- `CGHermiteBathymetrySmoother` - Hermite corner value/derivative DOFs (structural C⁰/C¹, SPD)
+- See detailed documentation in the "Bathymetry Smoothers" section below
 
 **physics/** - Ocean physics
 - `PrimitiveEquations` - 3D baroclinic equations in sigma coordinates
@@ -210,17 +213,47 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
    - For each Dirichlet DOF `i`: move coupling terms to RHS, then set `Q(i,:) = 0`, `Q(:,i) = 0`, `Q(i,i) = 1`, `c(i) = -value`
    - The CG Bezier smoothers apply no Dirichlet elimination and have no C² constraints. See `docs/cg_bezier_matrix_system.md` section 10.
 
-### Bezier Bathymetry Smoother (`bathymetry/`)
+### Bathymetry Smoothers (`bathymetry/`)
 
-CG (Continuous Galerkin) Bezier smoothers fit Bezier surfaces to bathymetry data. DOFs at element boundaries are shared for automatic C⁰ continuity.
+Two families of CG (Continuous Galerkin) surface smoother fit a smooth surface to bathymetry
+data, sharing the assembly/solve base classes (`CGSmootherBase`, `CGSurfaceDofManagerBase`,
+`AdaptiveCGSmootherBase` — note these names are family-neutral, *not* `cg_bezier_*`).
 
-**Available Smoothers:**
+**Bezier family** — Bernstein control-value DOFs, shared at element boundaries so C⁰ is
+structural; C¹ is imposed by collocation, which makes the system an indefinite KKT saddle point.
+
 | Class | Degree | Continuity | DOFs/element |
 |-------|--------|------------|--------------|
-| `CGCubicBezierBathymetrySmoother` | Cubic (3) | C¹ | 16 |
+| `CGCubicBezierBathymetrySmoother` | Cubic (3) | C¹ (approximate, ~1e-8) | 16 |
 | `CGLinearBezierBathymetrySmoother` | Linear (1) | C⁰ | 4 |
 
-**Adaptive variants:** `AdaptiveCGCubicBezierSmoother`, `AdaptiveCGLinearBezierSmoother` - error-driven mesh refinement.
+**Hermite family** (`CGHermiteBathymetrySmoother`, `CGHermiteDofManager`, `HermiteBasis1D/2D`,
+`HermiteHessian`) — DOFs are elevation *and derivatives* at element corners, so C^r continuity is
+**structural**: no edge constraints, no KKT system. `continuity_order` selects 0 (bilinear, 4
+DOFs/element) or 1 (bicubic Bogner–Fox–Schmit, 16 DOFs/element). Hanging nodes and zero-gradient
+BCs are pure master/slave substitutions, so the condensed system `Q_red = TᵀQT` is **SPD** and is
+factorized directly with `SimplicialLDLT` — no Schur complement, no iterative path, no multigrid.
+`constraint_violation()` is identically zero by construction. The trade-off vs Bezier is the loss
+of the convex-hull / variation-diminishing property: a Hermite fit can overshoot in steep regions,
+which is why both families are kept. See `docs/hermite_bathymetry_system.md`.
+
+Hermite-specific config (`CGHermiteSmootherConfig`): `continuity_order`, `lambda`,
+`ridge_epsilon`, `ngauss_data` (2 for C⁰, 4 for C¹), `enable_zero_gradient_bc` (silently inactive
+at r=0), `use_equilibration` (symmetric scaling of the mixed-unit DOFs inside `solve()` only),
+`boundary_relaxation`.
+
+**Adaptive variants:** `AdaptiveCGCubicBezierSmoother`, `AdaptiveCGLinearBezierSmoother`,
+`AdaptiveCGHermiteSmoother` - error-driven mesh refinement (solve → estimate → Dörfler-mark →
+refine).
+
+**Selecting a family from config:** the JSON key `"smoother": { "type": ... }` maps to
+`BathySmootherKind` (`core/enum_strings.hpp`) — `CubicBezier` (default), `HermiteC0`,
+`HermiteC1`. `DrifterConfig` parses both `adaptive` (cubic Bezier) and `hermite_adaptive` from
+the same JSON `"adaptive"` section (both are always populated so `save()` stays lossless), and
+`Drifter::run()` (`src/core/drifter.cpp`) dispatches on `smoother_kind` through the
+`run_adaptive_smoother<>` template — the two adaptive smoothers share the surface it needs, so
+one body serves both. `print_config()` reports only the selected family's settings.
+See `config/highrider_example.json` (cubic) and `config/highrider_hermite_example.json` (C¹).
 
 **Optimization (ShipMesh Formulation):**
 
@@ -284,8 +317,8 @@ under `include/bathymetry/`:
   `DiagonalApproxCGSchurPreconditioner` and `BlockDiagApproxCGSchurPreconditioner`.
 - `ConstraintCondenser` - hanging-node/constraint condensation shared by the smoothers.
 - Basis and energy operators are split into base + concrete pairs
-  (`bezier_basis_2d_base.hpp` / `cubic_bezier_basis_2d.hpp` / `linear_bezier_basis_2d.hpp`;
-  `bezier_hessian_base.hpp` / `thin_plate_hessian.hpp` / `cubic_thin_plate_hessian.hpp`), so a
+  (`basis_2d_base.hpp` / `cubic_bezier_basis_2d.hpp` / `linear_bezier_basis_2d.hpp`;
+  `hessian_base.hpp` / `thin_plate_hessian.hpp` / `cubic_thin_plate_hessian.hpp`), so a
   new smoother degree means adding a basis + Hessian pair, not editing the assembler.
 
 **DOF ordering and static condensation (both default OFF — leave them off):**
@@ -311,7 +344,7 @@ for diagnostics — these are what the sparsity tooling and the docs figures con
 | `cg_cubic_bezier_uniform_evaluation.md` | Uniform-grid accuracy/timing tables |
 | `uniform_vs_adaptive_convergence.md` | Uniform vs AMR convergence on synthetic bathymetry |
 | `hierarchical_ordering_benchmark.md` | Hierarchical vs Morton DOF ordering — concludes no benefit |
-| `hermite_bathymetry_system.md` | **Design study only, not implemented** — corner elevation/derivative DOFs as an alternative that makes C^r structural and removes the KKT system |
+| `hermite_bathymetry_system.md` | Derivation of the Hermite system now implemented by `CGHermiteBathymetrySmoother` — corner elevation/derivative DOFs, structural C^r, no KKT. Covers C⁰/C¹/C² (only C⁰ and C¹ are implemented). Section numbering parallels `cg_bezier_matrix_system.md` |
 
 **Matrix System:** See `docs/cg_bezier_matrix_system.md` for the full derivation of the assembled system - least-squares data term, thin plate/membrane energy, C⁰/C¹ continuity, hanging-node constraints, boundary conditions, and KKT layout.
 
@@ -341,6 +374,8 @@ Test files in `tests/integration/`:
 | `test_cg_linear_bezier_bathymetry_smoother.cpp` | CG linear Bezier (C⁰), DOF sharing |
 | `test_adaptive_cg_cubic_bezier_smoother.cpp` | Adaptive refinement for CG cubic smoother |
 | `test_adaptive_cg_linear_bezier_smoother.cpp` | Adaptive refinement for CG linear smoother |
+| `test_cg_hermite_bathymetry_smoother.cpp` | CG Hermite (structural C⁰/C¹), SPD condensed system |
+| `test_adaptive_cg_hermite_smoother.cpp` | Adaptive refinement for CG Hermite; continuity is exact across refinement-induced T-junctions |
 | `test_multi_source_bathymetry.cpp` | Multi-source bathymetry loading and blending |
 | `test_mesh.cpp` | Octree mesh creation, face connectivity |
 | `test_dg_operators.cpp` | Gradient/divergence operators, mass matrix, face interpolation, discrete Green's identity |
@@ -354,6 +389,10 @@ Run specific tests with gtest filter: `./build/tests/drifter_integration_tests -
 The lowrider path is covered by unit tests instead: `test_linear_mesh.cpp`,
 `test_pixel_error_estimator.cpp`, `test_pixel_max_error_estimator.cpp`, and
 `test_hierarchical_ordering.cpp` (Morton/Hilbert ordering and static condensation).
+
+Hermite unit tests: `test_hermite_basis.cpp` (1D/2D basis, change of basis to Bernstein),
+`test_hermite_energy.cpp` (element energy matrices vs the symbolic derivation), and
+`test_hermite_constraints.cpp` (hanging-node and BC substitutions).
 
 ## Dependencies
 

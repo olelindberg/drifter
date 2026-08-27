@@ -1,7 +1,7 @@
-#include "bathymetry/cg_bezier_smoother_base.hpp"
-#include "bathymetry/bezier_basis_2d_base.hpp"
+#include "bathymetry/cg_smoother_base.hpp"
+#include "bathymetry/basis_2d_base.hpp"
 #include "bathymetry/bezier_data_fitting.hpp"
-#include "bathymetry/bezier_hessian_base.hpp"
+#include "bathymetry/hessian_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include <Eigen/SparseLU>
 #ifdef DRIFTER_USE_METIS
@@ -25,7 +25,7 @@ using SparseSolver = Eigen::SparseLU<SpMat>;
 // Gauss-Legendre quadrature
 // =============================================================================
 
-void CGBezierSmootherBase::gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
+void CGSmootherBase::gauss_legendre_01(int n, std::vector<Real> &pts, std::vector<Real> &wts) {
     pts.resize(n);
     wts.resize(n);
 
@@ -62,16 +62,16 @@ void CGBezierSmootherBase::gauss_legendre_01(int n, std::vector<Real> &pts, std:
 // Data input
 // =============================================================================
 
-void CGBezierSmootherBase::set_bathymetry_data(const BathymetrySource &source) {
+void CGSmootherBase::set_bathymetry_data(const BathymetrySource &source) {
     set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
 }
 
-void CGBezierSmootherBase::set_bathymetry_data(std::function<Real(Real, Real)> bathy_func) {
+void CGSmootherBase::set_bathymetry_data(std::function<Real(Real, Real)> bathy_func) {
     set_bathymetry_data_impl(bathy_func);
     data_set_ = true;
 }
 
-void CGBezierSmootherBase::set_scattered_points(const std::vector<Vec3> &points) {
+void CGSmootherBase::set_scattered_points(const std::vector<Vec3> &points) {
     std::vector<BathymetryPoint> bathy_points;
     bathy_points.reserve(points.size());
     for (const auto &p : points) {
@@ -80,7 +80,7 @@ void CGBezierSmootherBase::set_scattered_points(const std::vector<Vec3> &points)
     set_scattered_points(bathy_points);
 }
 
-void CGBezierSmootherBase::set_scattered_points(const std::vector<BathymetryPoint> &points) {
+void CGSmootherBase::set_scattered_points(const std::vector<BathymetryPoint> &points) {
     std::vector<BathymetryPoint> pts = points;
 
     auto bathy_func = [pts](Real x, Real y) -> Real {
@@ -105,11 +105,11 @@ void CGBezierSmootherBase::set_scattered_points(const std::vector<BathymetryPoin
 // Element lookup
 // =============================================================================
 
-Index CGBezierSmootherBase::find_element(Real x, Real y) const {
+Index CGSmootherBase::find_element(Real x, Real y) const {
     return quadtree_->find_element(Vec2(x, y));
 }
 
-Index CGBezierSmootherBase::find_element_with_fallback(Real x, Real y) const {
+Index CGSmootherBase::find_element_with_fallback(Real x, Real y) const {
     Index elem = find_element(x, y);
     if (elem >= 0) {
         return elem;
@@ -135,21 +135,36 @@ Index CGBezierSmootherBase::find_element_with_fallback(Real x, Real y) const {
 // Element coefficients and evaluation helpers
 // =============================================================================
 
-VecX CGBezierSmootherBase::element_coefficients(Index elem) const {
+VecX CGSmootherBase::element_dof_scaling(Real, Real) const {
+    return VecX::Ones(basis().num_dofs());
+}
+
+VecX CGSmootherBase::ridge_diagonal() const {
+    return VecX::Constant(dof_manager_num_global_dofs(), lambda() * ridge_epsilon());
+}
+
+VecX CGSmootherBase::element_coefficients(Index elem) const {
     const auto &global_dofs = element_global_dofs(elem);
+    const auto &bounds = quadtree_->element_bounds(elem);
     int ndof = basis().num_dofs();
     VecX coeffs(ndof);
     for (int i = 0; i < ndof; ++i) {
         coeffs(i) = solution_(global_dofs[i]);
     }
-    return coeffs;
+    // Identity for Bernstein bases; the h_x^a h_y^b factors for Hermite
+    return coeffs.cwiseProduct(
+        element_dof_scaling(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin));
 }
 
-Real CGBezierSmootherBase::evaluate_scalar(const VecX &coeffs, Real u, Real v) const {
+VecX CGSmootherBase::element_bernstein_coefficients(Index elem) const {
+    return element_coefficients(elem);
+}
+
+Real CGSmootherBase::evaluate_scalar(const VecX &coeffs, Real u, Real v) const {
     return basis().evaluate_scalar(coeffs, u, v);
 }
 
-Vec2 CGBezierSmootherBase::evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const {
+Vec2 CGSmootherBase::evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) const {
     VecX du = basis().evaluate_du(u, v);
     VecX dv = basis().evaluate_dv(u, v);
 
@@ -163,7 +178,7 @@ Vec2 CGBezierSmootherBase::evaluate_gradient_uv(const VecX &coeffs, Real u, Real
 // Evaluation
 // =============================================================================
 
-Real CGBezierSmootherBase::evaluate_in_element(Index elem, Real x, Real y) const {
+Real CGSmootherBase::evaluate_in_element(Index elem, Real x, Real y) const {
     const auto &bounds = quadtree_->element_bounds(elem);
 
     Real u = (x - bounds.xmin) / (bounds.xmax - bounds.xmin);
@@ -176,16 +191,16 @@ Real CGBezierSmootherBase::evaluate_in_element(Index elem, Real x, Real y) const
     return evaluate_scalar(coeffs, u, v);
 }
 
-Real CGBezierSmootherBase::evaluate(Real x, Real y) const {
+Real CGSmootherBase::evaluate(Real x, Real y) const {
     if (!solved_) {
-        throw std::runtime_error("CGBezierSmootherBase: must call solve() before evaluate()");
+        throw std::runtime_error("CGSmootherBase: must call solve() before evaluate()");
     }
 
     Index elem = find_element_with_fallback(x, y);
     return evaluate_in_element(elem, x, y);
 }
 
-Vec2 CGBezierSmootherBase::evaluate_gradient_in_element(Index elem, Real x, Real y) const {
+Vec2 CGSmootherBase::evaluate_gradient_in_element(Index elem, Real x, Real y) const {
     const auto &bounds = quadtree_->element_bounds(elem);
     Real dx = bounds.xmax - bounds.xmin;
     Real dy = bounds.ymax - bounds.ymin;
@@ -204,10 +219,10 @@ Vec2 CGBezierSmootherBase::evaluate_gradient_in_element(Index elem, Real x, Real
     return Vec2(grad_uv(0) / dx, grad_uv(1) / dy);
 }
 
-Vec2 CGBezierSmootherBase::evaluate_gradient(Real x, Real y) const {
+Vec2 CGSmootherBase::evaluate_gradient(Real x, Real y) const {
     if (!solved_) {
         throw std::runtime_error(
-            "CGBezierSmootherBase: must call solve() before evaluate_gradient()");
+            "CGSmootherBase: must call solve() before evaluate_gradient()");
     }
 
     Index elem = find_element_with_fallback(x, y);
@@ -218,15 +233,15 @@ Vec2 CGBezierSmootherBase::evaluate_gradient(Real x, Real y) const {
 // Transfer
 // =============================================================================
 
-void CGBezierSmootherBase::transfer_to_seabed(SeabedSurface &seabed) const {
+void CGSmootherBase::transfer_to_seabed(SeabedSurface &seabed) const {
     if (!solved_) {
         throw std::runtime_error(
-            "CGBezierSmootherBase: must call solve() before transfer_to_seabed()");
+            "CGSmootherBase: must call solve() before transfer_to_seabed()");
     }
 
     for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
-        VecX coeffs = element_coefficients(elem);
-        seabed.set_element_coefficients(elem, coeffs);
+        // SeabedSurface expects Bernstein control values
+        seabed.set_element_coefficients(elem, element_bernstein_coefficients(elem));
     }
 }
 
@@ -234,20 +249,20 @@ void CGBezierSmootherBase::transfer_to_seabed(SeabedSurface &seabed) const {
 // Diagnostics
 // =============================================================================
 
-Real CGBezierSmootherBase::data_residual() const {
+Real CGSmootherBase::data_residual() const {
     if (!solved_)
         return 0.0;
     return solution_.dot(BtWB_global_ * solution_) - 2.0 * solution_.dot(BtWd_global_) +
            dTWd_global_;
 }
 
-Real CGBezierSmootherBase::regularization_energy() const {
+Real CGSmootherBase::regularization_energy() const {
     if (!solved_)
         return 0.0;
     return solution_.dot(H_global_ * solution_);
 }
 
-Real CGBezierSmootherBase::objective_value() const {
+Real CGSmootherBase::objective_value() const {
     if (!solved_)
         return 0.0;
     return alpha_ * regularization_energy() + lambda() * data_residual();
@@ -257,7 +272,7 @@ Real CGBezierSmootherBase::objective_value() const {
 // Hessian assembly
 // =============================================================================
 
-void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hessian) {
+void CGSmootherBase::assemble_hessian_global(const HessianBase &hessian) {
     Index num_dofs = dof_manager_num_global_dofs();
     Index num_elements = quadtree_->num_elements();
     int ndof = hessian.num_dofs();
@@ -305,7 +320,7 @@ void CGBezierSmootherBase::assemble_hessian_global(const BezierHessianBase &hess
 // Data fitting assembly
 // =============================================================================
 
-void CGBezierSmootherBase::assemble_data_fitting_global(
+void CGSmootherBase::assemble_data_fitting_global(
     std::function<Real(Real, Real)> bathy_func) {
 
     Index num_dofs = dof_manager_num_global_dofs();
@@ -330,6 +345,10 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
 
         const auto &global_dofs = element_global_dofs(elem);
 
+        // Identity for Bernstein bases; the h_x^a h_y^b factors for Hermite.
+        // Hoisted out of the quadrature loop - it depends only on element size.
+        const VecX dof_scal = element_dof_scaling(dx, dy);
+
         // Accumulate local data fitting matrix for caching
         MatX B_local = MatX::Zero(ndof, ndof);
 
@@ -349,7 +368,7 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
 
                 dTWd_global_ += weight * d * d;
 
-                VecX B = basis().evaluate(u, v);
+                VecX B = basis().evaluate(u, v).cwiseProduct(dof_scal);
 
                 for (int i = 0; i < ndof; ++i) {
                     Index I = global_dofs[i];
@@ -393,34 +412,35 @@ void CGBezierSmootherBase::assemble_data_fitting_global(
 // KKT system assembly
 // =============================================================================
 
-SpMat CGBezierSmootherBase::assemble_Q() const {
+SpMat CGSmootherBase::assemble_Q() const {
     Index num_dofs = dof_manager_num_global_dofs();
     SpMat Q = alpha_ * H_global_ + lambda() * BtWB_global_;
+    const VecX ridge = ridge_diagonal();
     for (Index i = 0; i < num_dofs; ++i) {
-        Q.coeffRef(i, i) += lambda() * ridge_epsilon();
+        Q.coeffRef(i, i) += ridge(i);
     }
     return Q;
 }
 
-VecX CGBezierSmootherBase::assemble_b() const { return lambda() * BtWd_global_; }
+VecX CGSmootherBase::assemble_b() const { return lambda() * BtWd_global_; }
 
 // =============================================================================
 // Solve unconstrained
 // =============================================================================
 
-void CGBezierSmootherBase::solve_unconstrained() {
+void CGSmootherBase::solve_unconstrained() {
     SpMat Q = assemble_Q();
     VecX b = assemble_b();
 
     SparseSolver solver;
     solver.compute(Q);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("CGBezierSmootherBase: SparseLU decomposition failed");
+        throw std::runtime_error("CGSmootherBase: SparseLU decomposition failed");
     }
 
     solution_ = solver.solve(b);
     if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("CGBezierSmootherBase: SparseLU solve failed");
+        throw std::runtime_error("CGSmootherBase: SparseLU solve failed");
     }
 }
 
@@ -428,7 +448,7 @@ void CGBezierSmootherBase::solve_unconstrained() {
 // Element matrix caching
 // =============================================================================
 
-void CGBezierSmootherBase::cache_element_matrix(Index elem, const MatX &Q_local) {
+void CGSmootherBase::cache_element_matrix(Index elem, const MatX &Q_local) {
     if (!element_matrix_cache_) {
         return;
     }
@@ -442,7 +462,7 @@ void CGBezierSmootherBase::cache_element_matrix(Index elem, const MatX &Q_local)
 // Boundary relaxation
 // =============================================================================
 
-Real CGBezierSmootherBase::compute_relaxation_factor(Real x, Real y) const {
+Real CGSmootherBase::compute_relaxation_factor(Real x, Real y) const {
     if (!relaxation_config_.enabled || relaxation_config_.width <= 0.0) {
         return 1.0;
     }

@@ -10,7 +10,7 @@
 /// The energy is quadratic in the control point values: E(z) = z^T * H * z
 /// where H is the precomputed Hessian matrix (16x16 for cubic Bezier).
 
-#include "bathymetry/bezier_hessian_base.hpp"
+#include "bathymetry/hessian_base.hpp"
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "core/types.hpp"
 #include <memory>
@@ -25,13 +25,13 @@ namespace drifter {
 ///
 /// This can be written as E = c^T * H * c where H is a 16x16 symmetric positive
 /// semi-definite matrix that depends only on the basis functions.
-class CubicThinPlateHessian : public BezierHessianBase {
+class CubicThinPlateHessian : public HessianBase {
 public:
     /// @brief Construct thin plate Hessian with specified quadrature order
     /// @param ngauss Number of Gauss points per direction (default 4 for cubic)
     explicit CubicThinPlateHessian(int ngauss = 4);
 
-    // BezierHessianBase interface
+    // HessianBase interface
     int num_dofs() const override { return CubicBezierBasis2D::NDOF; }
     const MatX &element_hessian() const override { return H_; }
 

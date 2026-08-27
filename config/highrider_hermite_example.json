@@ -34,30 +34,19 @@
     "max_refinement_level": 12,
     "verbose": true,
     "ngauss_error": 6,
-    "error_output_dir": "/tmp/adaptive_cg_cubic_errors"
+    "error_output_dir": "/tmp/adaptive_cg_hermite_errors"
   },
   "smoother": {
-    "type": "CubicBezier",
+    "type": "HermiteC1",
     "lambda": 10.0,
-    "edge_ngauss": 4,
-    "tolerance": 1e-4,
-    "use_iterative_solver": true,
-    "use_multigrid": true,
-    "schur_preconditioner": "BlockDiagApproxCG",
-    "verbose": true,
-    "multigrid": {
-      "smoother_type": "MultiplicativeSchwarz",
-      "verbose": true,
-      "pre_smoothing": 2,
-      "post_smoothing": 2,
-      "max_vcycles": 10,
-      "vcycle_tolerance": 1e-3,
-      "transfer_strategy": "BezierSubdivision",
-      "coarse_grid_strategy": "CachedRediscretization"
-    }
+    "ridge_epsilon": 1e-4,
+    "ngauss_data": 4,
+    "enable_zero_gradient_bc": false,
+    "use_equilibration": true,
+    "verbose": true
   },
   "output": {
-    "output_file": "/tmp/drifter_bathymetry",
+    "output_file": "/tmp/drifter_bathymetry_hermite",
     "vtk_subdivision": 8
   }
 }

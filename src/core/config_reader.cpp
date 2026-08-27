@@ -110,6 +110,57 @@ AdaptiveCGCubicBezierConfig parse_adaptive_config(const pt::ptree &tree, const p
   return config;
 }
 
+/// @brief Parse CGHermiteSmootherConfig from property tree
+CGHermiteSmootherConfig parse_hermite_smoother_config(const pt::ptree &tree,
+                                                     BathySmootherKind kind) {
+  CGHermiteSmootherConfig config;
+
+  // The continuity order comes from the smoother kind, not a separate key
+  config.continuity_order = (kind == BathySmootherKind::HermiteC0) ? 0 : 1;
+
+  config.lambda                  = tree.get<Real>("lambda", config.lambda);
+  config.ridge_epsilon           = tree.get<Real>("ridge_epsilon", config.ridge_epsilon);
+  config.enable_zero_gradient_bc = tree.get<bool>("enable_zero_gradient_bc", config.enable_zero_gradient_bc);
+  config.use_equilibration       = tree.get<bool>("use_equilibration", config.use_equilibration);
+  config.verbose                 = tree.get<bool>("verbose", config.verbose);
+
+  // The data-fitting integrand has degree 2p per direction, so C0 needs 2 points
+  // and C1 needs 4. Default to the requirement rather than the struct default.
+  const int default_ngauss = (config.continuity_order == 0) ? 2 : 4;
+  config.ngauss_data = tree.get<int>("ngauss_data", default_ngauss);
+
+  return config;
+}
+
+/// @brief Parse AdaptiveCGHermiteConfig from property tree
+///
+/// Shares the "adaptive" JSON section with the cubic Bezier path; only the
+/// nested smoother config differs.
+AdaptiveCGHermiteConfig parse_hermite_adaptive_config(const pt::ptree &tree,
+                                                     const pt::ptree &smoother_tree,
+                                                     BathySmootherKind kind) {
+  AdaptiveCGHermiteConfig config;
+
+  config.error_threshold      = tree.get<Real>("error_threshold", config.error_threshold);
+  config.max_iterations       = tree.get<int>("max_iterations", config.max_iterations);
+  config.max_elements         = tree.get<int>("max_elements", config.max_elements);
+  config.max_refinement_level = tree.get<int>("max_refinement_level", config.max_refinement_level);
+  config.dorfler_theta        = tree.get<Real>("dorfler_theta", config.dorfler_theta);
+  config.symmetry_tolerance   = tree.get<Real>("symmetry_tolerance", config.symmetry_tolerance);
+  config.ngauss_error         = tree.get<int>("ngauss_error", config.ngauss_error);
+  config.verbose              = tree.get<bool>("verbose", config.verbose);
+  config.error_output_dir     = tree.get<std::string>("error_output_dir", config.error_output_dir);
+  config.vtk_output_prefix    = tree.get<std::string>("vtk_output_prefix", config.vtk_output_prefix);
+
+  if (auto str = tree.get_optional<std::string>("error_metric_type")) {
+    config.error_metric_type = error_metric_type_from_string(*str);
+  }
+
+  config.smoother_config = parse_hermite_smoother_config(smoother_tree, kind);
+
+  return config;
+}
+
 /// @brief Serialize MultigridConfig to property tree
 pt::ptree serialize_multigrid_config(const MultigridConfig &config) {
   pt::ptree tree;
@@ -160,6 +211,23 @@ pt::ptree serialize_smoother_config(const CGCubicBezierSmootherConfig &config) {
   }
 
   tree.add_child("multigrid", serialize_multigrid_config(config.multigrid_config));
+
+  return tree;
+}
+
+/// @brief Serialize CGHermiteSmootherConfig to property tree
+pt::ptree serialize_hermite_smoother_config(const CGHermiteSmootherConfig &config,
+                                            BathySmootherKind kind) {
+  pt::ptree tree;
+
+  // continuity_order is implied by the kind, so it is not written separately
+  tree.put("type", to_string(kind));
+  tree.put("lambda", config.lambda);
+  tree.put("ngauss_data", config.ngauss_data);
+  tree.put("ridge_epsilon", config.ridge_epsilon);
+  tree.put("enable_zero_gradient_bc", config.enable_zero_gradient_bc);
+  tree.put("use_equilibration", config.use_equilibration);
+  tree.put("verbose", config.verbose);
 
   return tree;
 }
@@ -251,11 +319,22 @@ DrifterConfig ConfigReader::load(const std::string &filepath) {
     smoother_tree = *tree;
   }
 
+  // Which smoother family to run; defaults to the historical cubic Bezier path
+  if (auto str = smoother_tree.get_optional<std::string>("type")) {
+    config.smoother_kind = bathy_smoother_kind_from_string(*str);
+  }
+
+  // Both configs are parsed regardless of the selected kind: they are cheap
+  // value structs, and populating both keeps save() lossless.
   config.adaptive = parse_adaptive_config(adaptive_tree, smoother_tree);
+  config.hermite_adaptive =
+      parse_hermite_adaptive_config(adaptive_tree, smoother_tree, config.smoother_kind);
 
   // =========================================================================
   // Auto-compute min_tree_level from initial grid
   // =========================================================================
+  // Multigrid is specific to the cubic Bezier path; the Hermite path solves
+  // directly and has no multigrid config to seed.
   int initial_level = static_cast<int>(std::log2(std::max(config.nx, config.ny)));
   config.adaptive.smoother_config.multigrid_config.min_tree_level = initial_level;
 
@@ -303,7 +382,17 @@ void ConfigReader::save(const DrifterConfig &config, const std::string &filepath
   root.add_child("adaptive", serialize_adaptive_config(config.adaptive));
 
   // Smoother section
-  root.add_child("smoother", serialize_smoother_config(config.adaptive.smoother_config));
+  // Write the smoother block for whichever family is selected, so a saved config
+  // round-trips back to the same run.
+  if (config.smoother_kind == BathySmootherKind::CubicBezier) {
+    pt::ptree smoother_tree = serialize_smoother_config(config.adaptive.smoother_config);
+    smoother_tree.put("type", to_string(config.smoother_kind));
+    root.add_child("smoother", smoother_tree);
+  } else {
+    root.add_child("smoother",
+                   serialize_hermite_smoother_config(config.hermite_adaptive.smoother_config,
+                                                     config.smoother_kind));
+  }
 
   // Output section
   pt::ptree output_tree;
@@ -319,12 +408,48 @@ void ConfigReader::save(const DrifterConfig &config, const std::string &filepath
   }
 }
 
+namespace {
+
+/// @brief Print the adaptive-refinement section
+///
+/// The Bezier and Hermite adaptive configs are unrelated types with the same
+/// field names, so one template serves both.
+template <typename AdaptiveConfig>
+void print_adaptive_section(int w, const AdaptiveConfig &a) {
+  std::cout << "\nAdaptive Refinement:\n";
+  std::cout << "  " << std::left << std::setw(w) << "error_threshold" << ": " << a.error_threshold << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "error_metric_type" << ": " << to_string(a.error_metric_type) << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "max_iterations" << ": " << a.max_iterations << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "max_elements" << ": " << a.max_elements << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "max_refinement_level" << ": " << a.max_refinement_level << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "dorfler_theta" << ": " << a.dorfler_theta << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "ngauss_error" << ": " << a.ngauss_error << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "verbose" << ": " << (a.verbose ? "true" : "false") << "\n";
+}
+
+/// @brief Print the Hermite smoother section
+///
+/// The Hermite path solves the condensed SPD system directly, so it has neither
+/// an iterative-solver nor a multigrid section to report.
+void print_hermite_smoother_section(int w, const CGHermiteSmootherConfig &sc) {
+  std::cout << "\nSmoother (Hermite):\n";
+  std::cout << "  " << std::left << std::setw(w) << "continuity_order" << ": " << sc.continuity_order << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "lambda" << ": " << sc.lambda << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "ngauss_data" << ": " << sc.ngauss_data << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "ridge_epsilon" << ": " << sc.ridge_epsilon << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "enable_zero_gradient_bc" << ": " << (sc.enable_zero_gradient_bc ? "true" : "false") << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "use_equilibration" << ": " << (sc.use_equilibration ? "true" : "false") << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "solver" << ": SimplicialLDLT (direct, SPD)\n";
+}
+
+} // namespace
+
 void print_config(const DrifterConfig &config) {
-  const int w    = 26;
-  const auto &sc = config.adaptive.smoother_config;
-  const auto &mg = sc.multigrid_config;
+  const int w = 26;
 
   std::cout << "\n=== Configuration ===\n";
+  std::cout << "\nSmoother family:\n";
+  std::cout << "  " << std::left << std::setw(w) << "type" << ": " << to_string(config.smoother_kind) << "\n";
 
   std::cout << "\nData:\n";
   std::cout << "  " << std::left << std::setw(w) << "data_dir" << ": " << config.data_dir << "\n";
@@ -338,15 +463,23 @@ void print_config(const DrifterConfig &config) {
   std::cout << "  " << std::left << std::setw(w) << "nx" << ": " << config.nx << "\n";
   std::cout << "  " << std::left << std::setw(w) << "ny" << ": " << config.ny << "\n";
 
-  std::cout << "\nAdaptive Refinement:\n";
-  std::cout << "  " << std::left << std::setw(w) << "error_threshold" << ": " << config.adaptive.error_threshold << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "error_metric_type" << ": " << to_string(config.adaptive.error_metric_type) << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_iterations" << ": " << config.adaptive.max_iterations << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_elements" << ": " << config.adaptive.max_elements << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_refinement_level" << ": " << config.adaptive.max_refinement_level << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "dorfler_theta" << ": " << config.adaptive.dorfler_theta << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ngauss_error" << ": " << config.adaptive.ngauss_error << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "verbose" << ": " << (config.adaptive.verbose ? "true" : "false") << "\n";
+  // Only the family that will actually run is reported. Both configs are parsed
+  // so that save() is lossless, but printing the unused one is misleading.
+  if (config.smoother_kind != BathySmootherKind::CubicBezier) {
+    print_adaptive_section(w, config.hermite_adaptive);
+    print_hermite_smoother_section(w, config.hermite_adaptive.smoother_config);
+
+    std::cout << "\nOutput:\n";
+    std::cout << "  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file << "\n";
+    std::cout << "  " << std::left << std::setw(w) << "vtk_subdivision" << ": " << config.vtk_subdivision << "\n";
+    std::cout << "\n";
+    return;
+  }
+
+  print_adaptive_section(w, config.adaptive);
+
+  const auto &sc = config.adaptive.smoother_config;
+  const auto &mg = sc.multigrid_config;
 
   std::cout << "\nSmoother:\n";
   std::cout << "  " << std::left << std::setw(w) << "lambda" << ": " << sc.lambda << "\n";

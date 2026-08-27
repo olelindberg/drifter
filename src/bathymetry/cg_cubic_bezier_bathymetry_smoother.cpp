@@ -71,7 +71,7 @@ void CGCubicBezierBathymetrySmoother::init_components() {
 }
 
 // =============================================================================
-// CGBezierSmootherBase virtual method implementations
+// CGSmootherBase virtual method implementations
 // =============================================================================
 
 void CGCubicBezierBathymetrySmoother::set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) {

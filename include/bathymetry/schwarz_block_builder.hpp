@@ -7,7 +7,7 @@
 /// independently of the multigrid preconditioner. This allows using
 /// Schwarz-based Schur preconditioners without requiring multigrid.
 
-#include "bathymetry/cg_bezier_dof_manager_base.hpp"
+#include "bathymetry/cg_surface_dof_manager_base.hpp"
 #include "core/types.hpp"
 #include <Eigen/Dense>
 #include <map>
@@ -48,13 +48,13 @@ public:
     /// @param compute_coloring Whether to compute graph coloring (for ColoredSchwarz)
     /// @return SchwarzBlockData with element blocks and optionally coloring
     static SchwarzBlockData build(const SpMat &Q,
-                                  const CGBezierDofManagerBase &dof_manager,
+                                  const CGSurfaceDofManagerBase &dof_manager,
                                   bool compute_coloring = true);
 
 private:
     /// @brief Build element block LU factorizations
     static void build_element_blocks(SchwarzBlockData &data, const SpMat &Q,
-                                     const CGBezierDofManagerBase &dof_manager);
+                                     const CGSurfaceDofManagerBase &dof_manager);
 
     /// @brief Build element coloring using greedy graph coloring
     static void build_element_coloring(SchwarzBlockData &data);

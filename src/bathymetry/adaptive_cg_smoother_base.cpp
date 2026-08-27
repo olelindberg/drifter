@@ -1,5 +1,5 @@
-#include "bathymetry/adaptive_cg_bezier_smoother_base.hpp"
-#include "bathymetry/bezier_basis_2d_base.hpp"
+#include "bathymetry/adaptive_cg_smoother_base.hpp"
+#include "bathymetry/basis_2d_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
 #include "mesh/morton.hpp"
 #include <algorithm>
@@ -12,18 +12,18 @@ namespace drifter {
 // Data input
 // =============================================================================
 
-void AdaptiveCGBezierSmootherBase::set_bathymetry_data(const BathymetrySource &source) {
+void AdaptiveCGSmootherBase::set_bathymetry_data(const BathymetrySource &source) {
     // Wrap BathymetrySource in a lambda that captures by reference
     // Note: The source must outlive this smoother
     bathy_func_ = [&source](Real x, Real y) -> Real { return source.evaluate(x, y); };
 }
 
-void AdaptiveCGBezierSmootherBase::set_bathymetry_data(
+void AdaptiveCGSmootherBase::set_bathymetry_data(
     std::function<Real(Real, Real)> bathy_func) {
     bathy_func_ = std::move(bathy_func);
 }
 
-void AdaptiveCGBezierSmootherBase::set_land_mask(
+void AdaptiveCGSmootherBase::set_land_mask(
     std::function<bool(Real, Real)> is_land_func) {
     land_mask_func_ = std::move(is_land_func);
 }
@@ -32,10 +32,10 @@ void AdaptiveCGBezierSmootherBase::set_land_mask(
 // Evaluation
 // =============================================================================
 
-Real AdaptiveCGBezierSmootherBase::evaluate(Real x, Real y) const {
+Real AdaptiveCGSmootherBase::evaluate(Real x, Real y) const {
     if (!is_solved_impl()) {
         throw std::runtime_error(
-            "AdaptiveCGBezierSmootherBase: must solve before evaluating");
+            "AdaptiveCGSmootherBase: must solve before evaluating");
     }
     return smoother_evaluate(x, y);
 }
@@ -44,7 +44,7 @@ Real AdaptiveCGBezierSmootherBase::evaluate(Real x, Real y) const {
 // Gauss quadrature initialization
 // =============================================================================
 
-void AdaptiveCGBezierSmootherBase::init_gauss_quadrature(int ngauss) {
+void AdaptiveCGSmootherBase::init_gauss_quadrature(int ngauss) {
     gauss_nodes_.resize(ngauss);
     gauss_weights_.resize(ngauss);
 
@@ -78,7 +78,7 @@ void AdaptiveCGBezierSmootherBase::init_gauss_quadrature(int ngauss) {
         gauss_weights_ << 0.0856622461895852, 0.1803807865240693, 0.2339569672863455,
             0.2339569672863455, 0.1803807865240693, 0.0856622461895852;
     } else {
-        throw std::invalid_argument("AdaptiveCGBezierSmootherBase: "
+        throw std::invalid_argument("AdaptiveCGSmootherBase: "
                                     "ngauss must be between 1 and 6");
     }
 }
@@ -87,7 +87,7 @@ void AdaptiveCGBezierSmootherBase::init_gauss_quadrature(int ngauss) {
 // Mesh refinement
 // =============================================================================
 
-void AdaptiveCGBezierSmootherBase::refine_elements_impl(
+void AdaptiveCGSmootherBase::refine_elements_impl(
     const std::vector<Index> &elements_to_refine) {
     if (elements_to_refine.empty())
         return;
@@ -106,7 +106,7 @@ void AdaptiveCGBezierSmootherBase::refine_elements_impl(
 // Coarsening error computation
 // =============================================================================
 
-void AdaptiveCGBezierSmootherBase::store_current_solution() {
+void AdaptiveCGSmootherBase::store_current_solution() {
     if (!is_solved_impl()) {
         return;
     }
@@ -125,7 +125,7 @@ void AdaptiveCGBezierSmootherBase::store_current_solution() {
     }
 }
 
-Real AdaptiveCGBezierSmootherBase::evaluate_prev_solution(Real x, Real y) const {
+Real AdaptiveCGSmootherBase::evaluate_prev_solution(Real x, Real y) const {
     // Find element containing point in current mesh
     Index elem = quadtree_->find_element(Vec2(x, y));
     if (elem < 0) {
@@ -204,7 +204,7 @@ Real AdaptiveCGBezierSmootherBase::evaluate_prev_solution(Real x, Real y) const 
     return 0.0; // No stored solution found
 }
 
-void AdaptiveCGBezierSmootherBase::compute_coarsening_metrics(Index elem, Real &mean_difference,
+void AdaptiveCGSmootherBase::compute_coarsening_metrics(Index elem, Real &mean_difference,
                                                               Real &volume_change) const {
     // Default to zero
     mean_difference = 0.0;
