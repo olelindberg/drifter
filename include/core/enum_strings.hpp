@@ -24,6 +24,10 @@ inline std::string to_string(ErrorMetricType e) {
     return "MeanDifference";
   case ErrorMetricType::VolumeChange:
     return "VolumeChange";
+  case ErrorMetricType::PixelRMSE:
+    return "PixelRMSE";
+  case ErrorMetricType::PixelMaxError:
+    return "PixelMaxError";
   }
   throw std::invalid_argument("Unknown ErrorMetricType");
 }
@@ -35,7 +39,11 @@ inline ErrorMetricType error_metric_type_from_string(const std::string &s) {
     return ErrorMetricType::MeanDifference;
   if (s == "VolumeChange")
     return ErrorMetricType::VolumeChange;
-  throw std::invalid_argument("Unknown ErrorMetricType: '" + s + "'. Valid values: NormalizedError, MeanDifference, VolumeChange");
+  if (s == "PixelRMSE")
+    return ErrorMetricType::PixelRMSE;
+  if (s == "PixelMaxError")
+    return ErrorMetricType::PixelMaxError;
+  throw std::invalid_argument("Unknown ErrorMetricType: '" + s + "'. Valid values: NormalizedError, MeanDifference, VolumeChange, PixelRMSE, PixelMaxError");
 }
 
 // =============================================================================

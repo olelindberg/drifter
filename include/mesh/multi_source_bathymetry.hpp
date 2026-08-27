@@ -107,6 +107,54 @@ public:
     /// @brief Check if GDAL support is available
     static bool is_available();
 
+    /// @brief Get the primary source data
+    /// @return Reference to the primary BathymetryData
+    const BathymetryData& get_primary() const;
+
+    /// @brief Get the data source for a point (EPSG:3034 coordinates)
+    ///
+    /// Returns a pointer to the BathymetryData that covers the given point.
+    /// This allows per-element pixel-based operations using the correct source.
+    ///
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return Pointer to BathymetryData, or nullptr if point is outside all sources
+    /// @note May trigger lazy loading of tile data
+    const BathymetryData* get_source_for_point(Real x, Real y) const;
+
+    /// @brief Get minimum element size in meters for a point
+    ///
+    /// For sources in geographic CRS (EPSG:4326), converts pixel size from degrees
+    /// to meters using the local latitude. For projected CRS sources, returns the
+    /// pixel size directly.
+    ///
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return Minimum pixel dimension in meters, or 0 if outside all sources
+    Real get_min_element_size_meters(Real x, Real y) const;
+
+    /// @brief Check if a point is inside the primary source bounds
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return true if inside primary bounds
+    bool is_in_primary(Real x, Real y) const;
+
+    /// @brief Get source index for a point (0=primary, 1..N=tiles, -1=none)
+    ///
+    /// Returns an integer identifying which bathymetry source covers the point.
+    /// Unlike get_source_for_point(), this does not trigger lazy loading of tiles.
+    ///
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    /// @return 0 for primary, 1..N for tiles, -1 if no source covers the point
+    int get_source_index(Real x, Real y) const;
+
+    /// @brief Transform a point from EPSG:3034 to EPSG:4326
+    /// @param x Input/output: X coordinate (EPSG:3034 in, longitude out)
+    /// @param y Input/output: Y coordinate (EPSG:3034 in, latitude out)
+    /// @return true if transformation succeeded
+    bool transform_to_4326(double& x, double& y) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

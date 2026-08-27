@@ -13,7 +13,11 @@ enum class ErrorMetricType {
 
     // Coarsening error indicators (solution change due to refinement)
     MeanDifference, ///< ∫∫|z_fine - z_coarse|dA / ∫∫dA — mean abs diff [m]
-    VolumeChange    ///< ∫∫|z_fine - z_coarse|dA — total volume change [m³]
+    VolumeChange,   ///< ∫∫|z_fine - z_coarse|dA — total volume change [m³]
+
+    // Pixel-based error metrics (validation)
+    PixelRMSE,      ///< RMSE at GeoTIFF pixel center locations [meters]
+    PixelMaxError   ///< Maximum |z_data - z_surface| across pixels [meters]
 };
 
 /// @brief Reason for adaptive convergence
@@ -22,7 +26,8 @@ enum class ConvergenceReason {
     ErrorThreshold,     ///< max_error <= error_threshold
     MaxElements,        ///< num_elements >= max_elements
     MaxRefinementLevel, ///< All marked elements at max level
-    MaxIterations       ///< Reached max_iterations
+    MaxIterations,      ///< Reached max_iterations
+    PixelResolution     ///< All elements at or below pixel resolution
 };
 
 } // namespace drifter

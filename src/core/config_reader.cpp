@@ -61,6 +61,8 @@ CGCubicBezierSmootherConfig parse_smoother_config(const pt::ptree &tree) {
   config.inner_max_iterations    = tree.get<int>("inner_max_iterations", config.inner_max_iterations);
   config.icc_shift               = tree.get<Real>("icc_shift", config.icc_shift);
   config.use_multigrid           = tree.get<bool>("use_multigrid", config.use_multigrid);
+  config.use_hierarchical_ordering = tree.get<bool>("use_hierarchical_ordering", config.use_hierarchical_ordering);
+  config.use_static_condensation = tree.get<bool>("use_static_condensation", config.use_static_condensation);
   config.verbose                 = tree.get<bool>("verbose", config.verbose);
 
   if (auto str = tree.get_optional<std::string>("schur_preconditioner")) {
@@ -145,6 +147,8 @@ pt::ptree serialize_smoother_config(const CGCubicBezierSmootherConfig &config) {
   tree.put("inner_max_iterations", config.inner_max_iterations);
   tree.put("icc_shift", config.icc_shift);
   tree.put("use_multigrid", config.use_multigrid);
+  tree.put("use_hierarchical_ordering", config.use_hierarchical_ordering);
+  tree.put("use_static_condensation", config.use_static_condensation);
   tree.put("schur_preconditioner", to_string(config.schur_preconditioner));
   tree.put("verbose", config.verbose);
 

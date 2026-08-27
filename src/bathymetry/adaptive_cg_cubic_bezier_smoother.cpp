@@ -1,6 +1,7 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/bezier_basis_2d_base.hpp"
 #include "bathymetry/biharmonic_assembler.hpp"
+#include "bathymetry/pixel_error_estimator.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/refine_mask.hpp"
@@ -422,13 +423,30 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
                 // Normal Dorfler marking with symmetry preservation
                 std::vector<Index> candidates = select_elements_for_refinement(errors);
 
-                // Filter by refinement level limit and land mask
+                // Determine minimum element size (from config or GeoTIFF resolution)
+                Real min_size = config_.min_element_size;
+                if (config_.enforce_pixel_limit && bathy_data_ && min_size <= 0.0) {
+                    min_size = bathy_data_->min_element_size();
+                }
+
+                // Filter by refinement level limit, land mask, and pixel resolution
                 for (Index elem : candidates) {
                     QuadLevel level = quadtree_->element_level(elem);
-                    if (level.max_level() < config_.max_refinement_level &&
-                        !is_element_on_land(elem)) {
-                        valid_refine.push_back(elem);
+                    if (level.max_level() >= config_.max_refinement_level) {
+                        continue;  // Already at max refinement level
                     }
+                    if (is_element_on_land(elem)) {
+                        continue;  // Skip land elements
+                    }
+                    // Check minimum element size constraint (pixel resolution limit)
+                    if (config_.enforce_pixel_limit && min_size > 0.0) {
+                        auto size = quadtree_->element_size(elem);
+                        Real elem_min_size = std::min(size(0), size(1));
+                        if (elem_min_size <= min_size) {
+                            continue;  // Already at or below pixel resolution
+                        }
+                    }
+                    valid_refine.push_back(elem);
                 }
             }
         }
@@ -579,6 +597,29 @@ CGCubicAdaptationResult AdaptiveCGCubicBezierSmoother::solve_adaptive() {
 
     current_profile_ = nullptr;
     postprocess_ms_ = 0.0; // No postprocess needed - each iteration ends with solve
+
+    // Compute pixel-based RMSE for validation (if configured and data available)
+    if (config_.compute_pixel_rmse && bathy_data_ && smoother_) {
+        PixelErrorEstimator<CGCubicBezierBathymetrySmoother> pixel_est(
+            *smoother_, *bathy_data_, *quadtree_);
+        result.pixel_rmse = pixel_est.global_rmse();
+        result.max_pixel_rmse = pixel_est.max_element_rmse();
+        result.total_pixels = pixel_est.total_pixel_count();
+        result.undersampled_elements = pixel_est.count_undersampled_elements(4);
+
+        if (config_.verbose) {
+            std::cout << "\nPixel-based validation:\n";
+            std::cout << "  Global RMSE: " << result.pixel_rmse << " m\n";
+            std::cout << "  Max element RMSE: " << result.max_pixel_rmse << " m\n";
+            std::cout << "  Total pixels: " << result.total_pixels << "\n";
+            std::cout << "  Min recommended element size: "
+                      << pixel_est.min_recommended_element_size() << " m\n";
+            if (result.undersampled_elements > 0) {
+                std::cout << "  Undersampled elements (<4 pixels): "
+                          << result.undersampled_elements << "\n";
+            }
+        }
+    }
 
     // Print profiling report if verbose
     if (config_.verbose) {

@@ -68,7 +68,10 @@ class CGCubicBezierDofManager : public CGBezierDofManagerBase {
 public:
     /// @brief Construct DOF manager
     /// @param mesh 2D quadtree mesh
-    explicit CGCubicBezierDofManager(const QuadtreeAdapter &mesh);
+    /// @param use_hierarchical_ordering If true, use hierarchical level-based
+    ///        ordering with Hilbert curve. If false (default), use Morton Z-curve.
+    explicit CGCubicBezierDofManager(const QuadtreeAdapter &mesh,
+                                     bool use_hierarchical_ordering = false);
 
     // =========================================================================
     // Base class overrides

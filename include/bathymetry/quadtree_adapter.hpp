@@ -135,6 +135,12 @@ struct QuadtreeNode {
     int num_children() const { return static_cast<int>(children.size()); }
 };
 
+/// @brief Result of a refinement operation
+struct RefinementResult {
+    Index num_refined;                ///< Number of elements actually refined
+    std::vector<Index> new_elements;  ///< Indices of newly created leaf elements
+};
+
 /// @brief 2D quadtree adapter synced to OctreeAdapter bottom face
 ///
 /// Creates a 2D mesh that mirrors the XY structure of the 3D octree.
@@ -289,6 +295,35 @@ public:
         }
     }
 
+    // =========================================================================
+    // Refinement
+    // =========================================================================
+
+    /// @brief Refine selected elements
+    ///
+    /// Refines the specified leaf elements by splitting each into 4 children.
+    /// After refinement, the tree is balanced to maintain the 2:1 constraint
+    /// and all lookup structures are rebuilt.
+    ///
+    /// @param elements_to_refine Indices of leaf elements to refine
+    /// @return Refinement result with count and new element indices
+    RefinementResult refine(const std::vector<Index> &elements_to_refine);
+
+    /// @brief Refine all elements matching a predicate
+    ///
+    /// @param predicate Function returning true for elements to refine
+    /// @return Number of elements refined
+    template <typename Predicate>
+    Index refine_where(Predicate &&predicate) {
+        std::vector<Index> to_refine;
+        for (Index i = 0; i < num_elements(); ++i) {
+            if (predicate(i, *leaves_[i])) {
+                to_refine.push_back(i);
+            }
+        }
+        return refine(to_refine).num_refined;
+    }
+
 private:
     /// Domain bounds
     QuadBounds domain_;
@@ -308,9 +343,17 @@ private:
     /// Cached edge neighbors for O(1) lookup (computed in build_lookup)
     std::vector<std::array<EdgeNeighborInfo, 4>> cached_neighbors_;
 
-    /// PIMPL for Boost-dependent members (R-tree spatial index)
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    /// Morton codes at max depth for each leaf (parallel to leaves_, sorted)
+    std::vector<uint64_t> leaf_morton_codes_;
+
+    /// Cached max depth for Morton calculations
+    int cached_max_depth_ = 0;
+
+    /// Flag indicating if leaves are already in Morton order (skip sort)
+    bool leaves_sorted_ = false;
+
+    /// Number of elements before current refinement (for tracking new elements)
+    Index pre_refinement_count_ = 0;
 
     /// Rebuild leaf list and lookup
     void rebuild_leaf_list();
@@ -321,11 +364,11 @@ private:
     /// Build spatial lookup
     void build_lookup();
 
-    /// Build R-tree spatial index for fast point location
-    void build_rtree();
-
     /// Precompute all edge neighbors using spatial edge index
     void precompute_neighbors();
+
+    /// Precompute neighbors using tree traversal (faster)
+    void precompute_neighbors_fast();
 
     /// Find neighbor along an edge
     QuadtreeNode* find_neighbor_at_edge(QuadtreeNode* node, int edge_id) const;
@@ -352,6 +395,17 @@ private:
     /// @brief Balance the quadtree for 2:1 constraint
     /// @details Ensures adjacent elements differ by at most 1 level per axis
     void balance();
+
+    /// @brief Balance a subtree recursively via tree traversal
+    /// @param node Current node to check
+    /// @param changed Output flag indicating if any refinement occurred
+    void balance_subtree(QuadtreeNode* node, bool& changed);
+
+    /// @brief Find neighbor of a node via tree traversal (no cached_neighbors_)
+    /// @param node Node to find neighbor for
+    /// @param edge_id Edge: 0=left, 1=right, 2=bottom, 3=top
+    /// @return Neighbor node or nullptr if boundary
+    QuadtreeNode* find_neighbor_via_tree(QuadtreeNode* node, int edge_id) const;
 
     /// @brief Refine a leaf node into 4 children
     /// @param node Leaf node to refine (must be a leaf)

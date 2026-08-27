@@ -13,6 +13,7 @@
 #include "bathymetry/cubic_bezier_basis_2d.hpp"
 #include "bathymetry/cubic_thin_plate_hessian.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
+#include "bathymetry/static_condensation.hpp"
 #include "core/types.hpp"
 #include "mesh/seabed_surface.hpp"
 #include <functional>
@@ -171,6 +172,22 @@ struct CGCubicBezierSmootherConfig {
   /// Boundary relaxation zone configuration
   /// Reduces data fitting weight near domain boundaries to eliminate oscillations
   BoundaryRelaxationConfig boundary_relaxation;
+
+  // =========================================================================
+  // hp-Multiresolution Ordering (for iterative solver optimization)
+  // =========================================================================
+
+  /// Use hierarchical DOF ordering by refinement level + Hilbert curve
+  /// Orders DOFs by: (level, is_constrained, type, hilbert_key)
+  /// This improves cache locality and aligns with multigrid levels
+  bool use_hierarchical_ordering = false;
+
+  /// Use static condensation to eliminate interior (bubble) DOFs
+  /// Reduces global DOF count by ~25% (4/16 interior DOFs per element)
+  /// Note: Currently only supported for single-element meshes. For multi-element
+  /// meshes, static condensation is automatically disabled because the C¹ edge
+  /// constraints couple interior DOFs across elements in a complex way.
+  bool use_static_condensation = false;
 };
 
 /// @brief CG cubic Bezier bathymetry smoother with C¹ continuity
@@ -250,6 +267,33 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
   /// @return Reference to the CubicBezierBasis2D
   const BezierBasis2DBase &get_basis() const { return *basis_; }
 
+  // =========================================================================
+  // Matrix accessors (for diagnostics / visualization)
+  // =========================================================================
+
+  /// @brief Get the thin plate hessian matrix H
+  const SpMat &H_global() const { return H_global_; }
+
+  /// @brief Get the data fitting matrix B^T W B
+  const SpMat &BtWB_global() const { return BtWB_global_; }
+
+  /// @brief Get the combined system matrix Q = alpha*H + lambda*(BtWB + eps*I)
+  SpMat Q_global() const { return assemble_Q(); }
+
+  /// @brief Condensed system after hanging node elimination
+  struct CondensedSystem {
+    SpMat Q_reduced; ///< Condensed stiffness matrix (num_free × num_free)
+    VecX b_reduced;  ///< Condensed RHS vector (num_free)
+    SpMat A_edge;    ///< Edge constraints on free DOFs (num_edge × num_free)
+    VecX b_constraint; ///< Constraint RHS vector (num_edge), typically zeros unless using static condensation
+    Index num_dofs;  ///< Total global DOFs
+    Index num_free;  ///< Free DOFs after hanging node elimination
+    Index num_edge;  ///< Number of edge derivative constraints
+  };
+
+  /// @brief Build condensed system exposing Q_reduced and A_edge on free DOFs
+  CondensedSystem condensed_system() { return build_condensed_system(); }
+
   protected:
   // =========================================================================
   // CGBezierSmootherBase virtual method implementations
@@ -278,6 +322,13 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
     /// Internal element matrix cache for multigrid (when use_multigrid=true)
   std::map<std::tuple<uint64_t, int, int>, MatX> internal_element_cache_;
 
+  /// Per-element static condensation managers (when use_static_condensation=true)
+  std::vector<StaticCondensationManager> element_condensation_;
+
+  /// Per-element RHS vectors for static condensation (when use_static_condensation=true)
+  /// Stores b_elem = lambda * B^T W d for each element
+  std::vector<VecX> element_rhs_;
+
   void init_components();
   void solve_with_constraints();
   void solve_with_constraints_direct();    // SparseLU-based direct solver
@@ -287,16 +338,6 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
   // =========================================================================
   // Shared helpers for constrained solve
   // =========================================================================
-
-  /// @brief Condensed system after hanging node elimination
-  struct CondensedSystem {
-    SpMat Q_reduced; ///< Condensed stiffness matrix (num_free × num_free)
-    VecX b_reduced;  ///< Condensed RHS vector (num_free)
-    SpMat A_edge;    ///< Edge constraints on free DOFs (num_edge × num_free)
-    Index num_dofs;  ///< Total global DOFs
-    Index num_free;  ///< Free DOFs after hanging node elimination
-    Index num_edge;  ///< Number of edge derivative constraints
-  };
 
   /// @brief Build condensed system by eliminating hanging node constraints
   CondensedSystem build_condensed_system();
@@ -343,6 +384,55 @@ class CGCubicBezierBathymetrySmoother : public CGBezierSmootherBase {
   /// pairs
   /// @return Sparse matrix A of size (num_gradient_constraints × num_free_dofs)
   SpMat assemble_A_gradient_free(const std::function<std::vector<std::pair<Index, Real>>(Index)> &expand_dof) const;
+
+  // =========================================================================
+  // Static condensation helpers (when use_static_condensation=true)
+  // =========================================================================
+
+  /// @brief Assemble Q matrix with static condensation of interior DOFs
+  ///
+  /// For each element:
+  /// 1. Compute full 16×16 Q_elem = alpha*H + lambda*(B^T W B + eps*I)
+  /// 2. Apply static condensation: S = Q_SS - Q_SI * Q_II^{-1} * Q_IS
+  /// 3. Assemble only skeleton DOF contributions (12×12 per element)
+  /// 4. Interior DOFs get diagonal 1.0 as placeholder
+  ///
+  /// @return Sparse Q matrix with Schur complement structure
+  SpMat assemble_Q_condensed();
+
+  /// @brief Assemble b vector with static condensation of interior DOFs
+  ///
+  /// For each element:
+  /// 1. Compute full 16×1 b_elem = lambda * B^T W d
+  /// 2. Apply condensation: b_S_condensed = b_S - Q_SI * Q_II^{-1} * b_I
+  /// 3. Assemble only skeleton DOF contributions
+  /// 4. Interior DOFs get 0.0 as placeholder
+  ///
+  /// @return Condensed b vector
+  VecX assemble_b_condensed();
+
+  /// @brief Recover interior DOFs after solving skeleton system
+  ///
+  /// For each element, computes:
+  ///   x_I = K_II^{-1} * (f_I - K_IS * x_S)
+  ///
+  /// @param x_skeleton Global solution vector (interior values will be overwritten)
+  void recover_interior_dofs(VecX &x_skeleton);
+
+  /// @brief Transform edge constraints to only reference skeleton DOFs
+  ///
+  /// For constraints A * x = b where x = [x_S; x_I], substitutes the relationship
+  /// x_I = -recovery * x_S + K_II^{-1} * f_I to get:
+  ///   (A_S - A_I * recovery) * x_S = b - A_I * K_II^{-1} * f_I
+  ///
+  /// @param A_edge Original edge constraint matrix on free DOFs
+  /// @param b_edge Original constraint RHS (typically zeros for derivative matching)
+  /// @param expand_dof Function mapping global DOF to (free_index, weight) pairs
+  /// @return Pair of (transformed matrix, transformed RHS)
+  std::pair<SpMat, VecX> transform_edge_constraints_for_condensation(
+      const SpMat &A_edge,
+      const VecX &b_edge,
+      const std::function<std::vector<std::pair<Index, Real>>(Index)> &expand_dof) const;
 };
 
 } // namespace drifter

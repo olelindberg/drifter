@@ -28,7 +28,11 @@ set(UNIT_TESTS
     unit/test_bezier_multigrid.cpp
     unit/test_area_of_interest.cpp
     unit/test_schur_preconditioner.cpp
-    unit/test_iterative_methods.cpp)
+    unit/test_iterative_methods.cpp
+    unit/test_hierarchical_ordering.cpp
+    unit/test_linear_mesh.cpp
+    unit/test_pixel_error_estimator.cpp
+    unit/test_pixel_max_error_estimator.cpp)
 
 # Integration tests
 set(INTEGRATION_TESTS
@@ -51,7 +55,12 @@ set(INTEGRATION_TESTS
 set(BENCHMARK_TESTS
     benchmarks/test_solver_scaling.cpp
     benchmarks/test_adaptive_solver_scaling.cpp
-    benchmarks/test_convergence_comparison.cpp)
+    benchmarks/test_convergence_comparison.cpp
+    benchmarks/test_hierarchical_ordering_performance.cpp)
+
+# Tool tests (matrix visualization, developer diagnostics)
+set(TOOL_TESTS
+    tools/test_matrix_sparsity.cpp)
 
 # Create unit test executable
 add_executable(drifter_unit_tests ${UNIT_TESTS})
@@ -80,3 +89,12 @@ gtest_discover_tests(drifter_unit_tests PROPERTIES LABELS "unit")
 gtest_discover_tests(drifter_integration_tests PROPERTIES LABELS "integration")
 
 gtest_discover_tests(drifter_benchmarks PROPERTIES LABELS "benchmark")
+
+# Create tool test executable
+add_executable(drifter_tools ${TOOL_TESTS})
+
+target_link_libraries(drifter_tools PRIVATE drifter_lib GTest::gtest GTest::gtest_main)
+
+target_include_directories(drifter_tools PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+gtest_discover_tests(drifter_tools PROPERTIES LABELS "tool")

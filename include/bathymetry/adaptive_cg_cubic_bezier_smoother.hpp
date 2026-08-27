@@ -122,6 +122,11 @@ struct AdaptiveCGCubicBezierConfig {
   // Error estimation
   int ngauss_error = 4; ///< Gauss points per direction for error integration
 
+  // Pixel-based error options
+  bool compute_pixel_rmse = true;  ///< Compute pixel RMSE after solve (validation)
+  bool enforce_pixel_limit = true; ///< Stop refining at GeoTIFF pixel resolution
+  Real min_element_size = 0.0;     ///< Minimum element size (0 = auto from GeoTIFF)
+
   // Smoother configuration (passed to CGCubicBezierBathymetrySmoother)
   CGCubicBezierSmootherConfig smoother_config;
 
@@ -141,12 +146,18 @@ struct AdaptiveCGCubicBezierConfig {
 struct CGCubicAdaptationResult {
   int iteration;          ///< Iteration number (0-indexed)
   Index num_elements;     ///< Number of elements after this iteration
-  Real max_error;         ///< Maximum normalized error across all elements
-  Real mean_error;        ///< Mean normalized error across all elements
+  Real max_error;         ///< Maximum Gauss quadrature error across all elements
+  Real mean_error;        ///< Mean Gauss quadrature error across all elements
   Index elements_refined; ///< Number of elements refined in this iteration
   bool converged;         ///< True if stopping criteria met
   ConvergenceReason convergence_reason =
       ConvergenceReason::NotConverged; ///< Why convergence occurred
+
+  // Pixel-based validation metrics (populated when compute_pixel_rmse=true)
+  Real pixel_rmse = 0.0;            ///< Global pixel-based RMSE (meters)
+  Real max_pixel_rmse = 0.0;        ///< Maximum per-element pixel RMSE (meters)
+  Index total_pixels = 0;           ///< Total pixels evaluated
+  Index undersampled_elements = 0;  ///< Elements with < 4 pixels
 };
 
 /// @brief Adaptive CG cubic Bezier bathymetry smoother with error-driven

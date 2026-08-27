@@ -39,7 +39,7 @@
   "smoother": {
     "lambda": 10.0,
     "edge_ngauss": 4,
-    "tolerance": 1e-6,
+    "tolerance": 1e-4,
     "use_iterative_solver": true,
     "use_multigrid": true,
     "schur_preconditioner": "BlockDiagApproxCG",

@@ -9,12 +9,60 @@
 
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
+#include "mesh/hilbert.hpp"
+#include "mesh/morton.hpp"
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <set>
 #include <vector>
 
 namespace drifter {
+
+// =============================================================================
+// Hierarchical DOF Ordering Types
+// =============================================================================
+
+/// @brief DOF classification for hierarchical ordering
+enum class DOFType : uint8_t {
+    Vertex = 0,   ///< Corner DOF (shared by up to 4 elements)
+    Edge = 1,     ///< Edge DOF (shared by up to 2 elements)
+    Interior = 2  ///< Interior/bubble DOF (element-local, can be condensed)
+};
+
+/// @brief Metadata for a global DOF used in hierarchical ordering
+struct DOFMetadata {
+    DOFType type = DOFType::Interior;  ///< Vertex, Edge, or Interior
+    int level = 0;                     ///< Refinement level (min of adjacent elements)
+    uint64_t hilbert_key = 0;          ///< Hilbert curve key for spatial ordering
+    bool is_constrained = false;       ///< True if this is a hanging node slave DOF
+};
+
+/// @brief Result of hierarchical DOF reordering
+///
+/// Contains permutation vectors and level block information for hp-multiresolution
+/// ordering. DOFs are ordered by: (level, is_constrained, type, hilbert_key)
+struct HierarchicalOrdering {
+    /// Permutation from old DOF indices to new: new_idx = permutation[old_idx]
+    std::vector<Index> permutation;
+
+    /// Inverse permutation: old_idx = inverse[new_idx]
+    std::vector<Index> inverse;
+
+    /// Metadata for each DOF in NEW ordering
+    std::vector<DOFMetadata> metadata;
+
+    /// Level blocks: maps level -> (start_dof, end_dof) in NEW ordering
+    /// DOFs in range [start, end) belong to this refinement level
+    std::map<int, std::pair<Index, Index>> level_blocks;
+
+    /// Number of skeleton (non-interior) DOFs
+    /// With static condensation, only these DOFs are in the global system
+    Index num_skeleton_dofs = 0;
+
+    /// Check if ordering has been computed
+    bool is_valid() const { return !permutation.empty(); }
+};
 
 /// @brief Abstract base class for CG Bezier DOF managers
 ///
@@ -109,6 +157,20 @@ public:
     /// @brief Get underlying quadtree mesh
     const QuadtreeAdapter &mesh() const { return mesh_; }
 
+    // =========================================================================
+    // Hierarchical ordering - for hp-multiresolution optimization
+    // =========================================================================
+
+    /// @brief Get hierarchical ordering (valid after reorder_dofs_hierarchical called)
+    const HierarchicalOrdering &hierarchical_ordering() const { return hierarchical_ordering_; }
+
+    /// @brief Check if hierarchical ordering is active
+    bool has_hierarchical_ordering() const { return hierarchical_ordering_.is_valid(); }
+
+    /// @brief Number of skeleton (non-interior) DOFs
+    /// Only valid after hierarchical ordering is computed
+    Index num_skeleton_dofs() const { return hierarchical_ordering_.num_skeleton_dofs; }
+
 protected:
     // =========================================================================
     // Constructor - protected, only derived classes can construct
@@ -136,6 +198,9 @@ protected:
 
     /// Position to DOF map for CG DOF sharing
     std::map<std::pair<int64_t, int64_t>, Index> position_to_dof_;
+
+    /// Physical position of each global DOF (populated during assignment)
+    std::vector<Vec2> dof_positions_;
 
     // =========================================================================
     // Pure virtual methods - must be implemented by derived classes
@@ -176,6 +241,37 @@ protected:
     /// @param num_elements Number of elements
     /// @param ndof Number of DOFs per element
     void initialize_elem_to_global(Index num_elements, int ndof);
+
+    /// @brief Store position for a DOF index
+    /// @param dof Global DOF index
+    /// @param pos Physical position
+    void register_dof_position(Index dof, const Vec2 &pos);
+
+    /// @brief Reorder global DOFs by Morton Z-curve of their physical positions
+    /// @return Permutation vector: perm[old_index] = new_index
+    /// Call after all DOFs are assigned but before build_dof_mappings().
+    /// Derived classes must apply the returned permutation to their own
+    /// constraint data structures (hanging node constraints etc.).
+    std::vector<Index> reorder_dofs_by_morton();
+
+    /// @brief Reorder global DOFs hierarchically by level and Hilbert curve
+    /// @param classify_dof Function that returns DOFType for a local DOF index
+    /// @return Permutation vector: perm[old_index] = new_index
+    ///
+    /// Orders DOFs by: (level, is_constrained, type, hilbert_key)
+    /// - level: refinement level (min of adjacent elements, coarse first)
+    /// - is_constrained: free DOFs before constrained (hanging nodes)
+    /// - type: Vertex < Edge < Interior
+    /// - hilbert_key: Hilbert curve index for spatial locality
+    ///
+    /// Call after all DOFs are assigned but before build_dof_mappings().
+    /// Derived classes must apply the returned permutation to their own
+    /// constraint data structures.
+    std::vector<Index> reorder_dofs_hierarchical(
+        const std::function<DOFType(int)> &classify_dof);
+
+    /// @brief Stored hierarchical ordering result
+    HierarchicalOrdering hierarchical_ordering_;
 };
 
 } // namespace drifter

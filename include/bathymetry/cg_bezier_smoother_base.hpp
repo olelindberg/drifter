@@ -266,9 +266,14 @@ protected:
     /// @return Element index (always valid for points near the domain)
     Index find_element_with_fallback(Real x, Real y) const;
 
-    /// @brief Evaluate in a specific element
+public:
+    /// @brief Evaluate in a specific element (skips element lookup)
+    /// @param elem Element index
+    /// @param x, y World coordinates within element
+    /// @return Surface value at (x, y)
     Real evaluate_in_element(Index elem, Real x, Real y) const;
 
+protected:
     /// @brief Evaluate gradient in a specific element
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
 

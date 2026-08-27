@@ -8,7 +8,8 @@ namespace drifter {
 
 static constexpr Real POSITION_SCALE = 1e8;
 
-CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
+CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh,
+                                                   bool use_hierarchical_ordering)
     : CGBezierDofManagerBase(mesh) {
 
     Index num_elements = mesh_.num_elements();
@@ -26,6 +27,32 @@ CGCubicBezierDofManager::CGCubicBezierDofManager(const QuadtreeAdapter &mesh)
     assign_edge_dofs_nonconforming();
     identify_boundary_dofs_impl([this](int edge) { return basis_.edge_dofs(edge); });
     build_hanging_node_constraints();
+
+    // Reorder DOFs for better spatial locality
+    std::vector<Index> perm;
+    if (use_hierarchical_ordering) {
+        // Hierarchical ordering: (level, is_constrained, type, hilbert_key)
+        // Better for iterative solvers with multigrid
+        perm = reorder_dofs_hierarchical([this](int local_dof) -> DOFType {
+            if (is_corner_dof(local_dof)) return DOFType::Vertex;
+            if (is_edge_dof(local_dof)) return DOFType::Edge;
+            return DOFType::Interior;
+        });
+    } else {
+        // Morton Z-curve ordering (default)
+        perm = reorder_dofs_by_morton();
+    }
+
+    // Apply permutation to constraints
+    if (!perm.empty()) {
+        for (auto &c : constraints_) {
+            c.slave_dof = perm[c.slave_dof];
+            for (auto &m : c.master_dofs) {
+                m = perm[m];
+            }
+        }
+    }
+
     build_dof_mappings();
 }
 
@@ -130,7 +157,9 @@ void CGCubicBezierDofManager::assign_interior_dofs() {
     for (Index e = 0; e < mesh_.num_elements(); ++e) {
         for (int local_dof = 0; local_dof < CubicBezierBasis2D::NDOF; ++local_dof) {
             if (elem_to_global_[e][local_dof] < 0) {
-                elem_to_global_[e][local_dof] = num_global_dofs_++;
+                Index dof = num_global_dofs_++;
+                elem_to_global_[e][local_dof] = dof;
+                register_dof_position(dof, get_dof_position(e, local_dof));
             }
         }
     }
@@ -194,7 +223,9 @@ void CGCubicBezierDofManager::assign_edge_dofs_nonconforming() {
                     // T-junction: keep position-based sharing
                 } else {
                     if (coarse_interior_dofs.count(current_global) > 0) {
-                        elem_to_global_[elem][fine_local] = num_global_dofs_++;
+                        Index new_dof = num_global_dofs_++;
+                        elem_to_global_[elem][fine_local] = new_dof;
+                        register_dof_position(new_dof, get_dof_position(elem, fine_local));
                     }
                 }
             }

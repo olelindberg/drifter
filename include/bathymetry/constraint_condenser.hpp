@@ -17,14 +17,23 @@ namespace drifter {
 /// @brief Assemble KKT system [[Q, A^T], [A, -εI]]
 ///
 /// Builds the saddle-point system for constrained optimization:
-/// [[Q,   A^T ]   [x]     [b]
-///  [A,  -εI ]] * [λ]  =  [0]
+/// [[Q,   A^T ]   [x]     [b      ]
+///  [A,  -εI ]] * [λ]  =  [b_const]
 ///
 /// @param Q System matrix (n × n)
 /// @param A Constraint matrix (m × n)
 /// @param b RHS vector (n)
+/// @param b_constraint Constraint RHS vector (m), typically zeros for homogeneous constraints
 /// @param constraint_reg Small regularization for constraint block (default 1e-10)
 /// @return Pair of (KKT matrix, rhs vector)
+std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
+                                    const VecX &b_constraint,
+                                    Real constraint_reg = 1e-10);
+
+/// @brief Assemble KKT system with zero constraint RHS (homogeneous constraints)
+///
+/// Convenience overload for A * x = 0 constraints (most common case).
+/// @see assemble_kkt(const SpMat&, const SpMat&, const VecX&, const VecX&, Real)
 std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
                                     Real constraint_reg = 1e-10);
 

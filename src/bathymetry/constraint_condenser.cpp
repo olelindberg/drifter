@@ -3,6 +3,7 @@
 namespace drifter {
 
 std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
+                                    const VecX &b_constraint,
                                     Real constraint_reg) {
     Index num_primal = Q.rows();
     Index num_constraints = A.rows();
@@ -36,9 +37,18 @@ std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &
 
     VecX rhs(kkt_size);
     rhs.head(num_primal) = b;
-    rhs.tail(num_constraints).setZero();
+    if (b_constraint.size() == num_constraints) {
+        rhs.tail(num_constraints) = b_constraint;
+    } else {
+        rhs.tail(num_constraints).setZero();
+    }
 
     return {std::move(KKT), std::move(rhs)};
+}
+
+std::pair<SpMat, VecX> assemble_kkt(const SpMat &Q, const SpMat &A, const VecX &b,
+                                    Real constraint_reg) {
+    return assemble_kkt(Q, A, b, VecX(), constraint_reg);
 }
 
 void condense_matrix_and_rhs(

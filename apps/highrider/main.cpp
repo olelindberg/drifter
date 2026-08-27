@@ -7,7 +7,7 @@ using namespace drifter;
 
 int main(int argc, char *argv[]) {
   std::cout << "====================================\n";
-  std::cout << "  DRIFTER - Coastal Ocean Model\n";
+  std::cout << "  HIGHRIDER - Coastal Ocean Model\n";
   std::cout << "  Adaptive Bathymetry Smoother\n";
   std::cout << "====================================\n\n";
 
@@ -15,7 +15,7 @@ int main(int argc, char *argv[]) {
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <config.json>\n";
     std::cerr << "\nExample:\n";
-    std::cerr << "  " << argv[0] << " config/example.json\n";
+    std::cerr << "  " << argv[0] << " config/highrider_example.json\n";
     return 1;
   }
 
