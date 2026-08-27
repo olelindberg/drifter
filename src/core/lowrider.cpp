@@ -1,9 +1,9 @@
 #include "core/lowrider.hpp"
 #include "bathymetry/linear_mesh_generator.hpp"
+#include "core/logger.hpp"
 #include <chrono>
 #include <cmath>
 #include <filesystem>
-#include <iostream>
 
 namespace drifter {
 
@@ -14,7 +14,7 @@ bool Lowrider::data_files_exist() const {
     if (!config_.data.primary_file.empty()) {
         std::string primary_path = config_.data.data_dir + config_.data.primary_file;
         if (!std::filesystem::exists(primary_path)) {
-            std::cerr << "Primary bathymetry file not found: " << primary_path << std::endl;
+            LOG_ERROR("Primary bathymetry file not found: " << primary_path);
             return false;
         }
 
@@ -22,7 +22,7 @@ bool Lowrider::data_files_exist() const {
         for (const auto& tile : config_.data.tile_files) {
             std::string tile_path = config_.data.data_dir + tile;
             if (!std::filesystem::exists(tile_path)) {
-                std::cerr << "Tile file not found: " << tile_path << std::endl;
+                LOG_ERROR("Tile file not found: " << tile_path);
                 return false;
             }
         }
@@ -31,7 +31,7 @@ bool Lowrider::data_files_exist() const {
     // Check coastline file if configured
     if (config_.coastline.enabled()) {
         if (!std::filesystem::exists(config_.coastline.file)) {
-            std::cerr << "Coastline file not found: " << config_.coastline.file << std::endl;
+            LOG_ERROR("Coastline file not found: " << config_.coastline.file);
             return false;
         }
     }
@@ -42,13 +42,13 @@ bool Lowrider::data_files_exist() const {
 int Lowrider::run() {
     // Check data files
     if (!data_files_exist()) {
-        std::cerr << "\nRequired data files not found. Exiting.\n";
+        LOG_ERROR("Required data files not found. Exiting.");
         return 1;
     }
 
-    std::cout << "\n=== Adaptive Linear Mesh Generation ===" << std::endl;
-    std::cout << "Domain: [" << config_.domain.xmin << ", " << config_.domain.xmax << "] x ["
-              << config_.domain.ymin << ", " << config_.domain.ymax << "]" << std::endl;
+    LOG_INFO("=== Adaptive Linear Mesh Generation ===");
+    LOG_INFO("Domain: [" << config_.domain.xmin << ", " << config_.domain.xmax << "] x [" << config_.domain.ymin
+                         << ", " << config_.domain.ymax << "]");
 
     // Create mesh generator
     LinearMeshGenerator generator(
@@ -72,14 +72,14 @@ int Lowrider::run() {
 
     // Stage 1: Coastline refinement (if configured)
     if (config_.coastline.enabled()) {
-        std::cout << "\nStage 1: Coastline refinement..." << std::endl;
+        LOG_INFO("Stage 1: Coastline refinement...");
         int coast_iters = generator.refine_coastline();
-        std::cout << "  Coastline refinement: " << coast_iters << " iterations, "
-                  << generator.mesh().num_elements() << " elements" << std::endl;
+        LOG_INFO("Coastline refinement: " << coast_iters << " iterations, " << generator.mesh().num_elements()
+                                          << " elements");
     }
 
     // Stage 2: Error-driven seabed refinement
-    std::cout << "\nStage 2: Seabed refinement..." << std::endl;
+    LOG_INFO("Stage 2: Seabed refinement...");
     auto result = generator.solve_adaptive();
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -87,16 +87,16 @@ int Lowrider::run() {
     double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
     // Print results
-    std::cout << "\nFinal result:" << std::endl;
-    std::cout << "  Elements: " << result.num_elements << std::endl;
-    std::cout << "  Max error: " << result.max_error << " m" << std::endl;
-    std::cout << "  Mean error: " << result.mean_error << " m" << std::endl;
-    std::cout << "  Iterations: " << result.iterations << std::endl;
-    std::cout << "  Converged: " << (result.converged ? "yes" : "no") << std::endl;
+    LOG_INFO("Final result:");
+    LOG_INFO("  Elements: " << result.num_elements);
+    LOG_INFO("  Max error: " << result.max_error << " m");
+    LOG_INFO("  Mean error: " << result.mean_error << " m");
+    LOG_INFO("  Iterations: " << result.iterations);
+    LOG_INFO("  Converged: " << (result.converged ? "yes" : "no"));
     if (!result.convergence_reason.empty()) {
-        std::cout << "  Reason: " << result.convergence_reason << std::endl;
+        LOG_INFO("  Reason: " << result.convergence_reason);
     }
-    std::cout << "  Time: " << time_ms << " ms" << std::endl;
+    LOG_INFO("  Time: " << time_ms << " ms");
 
     // Compute refinement statistics
     int max_level = 0;
@@ -107,18 +107,18 @@ int Lowrider::run() {
                                  config_.domain.ymax - config_.domain.ymin);
     Real element_size_min = domain_size / std::pow(2.0, max_level);
 
-    std::cout << "Number of levels         : " << max_level << std::endl;
-    std::cout << "Size of smallest element : " << element_size_min << std::endl;
+    LOG_INFO("Number of levels         : " << max_level);
+    LOG_INFO("Size of smallest element : " << element_size_min);
 
     // Write VTK output
     generator.write_vtk(config_.output.vtk_file, config_.output.vtk_writer_type);
-    std::cout << "Output written to        : " << config_.output.vtk_file << ".vtu" << std::endl;
+    LOG_INFO("Output written to        : " << config_.output.vtk_file << ".vtu");
 
     // Write VTK with per-element error and depth for visualization
     std::string error_vtk_file = config_.output.vtk_file + "_errors";
     generator.write_vtk_with_errors(error_vtk_file);
 
-    std::cout << "\nMesh generation complete.\n";
+    LOG_INFO("Mesh generation complete.");
     return 0;
 }
 

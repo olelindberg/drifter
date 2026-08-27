@@ -1,8 +1,9 @@
 #include "core/lowrider_config_reader.hpp"
+#include "core/logger.hpp"
+#define BOOST_BIND_GLOBAL_PLACEHOLDERS
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <fstream>
-#include <iostream>
 #include <stdexcept>
 
 namespace drifter {
@@ -109,48 +110,45 @@ LowriderConfig LowriderConfigReader::load(const std::string &path) {
 }
 
 void print_lowrider_config(const LowriderConfig &config) {
-  std::cout << "\nConfiguration:\n";
+    LOG_INFO("Configuration:");
 
     // Data sources
-  if (!config.data.primary_file.empty()) {
-    std::cout << "  Data directory: " << config.data.data_dir << "\n";
-    std::cout << "  Primary file: " << config.data.primary_file << "\n";
-    std::cout << "  Tile files: " << config.data.tile_files.size() << " tiles\n";
-  } else {
-    std::cout << "  Data: (none)\n";
-  }
-
-  std::cout << "  Domain: [" << config.domain.xmin << ", " << config.domain.xmax << "] x [" << config.domain.ymin << ", " << config.domain.ymax << "]\n";
-  std::cout << "  Initial mesh: " << config.domain.initial_nx << " x " << config.domain.initial_ny << "\n";
-  std::cout << "  Error threshold: " << config.refinement.error_threshold << " m\n";
-  std::cout << "  Max iterations: " << config.refinement.max_iterations << "\n";
-  std::cout << "  Max elements: " << config.refinement.max_elements << "\n";
-  std::cout << "  Max level: " << config.refinement.max_level << "\n";
-  std::cout << "  Dorfler theta: " << config.refinement.dorfler_theta << "\n";
-  std::cout << "  Output: " << config.output.vtk_file << "\n";
-  std::cout << "  VTK writer type: "
-            << (config.output.vtk_writer_type == VTKWriterType::Water ? "water" : "all")
-            << "\n";
-
-  // Coastline configuration
-  if (config.coastline.enabled()) {
-    std::cout << "  Coastline file: " << config.coastline.file << "\n";
-    if (!config.coastline.layer.empty()) {
-      std::cout << "  Coastline layer: " << config.coastline.layer << "\n";
+    if (!config.data.primary_file.empty()) {
+        LOG_INFO("  Data directory: " << config.data.data_dir);
+        LOG_INFO("  Primary file: " << config.data.primary_file);
+        LOG_INFO("  Tile files: " << config.data.tile_files.size() << " tiles");
+    } else {
+        LOG_INFO("  Data: (none)");
     }
-    if (!config.coastline.srs.empty()) {
-      std::cout << "  Coastline SRS: " << config.coastline.srs << "\n";
-    }
-    std::cout << "  Coastline max level: " << config.coastline.max_level << "\n";
-    std::cout << "  Coastline min curvature radius: " << config.coastline.min_curvature_radius << " m\n";
-    if (config.coastline.min_polygon_area > 0.0) {
-      std::cout << "  Coastline min polygon area: " << config.coastline.min_polygon_area << "\n";
-    }
-  } else {
-    std::cout << "  Coastline: (disabled)\n";
-  }
 
-  std::cout << std::endl;
+    LOG_INFO("  Domain: [" << config.domain.xmin << ", " << config.domain.xmax << "] x [" << config.domain.ymin << ", "
+                           << config.domain.ymax << "]");
+    LOG_INFO("  Initial mesh: " << config.domain.initial_nx << " x " << config.domain.initial_ny);
+    LOG_INFO("  Error threshold: " << config.refinement.error_threshold << " m");
+    LOG_INFO("  Max iterations: " << config.refinement.max_iterations);
+    LOG_INFO("  Max elements: " << config.refinement.max_elements);
+    LOG_INFO("  Max level: " << config.refinement.max_level);
+    LOG_INFO("  Dorfler theta: " << config.refinement.dorfler_theta);
+    LOG_INFO("  Output: " << config.output.vtk_file);
+    LOG_INFO("  VTK writer type: " << (config.output.vtk_writer_type == VTKWriterType::Water ? "water" : "all"));
+
+    // Coastline configuration
+    if (config.coastline.enabled()) {
+        LOG_INFO("  Coastline file: " << config.coastline.file);
+        if (!config.coastline.layer.empty()) {
+            LOG_INFO("  Coastline layer: " << config.coastline.layer);
+        }
+        if (!config.coastline.srs.empty()) {
+            LOG_INFO("  Coastline SRS: " << config.coastline.srs);
+        }
+        LOG_INFO("  Coastline max level: " << config.coastline.max_level);
+        LOG_INFO("  Coastline min curvature radius: " << config.coastline.min_curvature_radius << " m");
+        if (config.coastline.min_polygon_area > 0.0) {
+            LOG_INFO("  Coastline min polygon area: " << config.coastline.min_polygon_area);
+        }
+    } else {
+        LOG_INFO("  Coastline: (disabled)");
+    }
 }
 
 } // namespace drifter

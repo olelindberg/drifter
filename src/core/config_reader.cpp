@@ -3,6 +3,7 @@
 
 #include "core/config_reader.hpp"
 #include "core/enum_strings.hpp"
+#define BOOST_BIND_GLOBAL_PLACEHOLDERS
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <cmath>
