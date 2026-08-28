@@ -34,13 +34,18 @@ template <typename Smoother, typename Config>
 int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_config,
                           const std::string &label, Real xmin, Real xmax, Real ymin, Real ymax,
                           const std::function<Real(Real, Real)> &depth_func,
-                          const std::function<bool(Real, Real)> &land_mask, int vtk_arg,
+                          const std::function<bool(Real, Real)> &land_mask,
+                          const std::function<bool(Real, Real)> &has_data_func,
+                          const std::function<bool(Real, Real)> &is_land_func, int vtk_arg,
                           const std::function<Real(Real, Real)> &resolution_func) {
   std::cout << "\n=== " << label << " ===" << std::endl;
   std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]" << std::endl;
 
   // Create smoother
   Smoother smoother(xmin, xmax, ymin, ymax, config.nx, config.ny, adaptive_config);
+  // Before the data: the assembly must know which quadrature points carry no
+  // observation, and the Hermite DOF manager needs the land region when it is built.
+  smoother.set_data_masks(has_data_func, is_land_func);
   smoother.set_bathymetry_data(depth_func);
   smoother.set_land_mask(land_mask);
 
@@ -150,6 +155,18 @@ int Drifter::run() {
     }
   };
 
+  // depth_func returns 0 for water at sea level, for land, and for NoData alike,
+  // so the smoother needs these two to tell them apart. A gap is dropped from the
+  // fit and spanned by the smoothness term; land is held at 0 by a Dirichlet
+  // condition. Pinning a gap instead would force the surface from the surrounding
+  // depth up to 0 across one element, which is what produced the spikes.
+  auto has_data_func = [&bathymetry](Real x, Real y) -> bool {
+    return bathymetry.has_data(x, y);
+  };
+  auto is_land_func = [&bathymetry](Real x, Real y) -> bool {
+    return bathymetry.is_land_point(x, y);
+  };
+
   // Compute domain bounds
   Real xmin = config_.center_x - config_.domain_size / 2;
   Real xmax = config_.center_x + config_.domain_size / 2;
@@ -180,7 +197,8 @@ int Drifter::run() {
   case BathySmootherKind::CubicBezier:
     status = run_adaptive_smoother<AdaptiveCGCubicBezierSmoother>(
         config_, config_.adaptive, "Adaptive CG Cubic Bezier Bathymetry Smoother", xmin, xmax, ymin,
-        ymax, depth_func, land_mask, config_.vtk_subdivision, resolution_func);
+        ymax, depth_func, land_mask, has_data_func, is_land_func, config_.vtk_subdivision,
+        resolution_func);
     break;
   case BathySmootherKind::HermiteC0:
   case BathySmootherKind::HermiteC1: {
@@ -191,7 +209,8 @@ int Drifter::run() {
     status                                 = run_adaptive_smoother<AdaptiveCGHermiteSmoother>(
         config_, hermite_config,
         "Adaptive CG " + to_string(config_.smoother_kind) + " Bathymetry Smoother", xmin, xmax,
-        ymin, ymax, depth_func, land_mask, config_.vtk_surface_degree, resolution_func);
+        ymin, ymax, depth_func, land_mask, has_data_func, is_land_func,
+        config_.vtk_surface_degree, resolution_func);
     break;
   }
   }

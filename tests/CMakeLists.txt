@@ -36,6 +36,7 @@ set(UNIT_TESTS
     unit/test_hermite_basis.cpp
     unit/test_hermite_energy.cpp
     unit/test_hermite_constraints.cpp
+    unit/test_nodata_masking.cpp
     unit/test_bathymetry_vtk_writer.cpp
     unit/test_raster_vtk_writer.cpp)
 

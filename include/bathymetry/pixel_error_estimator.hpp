@@ -160,7 +160,7 @@ PixelElementError PixelErrorEstimator<SurfaceType>::estimate_element(Index elem)
         for (int px = px_min; px <= px_max; ++px) {
             // Get pixel value (skip NoData)
             float z_pixel = data_.at_pixel(px, py);
-            if (std::abs(z_pixel - data_.nodata_value) < 1e-6f || z_pixel > 1e30f) {
+            if (is_nodata_value(z_pixel, data_.nodata_value)) {
                 continue;
             }
 
@@ -193,7 +193,8 @@ PixelElementError PixelErrorEstimator<SurfaceType>::estimate_element(Index elem)
 
             // Convert pixel value to surface convention
             // GeoTIFF: depth positive means values are depth (positive = water)
-            // Surface: stores elevation (negative = below sea level)
+            // Surface: stores elevation (negative = below sea level), which is what
+            // LinearBezierSurface::fit() writes (coefficients_ = -depth)
             Real z_data;
             if (data_.is_depth_positive) {
                 z_data = -static_cast<Real>(z_pixel);  // depth -> elevation

@@ -40,7 +40,7 @@ struct MultiSourceBathymetry::Impl {
 
     // Check if a value is nodata
     static bool is_nodata(float val, float nodata_value) {
-        return std::abs(val - nodata_value) < 1e-6f || val > 1e30f;
+        return is_nodata_value(val, nodata_value);
     }
 
     // Check if point is inside BathymetryData bounds
@@ -225,6 +225,51 @@ Real MultiSourceBathymetry::evaluate(Real x, Real y) const {
 bool MultiSourceBathymetry::is_land(Real x, Real y) const {
     Real depth = evaluate(x, y);
     return depth <= 0.0;
+}
+
+MultiSourceBathymetry::SampleKind MultiSourceBathymetry::classify(Real x, Real y) const {
+    // Mirrors evaluate()'s lookup order exactly, so the classification and the
+    // fitted value can never disagree, but keeps NoData separate from land instead
+    // of folding both into a depth of 0.
+    auto classify_sample = [](const BathymetryData &data, double qx, double qy) {
+        const float val = data.interpolate(qx, qy);
+        if (is_nodata_value(val, data.nodata_value)) {
+            return SampleKind::NoData;
+        }
+        return data.get_depth(qx, qy) > 0.0f ? SampleKind::Water : SampleKind::Land;
+    };
+
+    if (Impl::is_inside_bounds(impl_->primary, x, y)) {
+        return classify_sample(impl_->primary, x, y);
+    }
+
+    double lon = x, lat = y;
+    if (!impl_->to_4326->Transform(1, &lon, &lat)) {
+        return SampleKind::NoData;
+    }
+
+    for (auto &tile : impl_->tiles) {
+        if (!Impl::is_inside_bounds(tile.bounds, lon, lat)) {
+            continue;
+        }
+        if (!tile.data.has_value()) {
+            // evaluate() would load it here; classification must see the same data
+            tile.data = impl_->reader.load(tile.path);
+        }
+        if (tile.data->is_valid()) {
+            return classify_sample(*tile.data, lon, lat);
+        }
+    }
+
+    return SampleKind::NoData; // outside every source
+}
+
+bool MultiSourceBathymetry::has_data(Real x, Real y) const {
+    return classify(x, y) != SampleKind::NoData;
+}
+
+bool MultiSourceBathymetry::is_land_point(Real x, Real y) const {
+    return classify(x, y) == SampleKind::Land;
 }
 
 bool MultiSourceBathymetry::contains(Real x, Real y) const {

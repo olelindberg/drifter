@@ -110,8 +110,14 @@ void CGCubicBezierBathymetrySmoother::set_bathymetry_data_impl(std::function<Rea
         for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
           Real v = gauss_pts[qj];
 
-          Real x          = bounds.xmin + u * dx;
-          Real y          = bounds.ymin + v * dy;
+          Real x = bounds.xmin + u * dx;
+          Real y = bounds.ymin + v * dy;
+
+          // No observation here - see assemble_data_fitting_global()
+          if (is_excluded_from_fit(x, y)) {
+            continue;
+          }
+
           Real relaxation = compute_relaxation_factor(x, y);
           Real weight     = gauss_wts[qi] * gauss_wts[qj] * jacobian * relaxation;
 
@@ -997,8 +1003,15 @@ SpMat CGCubicBezierBathymetrySmoother::assemble_Q_condensed() {
         for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
           Real v = gauss_pts[qj];
 
-          Real x          = bounds.xmin + u * dx;
-          Real y          = bounds.ymin + v * dy;
+          Real x = bounds.xmin + u * dx;
+          Real y = bounds.ymin + v * dy;
+
+          // No observation here - see assemble_data_fitting_global().
+          // Must match the skip in the RHS assembly or Q and b disagree.
+          if (is_excluded_from_fit(x, y)) {
+            continue;
+          }
+
           Real relaxation = compute_relaxation_factor(x, y);
           Real weight     = gauss_wts[qi] * gauss_wts[qj] * jacobian * relaxation;
 

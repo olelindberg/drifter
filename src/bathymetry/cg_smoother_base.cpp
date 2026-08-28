@@ -63,6 +63,10 @@ void CGSmootherBase::gauss_legendre_01(int n, std::vector<Real> &pts, std::vecto
 // =============================================================================
 
 void CGSmootherBase::set_bathymetry_data(const BathymetrySource &source) {
+    // Adopt the source's masks before assembling, so gaps and land are kept out of
+    // the least-squares term instead of entering it as depth-0 observations.
+    set_data_masks([&source](Real x, Real y) { return source.has_data(x, y); },
+                   [&source](Real x, Real y) { return source.is_land_point(x, y); });
     set_bathymetry_data([&source](Real x, Real y) { return source.evaluate(x, y); });
 }
 
@@ -336,6 +340,7 @@ void CGSmootherBase::assemble_data_fitting_global(
 
     BtWd_global_.setZero(num_dofs);
     dTWd_global_ = 0.0;
+    num_excluded_quad_points_ = 0;
 
     for (Index elem = 0; elem < num_elements; ++elem) {
         const auto &bounds = quadtree_->element_bounds(elem);
@@ -359,6 +364,16 @@ void CGSmootherBase::assemble_data_fitting_global(
 
                 Real x = bounds.xmin + u * dx;
                 Real y = bounds.ymin + v * dy;
+
+                // No observation here. A gap contributes nothing and the surface
+                // is carried across it by the smoothness term; land is a known zero
+                // imposed strongly as a Dirichlet condition instead. Either way,
+                // feeding a depth of 0 into the least-squares term would make the
+                // smoothness term fight it and overshoot around it.
+                if (is_excluded_from_fit(x, y)) {
+                    ++num_excluded_quad_points_;
+                    continue;
+                }
 
                 // Apply boundary relaxation to reduce data fitting near boundaries
                 Real relaxation = compute_relaxation_factor(x, y);

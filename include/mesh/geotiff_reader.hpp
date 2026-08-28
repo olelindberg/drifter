@@ -13,6 +13,7 @@
 
 #include "core/types.hpp"
 #include "mesh/octree_adapter.hpp"
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
@@ -21,6 +22,31 @@
 #include <gdal_priv.h>
 
 namespace drifter {
+
+/// @brief Test whether a raster sample is NoData
+///
+/// Covers the three forms the project's rasters actually use:
+/// - NaN, which is the declared NoData of the 2024 Klimadatastyrelsen tiles. Both
+///   `val == nodata_value` and `std::abs(val - nodata_value) < tol` are *false* for
+///   NaN, so NaN must be tested explicitly or it slips through every comparison.
+/// - An exact (to float tolerance) match with the declared NoData value, e.g. the
+///   -9999 default.
+/// - A sentinel near FLT_MAX, e.g. the 3.4028235e+38 declared by
+///   ddm_50m.dybde-emodnet.tif.
+///
+/// A NaN sample is missing regardless of what the raster declares, so it is tested
+/// first. When the declared NoData is itself NaN the difference test below is
+/// meaningless (NaN never equals itself), and the NaN case above has already decided
+/// the answer, so it is skipped rather than allowed to match everything.
+inline bool is_nodata_value(float val, float nodata_value) {
+    if (std::isnan(val) || val > 1e30f) {
+        return true;
+    }
+    if (std::isnan(nodata_value)) {
+        return false;
+    }
+    return std::abs(val - nodata_value) < 1e-6f;
+}
 
 /// @brief Lightweight metadata for a GeoTIFF file (bounds only, no raster data)
 ///
@@ -128,9 +154,10 @@ struct BathymetryData {
         float e01 = at_pixel(x0, y1);
         float e11 = at_pixel(x1, y1);
 
-        // Handle NoData values
-        if (e00 == nodata_value || e10 == nodata_value || e01 == nodata_value ||
-            e11 == nodata_value) {
+        // Handle NoData values. Any missing corner makes the whole sample missing -
+        // a partial-weight blend would silently invent data at the hole edge.
+        if (is_nodata_value(e00, nodata_value) || is_nodata_value(e10, nodata_value) ||
+            is_nodata_value(e01, nodata_value) || is_nodata_value(e11, nodata_value)) {
             return nodata_value;
         }
 
@@ -142,11 +169,19 @@ struct BathymetryData {
                                   (1 - fx) * fy * e01 + fx * fy * e11);
     }
 
+    /// @brief Whether this raster has a valid (non-NoData) sample at a world coordinate
+    ///
+    /// Distinguishes a genuine gap in the raster from land, which get_depth() cannot -
+    /// it maps both to depth 0.
+    bool has_data(double wx, double wy) const {
+        return !is_nodata_value(interpolate(wx, wy), nodata_value);
+    }
+
     /// Check if a world coordinate is land or nodata
     bool is_land(double wx, double wy) const {
         float val = interpolate(wx, wy);
         // Check for NoData (using approximate comparison for float)
-        if (std::abs(val - nodata_value) < 1e-6f || val > 1e30f) {
+        if (is_nodata_value(val, nodata_value)) {
             return true; // NoData is treated as land
         }
         if (is_depth_positive) {
@@ -163,7 +198,7 @@ struct BathymetryData {
     float get_depth(double wx, double wy) const {
         float val = interpolate(wx, wy);
         // Check for NoData
-        if (std::abs(val - nodata_value) < 1e-6f || val > 1e30f) {
+        if (is_nodata_value(val, nodata_value)) {
             return 0.0f; // Land or invalid
         }
         if (is_depth_positive) {

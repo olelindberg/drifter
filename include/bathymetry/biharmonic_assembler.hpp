@@ -38,17 +38,50 @@ public:
 
     /// Evaluate depth at (x, y)
     virtual Real evaluate(Real x, Real y) const = 0;
+
+    /// @brief Whether a measurement exists at (x, y)
+    ///
+    /// False for NoData gaps and outside every source. evaluate() returns 0 for
+    /// those, indistinguishable from genuine zero-depth water, so the smoothers
+    /// cannot tell "the seabed is at sea level here" from "nobody surveyed here"
+    /// without this. A gap is *not* an observation of zero: the surface is
+    /// interpolated across it by the smoothness term, never pinned to it.
+    virtual bool has_data(Real x, Real y) const = 0;
+
+    /// @brief Whether (x, y) is land, where the surface is held at depth 0
+    ///
+    /// A shoreline genuinely rises to sea level, so this is a known value and is
+    /// imposed as a Dirichlet condition rather than fitted as weak data. Distinct
+    /// from !has_data(): a survey gap in deep water must not be dragged to 0.
+    virtual bool is_land_point(Real x, Real y) const = 0;
 };
 
 /// @brief Simple function-based bathymetry data
+///
+/// An analytic function has no gaps and no land unless the caller says otherwise.
 class FunctionBathymetry : public BathymetrySource {
 public:
     explicit FunctionBathymetry(std::function<Real(Real, Real)> func) : func_(std::move(func)) {}
 
+    FunctionBathymetry(std::function<Real(Real, Real)> func,
+                       std::function<bool(Real, Real)> has_data,
+                       std::function<bool(Real, Real)> is_land)
+        : func_(std::move(func)), has_data_(std::move(has_data)), is_land_(std::move(is_land)) {}
+
     Real evaluate(Real x, Real y) const override { return func_(x, y); }
+
+    bool has_data(Real x, Real y) const override {
+        return has_data_ ? has_data_(x, y) : true;
+    }
+
+    bool is_land_point(Real x, Real y) const override {
+        return is_land_ ? is_land_(x, y) : false;
+    }
 
 private:
     std::function<Real(Real, Real)> func_;
+    std::function<bool(Real, Real)> has_data_;
+    std::function<bool(Real, Real)> is_land_;
 };
 
 /// @brief Assembly for biharmonic bathymetry smoothing with IPDG

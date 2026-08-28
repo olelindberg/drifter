@@ -1,5 +1,6 @@
 #include "bathymetry/cg_hermite_dof_manager.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -20,9 +21,11 @@ constexpr int MAX_CLOSURE_PASSES = 64;
 } // namespace
 
 CGHermiteDofManager::CGHermiteDofManager(const QuadtreeAdapter &mesh, int r,
-                                         bool enable_zero_gradient_bc)
+                                         bool enable_zero_gradient_bc,
+                                         std::function<bool(Real, Real)> land_predicate)
     : CGSurfaceDofManagerBase(mesh), r_(r), dofs_per_node_((r + 1) * (r + 1)), basis_(r),
-      enable_zero_gradient_bc_(enable_zero_gradient_bc) {
+      enable_zero_gradient_bc_(enable_zero_gradient_bc),
+      land_predicate_(std::move(land_predicate)) {
 
     if (r < 0 || r > 2) {
         throw std::invalid_argument("CGHermiteDofManager: continuity order r must be 0, 1 or 2");
@@ -58,6 +61,9 @@ CGHermiteDofManager::CGHermiteDofManager(const QuadtreeAdapter &mesh, int r,
     build_hanging_node_constraints();
     if (enable_zero_gradient_bc_) {
         build_zero_gradient_constraints();
+    }
+    if (land_predicate_) {
+        build_land_dirichlet_constraints();
     }
     close_constraints_transitively();
     compute_length_scales();
@@ -309,6 +315,89 @@ void CGHermiteDofManager::build_zero_gradient_constraints() {
                     constraints_.push_back(std::move(c));
                     constrained_dofs_.insert(dof);
                 }
+            }
+        }
+    }
+}
+
+void CGHermiteDofManager::build_land_dirichlet_constraints() {
+    const Index num_elements = mesh_.num_elements();
+
+    // Per node: does the predicate hold there, how many elements touch it, and how
+    // many of those are wholly pinned. A node whose every element is pinned lies in
+    // the interior of a land region or a hole and can be flattened; a shoreline node
+    // keeps free derivatives so the surface can slope into the water.
+    std::unordered_map<Index, bool> node_pinned;
+    std::unordered_map<Index, int> adjacent_elements;
+    std::unordered_map<Index, int> adjacent_pinned_elements;
+
+    for (Index e = 0; e < num_elements; ++e) {
+        const auto &b = mesh_.element_bounds(e);
+        const std::array<Vec2, 4> corners = {Vec2(b.xmin, b.ymin), Vec2(b.xmax, b.ymin),
+                                             Vec2(b.xmin, b.ymax), Vec2(b.xmax, b.ymax)};
+
+        bool all_corners_pinned = true;
+        std::array<bool, 4> corner_pinned{};
+        for (size_t i = 0; i < corners.size(); ++i) {
+            corner_pinned[i] = land_predicate_(corners[i](0), corners[i](1));
+            all_corners_pinned = all_corners_pinned && corner_pinned[i];
+        }
+
+        // The centre guards against an element whose four corners happen to be land
+        // while its interior is water - a narrow channel between two headlands.
+        const bool element_pinned =
+            all_corners_pinned &&
+            land_predicate_(0.5 * (b.xmin + b.xmax), 0.5 * (b.ymin + b.ymax));
+
+        for (size_t i = 0; i < corners.size(); ++i) {
+            const Index node = find_node(corners[i]);
+            if (node < 0) {
+                continue;
+            }
+            adjacent_elements[node] += 1;
+            if (element_pinned) {
+                adjacent_pinned_elements[node] += 1;
+            }
+            if (corner_pinned[i]) {
+                node_pinned[node] = true;
+            }
+        }
+    }
+
+    auto pin_dof = [this](Index dof) {
+        if (constrained_dofs_.count(dof) > 0) {
+            return; // already a hanging slave or a BC pin; do not double-constrain
+        }
+        HermiteConstraint c;
+        c.slave_dof = dof; // empty master list => pinned to zero
+        constraints_.push_back(std::move(c));
+        constrained_dofs_.insert(dof);
+        ++num_land_pinned_dofs_;
+    };
+
+    for (const auto &[node, pinned] : node_pinned) {
+        if (!pinned) {
+            continue;
+        }
+
+        // The value DOF: the surface is 0 at land and across gaps.
+        pin_dof(node_dof(node, 0, 0));
+
+        // Interior of a pinned region - flatten it. Leaving these free is what lets
+        // a bicubic overshoot into a spike over a small hole, since Hermite has no
+        // convex-hull property to bound it.
+        const bool interior_of_pinned_region =
+            adjacent_elements[node] > 0 &&
+            adjacent_pinned_elements[node] == adjacent_elements[node];
+        if (!interior_of_pinned_region) {
+            continue;
+        }
+        for (int b = 0; b <= r_; ++b) {
+            for (int a = 0; a <= r_; ++a) {
+                if (a == 0 && b == 0) {
+                    continue; // value DOF already pinned above
+                }
+                pin_dof(node_dof(node, a, b));
             }
         }
     }

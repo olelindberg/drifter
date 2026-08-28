@@ -200,6 +200,9 @@ void AdaptiveCGLinearBezierSmoother::apply_bathymetry_to_smoother() {
     if (!bathy_func_) {
         throw std::runtime_error("AdaptiveCGLinearBezierSmoother: bathymetry data not set");
     }
+    // Masks must be attached before the data, so the assembly (and, for Hermite,
+    // the DOF manager's land Dirichlet pins) can see them.
+    smoother_->set_data_masks(has_data_func_, is_land_func_);
     smoother_->set_bathymetry_data(bathy_func_);
 }
 

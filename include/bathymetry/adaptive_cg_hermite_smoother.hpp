@@ -192,7 +192,13 @@ private:
     std::vector<Index>
     select_elements_for_refinement(const std::vector<HermiteElementErrorEstimate> &errors) const;
     void refine_elements(const std::vector<Index> &elements_to_refine);
-    void compute_element_error_statistics(Index elem, Real &l2_error) const;
+    /// @brief L2 error over the element, ignoring pinned (land / NoData) points
+    /// @param elem Element index
+    /// @param l2_error Output error, renormalised by the weight actually sampled
+    /// @param valid_weight Output quadrature weight that was not pinned; 0 means the
+    ///        element carries no data and must not be marked for refinement
+    void compute_element_error_statistics(Index elem, Real &l2_error,
+                                          Real &valid_weight) const;
 
     /// @brief Per-element VTK cell data: the refinement error metric, its
     ///        components, and the refinement level

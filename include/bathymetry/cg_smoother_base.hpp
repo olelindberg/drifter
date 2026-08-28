@@ -70,11 +70,49 @@ public:
     // =========================================================================
 
     /// @brief Set bathymetry from BathymetrySource (e.g., GeoTIFF)
+    ///
+    /// Also adopts the source's pinned region (land / NoData / outside coverage), so
+    /// those points are excluded from the least-squares term rather than fitted as
+    /// depth-0 observations. See set_pin_predicate().
     void set_bathymetry_data(const BathymetrySource &source);
 
     /// @brief Set bathymetry from function
     /// @note Calls derived class set_bathymetry_data_impl()
+    /// @note Leaves the pin predicate untouched; an analytic function has no gaps
+    ///       unless the caller sets one explicitly.
     void set_bathymetry_data(std::function<Real(Real, Real)> bathy_func);
+
+    /// @brief Tell the smoother where there is no data, and where there is land
+    ///
+    /// The two are handled differently, and conflating them puts a spike over every
+    /// survey gap:
+    ///
+    /// - **No data** (@p has_data false): the point is dropped from the
+    ///   least-squares term and nothing else. A gap is the *absence* of an
+    ///   observation, not an observation of zero, so the surface is carried across
+    ///   it by the smoothness term at whatever depth the surrounding data implies.
+    ///   It must never be pinned: the seabed does not rise to sea level at the edge
+    ///   of a hole.
+    /// - **Land** (@p is_land true): a known value. Also dropped from the
+    ///   least-squares term, but instead held at depth 0 by a Dirichlet condition
+    ///   in smoothers that can express one (see CGHermiteDofManager). Imposing it
+    ///   strongly, rather than as weak data the smoothness term fights, is what
+    ///   stops the fit overshooting at the coast.
+    ///
+    /// Must be set before set_bathymetry_data() to affect that assembly. Empty
+    /// predicates (the default) mean "data everywhere, no land", i.e. the previous
+    /// behaviour.
+    void set_data_masks(std::function<bool(Real, Real)> has_data,
+                        std::function<bool(Real, Real)> is_land) {
+        has_data_func_ = std::move(has_data);
+        is_land_func_ = std::move(is_land);
+    }
+
+    /// @brief The land predicate, or an empty function if none is set
+    const std::function<bool(Real, Real)> &land_predicate() const { return is_land_func_; }
+
+    /// @brief Number of data-fitting quadrature points dropped by the last assembly
+    Index num_excluded_quadrature_points() const { return num_excluded_quad_points_; }
 
     /// @brief Set bathymetry from scattered points (Vec3)
     void set_scattered_points(const std::vector<Vec3> &points);
@@ -175,6 +213,25 @@ protected:
     VecX BtWd_global_;     ///< Data fitting RHS
     Real dTWd_global_ = 0; ///< Data norm for residual computation
     Real alpha_ = 0;       ///< Scale normalization factor (norm_BtWB / norm_H)
+
+    /// Where a measurement exists; empty = data everywhere
+    std::function<bool(Real, Real)> has_data_func_;
+
+    /// Where the surface is held at depth 0 by a Dirichlet condition; empty = nowhere
+    std::function<bool(Real, Real)> is_land_func_;
+
+    /// Quadrature points dropped by the last assemble_data_fitting_global()
+    Index num_excluded_quad_points_ = 0;
+
+    /// @brief Whether (x, y) is land, and so pinned to depth 0
+    bool is_land(Real x, Real y) const { return is_land_func_ && is_land_func_(x, y); }
+
+    /// @brief Whether (x, y) contributes no least-squares observation
+    ///
+    /// Both a gap (nothing measured) and land (known, imposed strongly elsewhere).
+    bool is_excluded_from_fit(Real x, Real y) const {
+        return (has_data_func_ && !has_data_func_(x, y)) || is_land(x, y);
+    }
 
     /// External cache for element matrices (owned by adaptive smoother)
     /// If set, element matrices are stored during assembly for multigrid reuse

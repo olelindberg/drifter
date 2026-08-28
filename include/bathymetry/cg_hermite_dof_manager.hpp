@@ -22,10 +22,12 @@
 /// SPD system rather than producing a saddle point:
 ///   - hanging nodes at 2:1 T-junctions (S8)
 ///   - zero normal gradient boundary conditions, as eliminations (S9)
+///   - land / NoData Dirichlet pins holding the surface at depth 0
 
 #include "bathymetry/cg_surface_dof_manager_base.hpp"
 #include "bathymetry/hermite_basis_2d.hpp"
 #include "core/types.hpp"
+#include <functional>
 #include <map>
 #include <utility>
 #include <vector>
@@ -52,8 +54,12 @@ public:
     ///          but not yet exercised by a smoother)
     /// @param enable_zero_gradient_bc Pin normal-derivative DOFs on the domain
     ///        boundary, giving an exact zero normal gradient (symmetry) condition
+    /// @param land_predicate Marks world positions that are land, where the
+    ///        surface is held at depth 0. Empty (the default) pins nothing. NoData
+    ///        gaps must NOT be passed here - see build_land_dirichlet_constraints().
     CGHermiteDofManager(const QuadtreeAdapter &mesh, int r,
-                        bool enable_zero_gradient_bc = false);
+                        bool enable_zero_gradient_bc = false,
+                        std::function<bool(Real, Real)> land_predicate = {});
 
     // =========================================================================
     // CGSurfaceDofManagerBase interface
@@ -104,6 +110,9 @@ public:
     /// @brief The element basis
     const HermiteBasis2D &basis() const { return basis_; }
 
+    /// @brief Number of DOFs held at zero by the land / NoData Dirichlet condition
+    Index num_land_pinned_dofs() const { return num_land_pinned_dofs_; }
+
 protected:
     std::pair<int64_t, int64_t> quantize_position(const Vec2 &pos) const override;
     size_t num_constraints_impl() const override { return constraints_.size(); }
@@ -118,6 +127,27 @@ private:
 
     /// @brief Pin normal-derivative DOFs on the domain boundary
     void build_zero_gradient_constraints();
+
+    /// @brief Pin land nodes to depth 0
+    ///
+    /// A homogeneous Dirichlet condition, expressed as a slave with no masters, so
+    /// it costs nothing beyond the existing condensation: Q_red = T^T Q T stays SPD.
+    ///
+    /// The value DOF is pinned at every node the predicate accepts. Derivative DOFs
+    /// are pinned only where *every* adjacent element is land, i.e. the interior of
+    /// a landmass, giving a flat plateau at 0. A shoreline node keeps its
+    /// derivatives free so the surface can slope down into the water rather than
+    /// being forced flat at the coast.
+    ///
+    /// Only land belongs here. Pinning the rim of a NoData gap would force the
+    /// surface from the surrounding depth to 0 across a single element, and a
+    /// bicubic Hermite - which has no convex-hull property - overshoots wildly in
+    /// response. Gaps are handled purely by dropping them from the data term
+    /// (CGSmootherBase::is_excluded_from_fit), leaving the smoothness operator to
+    /// carry the seabed across.
+    ///
+    /// This is nodal, so it only bites where the mesh has a node.
+    void build_land_dirichlet_constraints();
 
     /// @brief Resolve masters that are themselves slaves, to a fixpoint
     ///
@@ -145,8 +175,10 @@ private:
     int dofs_per_node_;
     HermiteBasis2D basis_;
     bool enable_zero_gradient_bc_;
+    std::function<bool(Real, Real)> land_predicate_;
 
     Index num_nodes_ = 0;
+    Index num_land_pinned_dofs_ = 0;
 
     /// Position -> node index (nodes carry dofs_per_node_ DOFs each)
     std::map<std::pair<int64_t, int64_t>, Index> position_to_node_;

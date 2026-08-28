@@ -1,6 +1,7 @@
 #include "bathymetry/cg_hermite_bathymetry_smoother.hpp"
 #include "bathymetry/adaptive_cg_hermite_smoother.hpp" // HermiteIterationProfile
 #include "bathymetry/constraint_condenser.hpp"
+#include "core/logger.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
@@ -49,9 +50,11 @@ void CGHermiteBathymetrySmoother::init_components() {
 
     basis_ = std::make_unique<HermiteBasis2D>(r);
     hessian_ = std::make_unique<HermiteHessian>(r);
-    dof_manager_ =
-        std::make_unique<CGHermiteDofManager>(*quadtree_, r, config_.enable_zero_gradient_bc);
+    // Land only: a NoData gap must be interpolated across, never pinned to 0.
+    dof_manager_ = std::make_unique<CGHermiteDofManager>(
+        *quadtree_, r, config_.enable_zero_gradient_bc, is_land_func_);
 
+    slave_to_constraint_.clear();
     const auto &constraints = dof_manager_->constraints();
     for (size_t ci = 0; ci < constraints.size(); ++ci) {
         slave_to_constraint_[constraints[ci].slave_dof] = ci;
@@ -97,6 +100,15 @@ VecX CGHermiteBathymetrySmoother::ridge_diagonal() const {
 void CGHermiteBathymetrySmoother::set_bathymetry_data_impl(
     std::function<Real(Real, Real)> bathy_func) {
     relaxation_config_ = config_.boundary_relaxation;
+
+    // The land region is only known once the data source is attached, and it
+    // changes the constraint set, so the DOF manager is rebuilt here rather than in
+    // init_components(). Cheap next to the assembly that follows.
+    if (is_land_func_) {
+        init_components();
+        LOG_DEBUG("Hermite land Dirichlet: " << dof_manager_->num_land_pinned_dofs()
+                                             << " DOFs pinned to depth 0");
+    }
 
     {
         OptionalScopedTimer t(profile_ ? &profile_->hessian_assembly_ms : nullptr);

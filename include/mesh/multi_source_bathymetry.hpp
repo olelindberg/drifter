@@ -82,6 +82,29 @@ public:
     /// @throws std::out_of_range if point is outside all sources
     bool is_land(Real x, Real y) const;
 
+    /// @brief What a query point actually is
+    ///
+    /// evaluate() maps Water-at-zero-depth, Land and NoData all to 0.0, so it
+    /// cannot be used to tell them apart. The distinction matters: land is a known
+    /// zero and is imposed as a Dirichlet condition, whereas a NoData gap is an
+    /// absent measurement and must be interpolated across, not pulled to 0.
+    enum class SampleKind {
+        Water,  ///< A valid, positive depth
+        Land,   ///< Valid data at or above sea level
+        NoData  ///< A gap in the raster, or outside every source
+    };
+
+    /// @brief Classify a point (never throws)
+    /// @param x X coordinate in EPSG:3034
+    /// @param y Y coordinate in EPSG:3034
+    SampleKind classify(Real x, Real y) const;
+
+    /// @brief Whether a measurement exists here (not a gap, not uncovered)
+    bool has_data(Real x, Real y) const override;
+
+    /// @brief Whether this is land, where the surface is held at depth 0
+    bool is_land_point(Real x, Real y) const override;
+
     /// @brief Check if a point is within any source domain
     /// @param x X coordinate in EPSG:3034
     /// @param y Y coordinate in EPSG:3034

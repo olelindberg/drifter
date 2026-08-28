@@ -118,6 +118,9 @@ void AdaptiveCGHermiteSmoother::apply_bathymetry_to_smoother() {
     if (!bathy_func_) {
         throw std::runtime_error("AdaptiveCGHermiteSmoother: bathymetry data not set");
     }
+    // Masks must be attached before the data, so the assembly (and, for Hermite,
+    // the DOF manager's land Dirichlet pins) can see them.
+    smoother_->set_data_masks(has_data_func_, is_land_func_);
     smoother_->set_bathymetry_data(bathy_func_);
 }
 
@@ -220,8 +223,8 @@ bool AdaptiveCGHermiteSmoother::refinement_allowed(Index elem) const {
     return true;
 }
 
-void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem,
-                                                                 Real &l2_error) const {
+void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem, Real &l2_error,
+                                                                 Real &valid_weight) const {
     if (!smoother_ || !smoother_->is_solved()) {
         throw std::runtime_error("AdaptiveCGHermiteSmoother: must solve before computing errors");
     }
@@ -231,11 +234,21 @@ void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem,
     const Real dy = bounds.ymax - bounds.ymin;
 
     Real sum_error_sq = 0.0;
+    valid_weight = 0.0;
     for (int j = 0; j < config_.ngauss_error; ++j) {
         for (int i = 0; i < config_.ngauss_error; ++i) {
             const Real x = bounds.xmin + gauss_nodes_(i) * dx;
             const Real y = bounds.ymin + gauss_nodes_(j) * dy;
             const Real w = gauss_weights_(i) * gauss_weights_(j);
+
+            // The surface deliberately spans gaps and is pinned over land rather
+            // than fitting the zeros there, so the difference against those zeros
+            // is not a fitting error. Measuring it would drive refinement into
+            // every hole and along every coastline.
+            if (is_excluded_from_fit(x, y)) {
+                continue;
+            }
+            valid_weight += w;
 
             // Evaluate within this element, avoiding a point-location lookup that
             // could land on a neighbour at an element boundary
@@ -244,7 +257,12 @@ void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem,
         }
     }
 
-    // Weights sum to 1 on [0,1]^2, so scale by the element area
+    // Weights sum to 1 on [0,1]^2, so scale by the element area. Renormalise by the
+    // weight actually sampled, so a partly-pinned element is not credited with a
+    // small error merely because most of it was skipped.
+    if (valid_weight > 0.0) {
+        sum_error_sq /= valid_weight;
+    }
     l2_error = std::sqrt(sum_error_sq * dx * dy);
 }
 
@@ -260,7 +278,14 @@ AdaptiveCGHermiteSmoother::estimate_element_error(Index elem) const {
     const QuadBounds &bounds = quadtree_->element_bounds(elem);
     const Real area = (bounds.xmax - bounds.xmin) * (bounds.ymax - bounds.ymin);
 
-    compute_element_error_statistics(elem, result.l2_error);
+    Real valid_weight = 0.0;
+    compute_element_error_statistics(elem, result.l2_error, valid_weight);
+    if (valid_weight <= 0.0) {
+        // Every quadrature point is a gap or land: no data to be wrong about.
+        // Distinct from a genuinely zero error, so it must not be reported as a
+        // perfect fit that a Dorfler pass could still mark.
+        return result; // all zero, should_refine = false
+    }
     result.normalized_error = result.l2_error / std::sqrt(area);
 
     compute_coarsening_metrics(elem, result.mean_difference, result.volume_change);

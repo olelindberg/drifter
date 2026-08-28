@@ -16,6 +16,8 @@ void AdaptiveCGSmootherBase::set_bathymetry_data(const BathymetrySource &source)
     // Wrap BathymetrySource in a lambda that captures by reference
     // Note: The source must outlive this smoother
     bathy_func_ = [&source](Real x, Real y) -> Real { return source.evaluate(x, y); };
+    has_data_func_ = [&source](Real x, Real y) -> bool { return source.has_data(x, y); };
+    is_land_func_ = [&source](Real x, Real y) -> bool { return source.is_land_point(x, y); };
 }
 
 void AdaptiveCGSmootherBase::set_bathymetry_data(
@@ -26,6 +28,12 @@ void AdaptiveCGSmootherBase::set_bathymetry_data(
 void AdaptiveCGSmootherBase::set_land_mask(
     std::function<bool(Real, Real)> is_land_func) {
     land_mask_func_ = std::move(is_land_func);
+}
+
+void AdaptiveCGSmootherBase::set_data_masks(std::function<bool(Real, Real)> has_data,
+                                            std::function<bool(Real, Real)> is_land) {
+    has_data_func_ = std::move(has_data);
+    is_land_func_ = std::move(is_land);
 }
 
 // =============================================================================

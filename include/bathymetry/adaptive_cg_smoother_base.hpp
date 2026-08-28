@@ -59,6 +59,17 @@ public:
     /// Elements entirely on land will not be refined
     void set_land_mask(std::function<bool(Real, Real)> is_land_func);
 
+    /// @brief Tell the smoother where there is no data, and where there is land
+    ///
+    /// Forwarded to the inner smoother on every re-fit, and used to drop those
+    /// points from the per-element error, so refinement is not driven by the
+    /// difference between the surface and a gap it deliberately spans.
+    /// See CGSmootherBase::set_data_masks() for how the two differ.
+    ///
+    /// Set automatically by set_bathymetry_data(const BathymetrySource&).
+    void set_data_masks(std::function<bool(Real, Real)> has_data,
+                        std::function<bool(Real, Real)> is_land);
+
     /// @brief Set bathymetry data for pixel-based error computation
     /// @param data Shared pointer to BathymetryData (for pixel RMSE validation)
     /// @note Required for compute_pixel_rmse option; the data must outlive this smoother
@@ -120,6 +131,18 @@ protected:
 
     /// Optional land mask function
     std::function<bool(Real, Real)> land_mask_func_;
+
+    /// Where a measurement exists; empty = data everywhere
+    std::function<bool(Real, Real)> has_data_func_;
+
+    /// Where the surface is held at depth 0; empty = nowhere
+    std::function<bool(Real, Real)> is_land_func_;
+
+    /// @brief Whether (x, y) carries no observation (a gap, or land)
+    bool is_excluded_from_fit(Real x, Real y) const {
+        return (has_data_func_ && !has_data_func_(x, y)) ||
+               (is_land_func_ && is_land_func_(x, y));
+    }
 
     /// Bathymetry data for pixel-based error computation (optional)
     std::shared_ptr<BathymetryData> bathy_data_;
