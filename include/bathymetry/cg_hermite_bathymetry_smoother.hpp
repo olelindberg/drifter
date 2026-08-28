@@ -118,7 +118,17 @@ public:
     // Output
     // =========================================================================
 
-    void write_vtk(const std::string &filename, int resolution = 8) const;
+    /// @brief Polynomial degree of the fitted surface: 1 for r=0, 3 for r=1
+    int surface_degree() const { return 2 * config_.continuity_order + 1; }
+
+    /// @brief Write the fitted surface as per-element VTK_LAGRANGE_QUAD cells
+    ///
+    /// @param order Degree of the emitted cells; <= 0 uses surface_degree().
+    ///              A higher degree resamples the same polynomial on more nodes
+    ///              so ParaView tessellates it more finely; values below
+    ///              surface_degree() are raised to it, since a lower degree
+    ///              could not represent the surface.
+    void write_vtk(const std::string &filename, int order = 0) const;
 
     /// @brief Write the Bernstein control net of the fitted surface
     ///

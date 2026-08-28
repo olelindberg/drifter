@@ -5,6 +5,7 @@
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/octree_adapter.hpp"
 #include <Eigen/SparseCholesky>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -228,14 +229,15 @@ void CGHermiteBathymetrySmoother::solve() {
 // Output
 // =============================================================================
 
-void CGHermiteBathymetrySmoother::write_vtk(const std::string &filename, int resolution) const {
+void CGHermiteBathymetrySmoother::write_vtk(const std::string &filename, int order) const {
     if (!solved_) {
         throw std::runtime_error("CGHermiteBathymetrySmoother: must solve() before write_vtk()");
     }
 
-    io::write_cg_bezier_surface_vtk(
-        filename, *quadtree_, [this](Real x, Real y) { return evaluate(x, y); },
-        resolution > 0 ? resolution : 8, "elevation");
+    io::write_high_order_surface_vtk(
+        filename, *quadtree_,
+        [this](Index elem, Real x, Real y) { return evaluate_in_element(elem, x, y); },
+        order > 0 ? std::max(order, surface_degree()) : surface_degree(), "elevation");
 }
 
 void CGHermiteBathymetrySmoother::write_control_points_vtk(const std::string &filename) const {

@@ -53,7 +53,15 @@ struct DrifterConfig {
   // Output
   // =========================================================================
   std::string output_file = "/tmp/drifter_bathymetry"; ///< Output file path (without extension)
-  int vtk_subdivision     = 8;                              ///< VTK subdivision level for visualization
+  int vtk_subdivision     = 8;                              ///< VTK subdivision level for visualization (Bezier path)
+  /// Polynomial degree of the VTK_LAGRANGE_QUAD cells emitted by the Hermite
+  /// path. Must be >= the element surface degree (1 for C0, 3 for C1); a higher
+  /// degree resamples the same polynomial on more nodes, which ParaView
+  /// tessellates more finely. <= 0 means "use the element surface degree".
+  int vtk_surface_degree  = 6;
+  /// Write the primary GeoTIFF, cropped to the domain, at its native pixel
+  /// resolution to `output_file + "_input_raster.vts"`.
+  bool write_input_raster = false;
 };
 
 /// @brief Read and write DRIFTER configuration from/to JSON files

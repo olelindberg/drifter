@@ -58,6 +58,7 @@
   },
   "output": {
     "output_file": "/tmp/drifter_bathymetry",
-    "vtk_subdivision": 8
+    "vtk_subdivision": 8,
+    "vtk_surface_degree": 6
   }
 }

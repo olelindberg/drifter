@@ -244,6 +244,7 @@ set(IO_SOURCES
     src/io/zarr_writer.cpp
     src/io/restart.cpp
     src/io/quadtree_vtk_writer.cpp
+    src/io/raster_vtk_writer.cpp
 )
 
 set(UTILS_SOURCES

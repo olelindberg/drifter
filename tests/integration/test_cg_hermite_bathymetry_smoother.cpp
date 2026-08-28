@@ -5,7 +5,13 @@
 #include <Eigen/SparseCholesky>
 #include <cmath>
 #include <gtest/gtest.h>
+#include <cstdio>
+#include <cstdlib>
+#include <unistd.h>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 
 using namespace drifter;
 
@@ -547,6 +553,59 @@ TEST_F(CGHermiteSmootherTest, BernsteinCoefficientsReproduceTheSurface) {
                             smoother.evaluate_in_element(e, x, y), 1e-9);
             }
         }
+    }
+}
+
+// =============================================================================
+// VTK output
+// =============================================================================
+
+// The written file must carry the surface exactly, not a piecewise-linear
+// sampling of it. Sampling a bicubic on flat quads creases along element
+// boundaries and cracks at T-junctions, which reads as a loss of C1 that the
+// solver never produced.
+TEST_F(CGHermiteSmootherTest, WritesSurfaceAtItsExactDegree) {
+    EXPECT_EQ(CGHermiteSmootherConfig{}.continuity_order, 1);
+
+    for (int r : {0, 1}) {
+        auto mesh = create_nonconforming_quadtree();
+
+        CGHermiteSmootherConfig config;
+        config.continuity_order = r;
+        config.lambda = 100.0;
+        CGHermiteBathymetrySmoother smoother(mesh, config);
+        smoother.set_bathymetry_data(smooth_bathy);
+        smoother.solve();
+
+        const int degree = smoother.surface_degree();
+        EXPECT_EQ(degree, 2 * r + 1) << "r=" << r;
+
+        char tmpl[] = "/tmp/drifter_hermite_vtk_XXXXXX";
+        const int fd = mkstemp(tmpl);
+        ASSERT_GE(fd, 0) << "cannot create a temporary file";
+        close(fd);
+        std::remove(tmpl);
+        const std::string base = tmpl;
+        smoother.write_vtk(base);
+
+        std::ifstream file(base + ".vtu");
+        ASSERT_TRUE(file.good()) << "r=" << r << ": no output written";
+        const std::string contents((std::istreambuf_iterator<char>(file)),
+                                   std::istreambuf_iterator<char>());
+        file.close();
+        std::remove((base + ".vtu").c_str());
+
+        // One VTK_LAGRANGE_QUAD per element, of the exact surface degree
+        EXPECT_NE(contents.find("NumberOfCells=\"" + std::to_string(mesh.num_elements()) + "\""),
+                  std::string::npos)
+            << "r=" << r;
+        EXPECT_NE(contents.find("\n70\n"), std::string::npos)
+            << "r=" << r << ": expected VTK_LAGRANGE_QUADRILATERAL cells";
+        const Index pts_per_cell = (degree + 1) * (degree + 1);
+        EXPECT_NE(contents.find("NumberOfPoints=\"" +
+                                std::to_string(mesh.num_elements() * pts_per_cell) + "\""),
+                  std::string::npos)
+            << "r=" << r;
     }
 }
 

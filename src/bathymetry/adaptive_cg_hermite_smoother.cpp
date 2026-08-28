@@ -2,6 +2,7 @@
 #include "bathymetry/basis_2d_base.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
+#include "mesh/geotiff_reader.hpp"
 #include "mesh/refine_mask.hpp"
 #include <algorithm>
 #include <cmath>
@@ -27,6 +28,8 @@ const char *convergence_reason_string(ConvergenceReason reason) {
         return "maximum refinement level reached";
     case ConvergenceReason::MaxIterations:
         return "maximum iterations reached";
+    case ConvergenceReason::PixelResolution:
+        return "data resolution limit reached";
     default:
         return "unknown";
     }
@@ -169,6 +172,52 @@ bool AdaptiveCGHermiteSmoother::is_element_on_land(Index elem) const {
     }
 
     return false;
+}
+
+Real AdaptiveCGHermiteSmoother::element_resolution(Index elem) const {
+    if (resolution_func_) {
+        const QuadBounds &bounds = quadtree_->element_bounds(elem);
+        const Real res = resolution_func_(0.5 * (bounds.xmin + bounds.xmax),
+                                          0.5 * (bounds.ymin + bounds.ymax));
+        if (res > 0.0) {
+            return res;
+        }
+    }
+    if (bathy_data_) {
+        return bathy_data_->min_element_size();
+    }
+    return 0.0;
+}
+
+bool AdaptiveCGHermiteSmoother::refinement_allowed(Index elem) const {
+    const QuadBounds &bounds = quadtree_->element_bounds(elem);
+    const Real dx = bounds.xmax - bounds.xmin;
+    const Real dy = bounds.ymax - bounds.ymin;
+
+    // Refinement halves the element, so every test is on the would-be children
+    const Real child_dx = 0.5 * dx;
+    const Real child_dy = 0.5 * dy;
+
+    const Real res = element_resolution(elem);
+
+    if (config_.enforce_pixel_limit) {
+        Real min_size = config_.min_element_size;
+        if (min_size <= 0.0) {
+            min_size = res;
+        }
+        if (min_size > 0.0 && std::min(child_dx, child_dy) < min_size) {
+            return false;
+        }
+    }
+
+    if (config_.min_data_points_per_element > 0 && res > 0.0) {
+        const Real child_points = (child_dx / res) * (child_dy / res);
+        if (child_points < static_cast<Real>(config_.min_data_points_per_element)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem,
@@ -424,29 +473,14 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
         const std::string vtk_file =
             config_.vtk_output_prefix + "_iter_" + std::to_string(result.iteration);
 
-        const size_t n = static_cast<size_t>(quadtree_->num_elements());
-        std::vector<Real> element_rms(n, 0.0);
-        std::vector<Real> element_mean_diff(n, 0.0);
-        std::vector<Real> element_volume_change(n, 0.0);
-        std::vector<Real> refinement_levels(n, 0.0);
-
-        for (const auto &e : errors) {
-            element_rms[static_cast<size_t>(e.element)] = e.normalized_error;
-            element_mean_diff[static_cast<size_t>(e.element)] = e.mean_difference;
-            element_volume_change[static_cast<size_t>(e.element)] = e.volume_change;
-        }
-        for (Index i = 0; i < quadtree_->num_elements(); ++i) {
-            refinement_levels[static_cast<size_t>(i)] =
-                static_cast<Real>(quadtree_->element_level(i).max_level());
-        }
-
-        io::write_cg_bezier_surface_vtk(
-            vtk_file, *quadtree_, [this](Real x, Real y) { return smoother_->evaluate(x, y); }, 8,
-            "elevation",
-            {{"rms_error", element_rms},
-             {"mean_difference", element_mean_diff},
-             {"volume_change", element_volume_change},
-             {"refinement_level", refinement_levels}});
+        io::write_high_order_surface_vtk(
+            vtk_file, *quadtree_,
+            [this](Index elem, Real x, Real y) {
+                return smoother_->evaluate_in_element(elem, x, y);
+            },
+            config_.vtk_order > 0 ? std::max(config_.vtk_order, smoother_->surface_degree())
+                                  : smoother_->surface_degree(),
+            "elevation", element_cell_data(errors));
 
         if (config_.verbose) {
             std::cout << "Wrote VTK: " << vtk_file << ".vtu\n";
@@ -454,16 +488,24 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
     }
 
     std::vector<Index> valid_refine;
+    bool blocked_by_resolution = false;
     for (Index elem : selected) {
-        if (quadtree_->element_level(elem).max_level() < config_.max_refinement_level) {
-            valid_refine.push_back(elem);
+        if (quadtree_->element_level(elem).max_level() >= config_.max_refinement_level) {
+            continue;
         }
+        if (!refinement_allowed(elem)) {
+            blocked_by_resolution = true;
+            continue;
+        }
+        valid_refine.push_back(elem);
     }
     result.elements_refined = static_cast<Index>(valid_refine.size());
 
     if (valid_refine.empty()) {
         result.converged = true;
-        result.convergence_reason = ConvergenceReason::MaxRefinementLevel;
+        result.convergence_reason = blocked_by_resolution
+                                        ? ConvergenceReason::PixelResolution
+                                        : ConvergenceReason::MaxRefinementLevel;
     } else {
         store_current_solution();
         refine_elements(valid_refine);
@@ -526,14 +568,52 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::solve_adaptive() {
 // Output
 // =============================================================================
 
-void AdaptiveCGHermiteSmoother::write_vtk(const std::string &filename, int resolution) const {
+std::vector<std::pair<std::string, std::vector<Real>>>
+AdaptiveCGHermiteSmoother::element_cell_data(
+    const std::vector<HermiteElementErrorEstimate> &errors) const {
+    const size_t n = static_cast<size_t>(quadtree_->num_elements());
+
+    std::vector<Real> metric(n, 0.0);
+    std::vector<Real> rms(n, 0.0);
+    std::vector<Real> mean_diff(n, 0.0);
+    std::vector<Real> volume_change(n, 0.0);
+    std::vector<Real> levels(n, 0.0);
+
+    for (const auto &e : errors) {
+        const size_t i = static_cast<size_t>(e.element);
+        metric[i] = error_metric(e);
+        rms[i] = e.normalized_error;
+        mean_diff[i] = e.mean_difference;
+        volume_change[i] = e.volume_change;
+    }
+    for (Index i = 0; i < quadtree_->num_elements(); ++i) {
+        levels[static_cast<size_t>(i)] =
+            static_cast<Real>(quadtree_->element_level(i).max_level());
+    }
+
+    // "error_metric" is the quantity the refinement decisions were made on,
+    // whichever ErrorMetricType is configured; the others are always written so
+    // the alternatives can be compared in the same file.
+    return {{"error_metric", std::move(metric)},
+            {"rms_error", std::move(rms)},
+            {"mean_difference", std::move(mean_diff)},
+            {"volume_change", std::move(volume_change)},
+            {"refinement_level", std::move(levels)}};
+}
+
+void AdaptiveCGHermiteSmoother::write_vtk(const std::string &filename, int order) const {
     if (!smoother_ || !smoother_->is_solved()) {
         throw std::runtime_error("AdaptiveCGHermiteSmoother: must solve before writing VTK");
     }
 
-    io::write_cg_bezier_surface_vtk(
-        filename, *quadtree_, [this](Real x, Real y) { return evaluate(x, y); },
-        resolution > 0 ? resolution : 8, "elevation");
+    const int requested = order > 0 ? order : config_.vtk_order;
+    const int emit_order = requested > 0 ? std::max(requested, smoother_->surface_degree())
+                                         : smoother_->surface_degree();
+
+    io::write_high_order_surface_vtk(
+        filename, *quadtree_,
+        [this](Index elem, Real x, Real y) { return smoother_->evaluate_in_element(elem, x, y); },
+        emit_order, "elevation", element_cell_data(estimate_errors()));
 }
 
 void AdaptiveCGHermiteSmoother::print_profile_report() const {
@@ -547,6 +627,11 @@ void AdaptiveCGHermiteSmoother::print_profile_report() const {
               << std::setw(10) << "assem_ms" << std::setw(10) << "error_ms" << std::setw(10)
               << "total_ms" << "\n";
 
+    // Restore the stream state afterwards: setprecision is sticky, and the
+    // caller keeps printing physical quantities to the same stream.
+    const std::streamsize saved_precision = std::cout.precision();
+    const std::ios::fmtflags saved_flags = std::cout.flags();
+
     std::cout << std::fixed << std::setprecision(1);
     for (size_t i = 0; i < profiles_.size(); ++i) {
         const auto &p = profiles_[i];
@@ -556,7 +641,9 @@ void AdaptiveCGHermiteSmoother::print_profile_report() const {
                   << (p.hessian_assembly_ms + p.data_fitting_ms) << std::setw(10)
                   << p.error_estimation_ms << std::setw(10) << p.total_ms() << "\n";
     }
-    std::cout << std::defaultfloat << std::endl;
+    std::cout.flags(saved_flags);
+    std::cout.precision(saved_precision);
+    std::cout << std::endl;
 }
 
 } // namespace drifter

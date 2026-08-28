@@ -136,6 +136,39 @@ void write_cg_bezier_surface_vtk(
     Real inv_quantization_tol, int resolution = 11, const std::string &scalar_name = "elevation",
     const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data = {});
 
+/// @brief Node ordering of a VTK_LAGRANGE_QUAD of the given degree
+///
+/// Returns the (i, j) tensor-product indices, each in [0, order], in the order
+/// VTK expects them: the four corners, then the four edge interiors, then the
+/// cell interior row-major. Mirrors vtkHigherOrderQuadrilateral's
+/// PointIndexFromIJK.
+///
+/// @param order Polynomial degree of the cell (>= 1)
+std::vector<std::pair<int, int>> lagrange_quad_ordering(int order);
+
+/// @brief Write a per-element high-order surface to VTK format
+///
+/// Emits one VTK_LAGRANGE_QUAD (cell type 70) of degree @p order per element,
+/// sampled on equispaced parametric nodes. Because each cell carries the full
+/// polynomial, ParaView reproduces the surface exactly rather than tessellating
+/// it into flat quads, so element boundaries show no false creases and 2:1
+/// T-junctions show no seams.
+///
+/// Points are not deduplicated: every element owns its own, and each is
+/// evaluated against that element. No point location and hence no fallback.
+///
+/// @param filename Output filename (without extension, .vtu will be added)
+/// @param mesh The quadtree mesh
+/// @param evaluate_in_element Function evaluating z at physical (x, y) in element e
+/// @param order Polynomial degree of the emitted cells (>= 1)
+/// @param scalar_name Name for the elevation/depth scalar field
+/// @param element_cell_data Per-element cell data arrays, indexed by element id
+void write_high_order_surface_vtk(
+    const std::string &filename, const QuadtreeAdapter &mesh,
+    const std::function<Real(Index, Real, Real)> &evaluate_in_element, int order,
+    const std::string &scalar_name = "elevation",
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data = {});
+
 /// @brief Write a polygon boundary to VTK PolyData format
 ///
 /// Outputs a closed polygon as a VTP file. Useful for visualizing

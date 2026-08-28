@@ -303,6 +303,62 @@ TEST_F(AdaptiveCGHermiteSmootherTest, ContinuityIsExactAfterRefinement) {
 }
 
 // =============================================================================
+// Data resolution limits
+// =============================================================================
+
+TEST_F(AdaptiveCGHermiteSmootherTest, StopsAtMinimumElementSize) {
+    auto config = make_config(1);
+    config.error_threshold = 1e-6; // unreachable, so only the size limit can stop it
+    config.max_iterations = 10;
+    config.max_refinement_level = 20;
+    config.enforce_pixel_limit = true;
+    config.min_element_size = 12.5; // initial elements are 25, so exactly one level fits
+    config.min_data_points_per_element = 0;
+    config.smoother_config.lambda = 100.0;
+
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+    smoother.set_bathymetry_data(high_frequency_bathy);
+
+    const auto result = smoother.solve_adaptive();
+
+    EXPECT_TRUE(result.converged);
+    EXPECT_EQ(result.convergence_reason, ConvergenceReason::PixelResolution);
+
+    for (Index e = 0; e < smoother.mesh().num_elements(); ++e) {
+        const auto &b = smoother.mesh().element_bounds(e);
+        EXPECT_GE(std::min(b.xmax - b.xmin, b.ymax - b.ymin), config.min_element_size - TOLERANCE);
+    }
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, StopsAtMinimumDataPointsPerElement) {
+    auto config = make_config(1);
+    config.error_threshold = 1e-6;
+    config.max_iterations = 10;
+    config.max_refinement_level = 20;
+    config.enforce_pixel_limit = false; // isolate the data-point criterion
+    config.min_element_size = 0.0;
+    config.min_data_points_per_element = 100; // 10x10 pixels of 1.25 m => 12.5 m elements
+    config.smoother_config.lambda = 100.0;
+
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+    smoother.set_bathymetry_data(high_frequency_bathy);
+    smoother.set_resolution_func([](Real, Real) { return 1.25; });
+
+    const auto result = smoother.solve_adaptive();
+
+    EXPECT_TRUE(result.converged);
+    EXPECT_EQ(result.convergence_reason, ConvergenceReason::PixelResolution);
+
+    for (Index e = 0; e < smoother.mesh().num_elements(); ++e) {
+        const auto &b = smoother.mesh().element_bounds(e);
+        const Real dx = b.xmax - b.xmin;
+        const Real dy = b.ymax - b.ymin;
+        EXPECT_GE((dx / 1.25) * (dy / 1.25),
+                  static_cast<Real>(config.min_data_points_per_element) - TOLERANCE);
+    }
+}
+
+// =============================================================================
 // History and profiling
 // =============================================================================
 

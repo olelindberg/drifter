@@ -153,6 +153,11 @@ AdaptiveCGHermiteConfig parse_hermite_adaptive_config(const pt::ptree &tree,
   config.error_output_dir     = tree.get<std::string>("error_output_dir", config.error_output_dir);
   config.vtk_output_prefix    = tree.get<std::string>("vtk_output_prefix", config.vtk_output_prefix);
 
+  config.enforce_pixel_limit  = tree.get<bool>("enforce_pixel_limit", config.enforce_pixel_limit);
+  config.min_element_size     = tree.get<Real>("min_element_size", config.min_element_size);
+  config.min_data_points_per_element =
+      tree.get<int>("min_data_points_per_element", config.min_data_points_per_element);
+
   if (auto str = tree.get_optional<std::string>("error_metric_type")) {
     config.error_metric_type = error_metric_type_from_string(*str);
   }
@@ -245,6 +250,31 @@ pt::ptree serialize_adaptive_config(const AdaptiveCGCubicBezierConfig &config) {
   tree.put("dorfler_theta", config.dorfler_theta);
   tree.put("symmetry_tolerance", config.symmetry_tolerance);
   tree.put("ngauss_error", config.ngauss_error);
+  tree.put("verbose", config.verbose);
+  tree.put("error_output_dir", config.error_output_dir);
+  tree.put("vtk_output_prefix", config.vtk_output_prefix);
+
+  return tree;
+}
+
+/// @brief Serialize AdaptiveCGHermiteConfig to property tree
+///
+/// Same keys as the Bezier adaptive section plus the data-resolution limits,
+/// which only the Hermite path acts on.
+pt::ptree serialize_hermite_adaptive_config(const AdaptiveCGHermiteConfig &config) {
+  pt::ptree tree;
+
+  tree.put("error_threshold", config.error_threshold);
+  tree.put("max_iterations", config.max_iterations);
+  tree.put("max_elements", config.max_elements);
+  tree.put("max_refinement_level", config.max_refinement_level);
+  tree.put("error_metric_type", to_string(config.error_metric_type));
+  tree.put("dorfler_theta", config.dorfler_theta);
+  tree.put("symmetry_tolerance", config.symmetry_tolerance);
+  tree.put("ngauss_error", config.ngauss_error);
+  tree.put("enforce_pixel_limit", config.enforce_pixel_limit);
+  tree.put("min_element_size", config.min_element_size);
+  tree.put("min_data_points_per_element", config.min_data_points_per_element);
   tree.put("verbose", config.verbose);
   tree.put("error_output_dir", config.error_output_dir);
   tree.put("vtk_output_prefix", config.vtk_output_prefix);
@@ -345,6 +375,10 @@ DrifterConfig ConfigReader::load(const std::string &filepath) {
   if (auto output_tree = root.get_child_optional("output")) {
     config.output_file     = output_tree->get<std::string>("output_file", config.output_file);
     config.vtk_subdivision = output_tree->get<int>("vtk_subdivision", config.vtk_subdivision);
+    config.vtk_surface_degree =
+        output_tree->get<int>("vtk_surface_degree", config.vtk_surface_degree);
+    config.write_input_raster =
+        output_tree->get<bool>("write_input_raster", config.write_input_raster);
   }
 
   return config;
@@ -379,8 +413,12 @@ void ConfigReader::save(const DrifterConfig &config, const std::string &filepath
   grid_tree.put("ny", config.ny);
   root.add_child("initial_grid", grid_tree);
 
-  // Adaptive section
-  root.add_child("adaptive", serialize_adaptive_config(config.adaptive));
+  // Adaptive section (the selected family's, so the run round-trips)
+  if (config.smoother_kind == BathySmootherKind::CubicBezier) {
+    root.add_child("adaptive", serialize_adaptive_config(config.adaptive));
+  } else {
+    root.add_child("adaptive", serialize_hermite_adaptive_config(config.hermite_adaptive));
+  }
 
   // Smoother section
   // Write the smoother block for whichever family is selected, so a saved config
@@ -399,6 +437,8 @@ void ConfigReader::save(const DrifterConfig &config, const std::string &filepath
   pt::ptree output_tree;
   output_tree.put("output_file", config.output_file);
   output_tree.put("vtk_subdivision", config.vtk_subdivision);
+  output_tree.put("vtk_surface_degree", config.vtk_surface_degree);
+  output_tree.put("write_input_raster", config.write_input_raster);
   root.add_child("output", output_tree);
 
   // Write to file
@@ -425,6 +465,11 @@ void print_adaptive_section(int w, const AdaptiveConfig &a) {
   std::cout << "  " << std::left << std::setw(w) << "max_refinement_level" << ": " << a.max_refinement_level << "\n";
   std::cout << "  " << std::left << std::setw(w) << "dorfler_theta" << ": " << a.dorfler_theta << "\n";
   std::cout << "  " << std::left << std::setw(w) << "ngauss_error" << ": " << a.ngauss_error << "\n";
+  if constexpr (requires { a.min_data_points_per_element; }) {
+    std::cout << "  " << std::left << std::setw(w) << "enforce_pixel_limit" << ": " << (a.enforce_pixel_limit ? "true" : "false") << "\n";
+    std::cout << "  " << std::left << std::setw(w) << "min_element_size" << ": " << a.min_element_size << "\n";
+    std::cout << "  " << std::left << std::setw(w) << "min_data_points_per_element" << ": " << a.min_data_points_per_element << "\n";
+  }
   std::cout << "  " << std::left << std::setw(w) << "verbose" << ": " << (a.verbose ? "true" : "false") << "\n";
 }
 
@@ -472,7 +517,8 @@ void print_config(const DrifterConfig &config) {
 
     std::cout << "\nOutput:\n";
     std::cout << "  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file << "\n";
-    std::cout << "  " << std::left << std::setw(w) << "vtk_subdivision" << ": " << config.vtk_subdivision << "\n";
+    std::cout << "  " << std::left << std::setw(w) << "vtk_surface_degree" << ": " << config.vtk_surface_degree << "\n";
+    std::cout << "  " << std::left << std::setw(w) << "write_input_raster" << ": " << (config.write_input_raster ? "true" : "false") << "\n";
     std::cout << "\n";
     return;
   }
@@ -515,6 +561,7 @@ void print_config(const DrifterConfig &config) {
   std::cout << "\nOutput:\n";
   std::cout << "  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file << "\n";
   std::cout << "  " << std::left << std::setw(w) << "vtk_subdivision" << ": " << config.vtk_subdivision << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "write_input_raster" << ": " << (config.write_input_raster ? "true" : "false") << "\n";
   std::cout << "\n";
 }
 

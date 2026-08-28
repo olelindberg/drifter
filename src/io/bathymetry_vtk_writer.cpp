@@ -4,6 +4,7 @@
 #include "mesh/octree_adapter.hpp"
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <stdexcept>
 
 namespace drifter {
@@ -875,6 +876,154 @@ void write_cg_bezier_surface_vtk(
     file << "</CellData>\n";
 
     // VTU footer
+    file << "</Piece>\n";
+    file << "</UnstructuredGrid>\n";
+    file << "</VTKFile>\n";
+
+    file.close();
+}
+
+std::vector<std::pair<int, int>> lagrange_quad_ordering(int order) {
+    if (order < 1) {
+        throw std::invalid_argument("lagrange_quad_ordering: order must be >= 1");
+    }
+
+    const int n = order;
+    std::vector<std::pair<int, int>> nodes;
+    nodes.reserve(static_cast<size_t>((n + 1) * (n + 1)));
+
+    // Corners, counter-clockwise from the origin
+    nodes.emplace_back(0, 0);
+    nodes.emplace_back(n, 0);
+    nodes.emplace_back(n, n);
+    nodes.emplace_back(0, n);
+
+    // Edge interiors: bottom (j=0), right (i=n), top (j=n), left (i=0).
+    // Each is traversed in the increasing parametric direction, not around the
+    // cell - that is what vtkHigherOrderQuadrilateral indexes.
+    for (int i = 1; i < n; ++i) {
+        nodes.emplace_back(i, 0);
+    }
+    for (int j = 1; j < n; ++j) {
+        nodes.emplace_back(n, j);
+    }
+    for (int i = 1; i < n; ++i) {
+        nodes.emplace_back(i, n);
+    }
+    for (int j = 1; j < n; ++j) {
+        nodes.emplace_back(0, j);
+    }
+
+    // Interior, row-major in j
+    for (int j = 1; j < n; ++j) {
+        for (int i = 1; i < n; ++i) {
+            nodes.emplace_back(i, j);
+        }
+    }
+
+    return nodes;
+}
+
+void write_high_order_surface_vtk(
+    const std::string &filename, const QuadtreeAdapter &mesh,
+    const std::function<Real(Index, Real, Real)> &evaluate_in_element, int order,
+    const std::string &scalar_name,
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data) {
+
+    if (order < 1) {
+        throw std::invalid_argument("write_high_order_surface_vtk: order must be >= 1");
+    }
+
+    std::ofstream file(filename + ".vtu");
+    if (!file) {
+        throw std::runtime_error("write_high_order_surface_vtk: cannot open " + filename + ".vtu");
+    }
+
+    const std::vector<std::pair<int, int>> ordering = lagrange_quad_ordering(order);
+    const Index pts_per_cell = static_cast<Index>(ordering.size());
+    const Index num_elements = mesh.num_elements();
+    const Index total_points = num_elements * pts_per_cell;
+
+    std::vector<Vec3> vertices;
+    vertices.reserve(static_cast<size_t>(total_points));
+
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const auto &bounds = mesh.element_bounds(elem);
+        const Real dx = bounds.xmax - bounds.xmin;
+        const Real dy = bounds.ymax - bounds.ymin;
+
+        for (const auto &[i, j] : ordering) {
+            const Real x = bounds.xmin + dx * static_cast<Real>(i) / static_cast<Real>(order);
+            const Real y = bounds.ymin + dy * static_cast<Real>(j) / static_cast<Real>(order);
+            vertices.emplace_back(x, y, evaluate_in_element(elem, x, y));
+        }
+    }
+
+    file << "<?xml version=\"1.0\"?>\n";
+    file << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" "
+            "byte_order=\"LittleEndian\">\n";
+    file << "<UnstructuredGrid>\n";
+    file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << num_elements
+         << "\">\n";
+
+    // Full round-trip precision: at projected coordinates ~1e6 the usual 12
+    // significant digits quantise node positions to centimetres, which is a
+    // visible displacement once elements refine below a few metres.
+    file << std::setprecision(std::numeric_limits<Real>::max_digits10);
+    file << "<Points>\n";
+    file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+    for (const auto &v : vertices) {
+        file << v.x() << " " << v.y() << " " << v.z() << "\n";
+    }
+    file << "</DataArray>\n";
+    file << "</Points>\n";
+
+    file << "<Cells>\n";
+    file << "<DataArray type=\"Int64\" Name=\"connectivity\" format=\"ascii\">\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        const Index base = elem * pts_per_cell;
+        for (Index k = 0; k < pts_per_cell; ++k) {
+            file << (base + k) << (k + 1 == pts_per_cell ? '\n' : ' ');
+        }
+    }
+    file << "</DataArray>\n";
+
+    file << "<DataArray type=\"Int64\" Name=\"offsets\" format=\"ascii\">\n";
+    for (Index e = 1; e <= num_elements; ++e) {
+        file << (e * pts_per_cell) << "\n";
+    }
+    file << "</DataArray>\n";
+
+    file << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
+    for (Index e = 0; e < num_elements; ++e) {
+        file << "70\n"; // VTK_LAGRANGE_QUADRILATERAL
+    }
+    file << "</DataArray>\n";
+    file << "</Cells>\n";
+
+    file << "<PointData Scalars=\"" << scalar_name << "\">\n";
+    file << "<DataArray type=\"Float64\" Name=\"" << scalar_name << "\" format=\"ascii\">\n";
+    for (const auto &v : vertices) {
+        file << v.z() << "\n";
+    }
+    file << "</DataArray>\n";
+    file << "</PointData>\n";
+
+    file << "<CellData Scalars=\"element_id\">\n";
+    file << "<DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
+    for (Index elem = 0; elem < num_elements; ++elem) {
+        file << elem << "\n";
+    }
+    file << "</DataArray>\n";
+    for (const auto &[name, values] : element_cell_data) {
+        file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
+        for (Index elem = 0; elem < num_elements; ++elem) {
+            file << values[static_cast<size_t>(elem)] << "\n";
+        }
+        file << "</DataArray>\n";
+    }
+    file << "</CellData>\n";
+
     file << "</Piece>\n";
     file << "</UnstructuredGrid>\n";
     file << "</VTKFile>\n";

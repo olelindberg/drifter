@@ -13,7 +13,9 @@
 #include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/cg_hermite_bathymetry_smoother.hpp"
 #include "core/types.hpp"
+#include <functional>
 #include <memory>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,13 @@ struct AdaptiveCGHermiteConfig {
     int max_elements = 10000;
     int max_refinement_level = 10;
 
+    /// Stop refining once the data resolution is reached
+    bool enforce_pixel_limit = true;
+    /// Minimum element size in world units (0 = auto from the data resolution)
+    Real min_element_size = 0.0;
+    /// Minimum number of raster data points a child element must cover (0 = off)
+    int min_data_points_per_element = 4;
+
     ErrorMetricType error_metric_type = ErrorMetricType::NormalizedError;
 
     // Dorfler marking
@@ -88,6 +97,12 @@ struct AdaptiveCGHermiteConfig {
 
     /// If non-empty, VTK is written to {prefix}_iter_{N}.vtu each iteration
     std::string vtk_output_prefix = "";
+
+    /// Degree of the VTK_LAGRANGE_QUAD cells written for the fitted surface.
+    /// <= 0 uses the element surface degree, which reproduces the surface
+    /// exactly but gives ParaView few nodes to tessellate; a higher degree
+    /// resamples the same polynomial on more nodes for better visual inspection.
+    int vtk_order = 0;
 };
 
 /// @brief Result of a single adaptation iteration
@@ -146,7 +161,21 @@ public:
 
     const AdaptiveCGHermiteConfig &config() const { return config_; }
 
-    void write_vtk(const std::string &filename, int resolution = 8) const;
+    /// @brief Set the data resolution (pixel size, world units) as a function of position
+    ///
+    /// Wired from MultiSourceBathymetry::get_min_element_size_meters so that
+    /// high-resolution tiles allow finer refinement than the primary raster.
+    /// A return value <= 0 means "unknown here" and falls back to the config.
+    void set_resolution_func(std::function<Real(Real, Real)> f) {
+        resolution_func_ = std::move(f);
+    }
+
+    /// @brief Write the fitted surface as per-element VTK_LAGRANGE_QUAD cells
+    ///
+    /// @param order Degree of the emitted cells; <= 0 falls back to
+    ///              config().vtk_order, and then to the exact degree of the
+    ///              Hermite element
+    void write_vtk(const std::string &filename, int order = 0) const;
 
 protected:
     bool is_solved_impl() const override { return smoother_ && smoother_->is_solved(); }
@@ -164,7 +193,19 @@ private:
     select_elements_for_refinement(const std::vector<HermiteElementErrorEstimate> &errors) const;
     void refine_elements(const std::vector<Index> &elements_to_refine);
     void compute_element_error_statistics(Index elem, Real &l2_error) const;
+
+    /// @brief Per-element VTK cell data: the refinement error metric, its
+    ///        components, and the refinement level
+    std::vector<std::pair<std::string, std::vector<Real>>>
+    element_cell_data(const std::vector<HermiteElementErrorEstimate> &errors) const;
     bool is_element_on_land(Index elem) const;
+
+    /// @brief Data resolution (pixel size) at the centre of an element, or 0 if unknown
+    Real element_resolution(Index elem) const;
+
+    /// @brief Whether refining this element is allowed by the resolution limits
+    bool refinement_allowed(Index elem) const;
+
     void print_profile_report() const;
 
     Real error_metric(const HermiteElementErrorEstimate &err) const {
@@ -179,6 +220,7 @@ private:
     }
 
     AdaptiveCGHermiteConfig config_;
+    std::function<Real(Real, Real)> resolution_func_;
     std::unique_ptr<CGHermiteBathymetrySmoother> smoother_;
     std::vector<HermiteAdaptationResult> history_;
     std::vector<HermiteIterationProfile> profiles_;

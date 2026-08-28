@@ -112,6 +112,23 @@ find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 --dry-ru
 find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
 ```
 
+## CI
+
+`.github/workflows/ci.yml` builds a gcc-12 / clang-15 × Debug / Release matrix with Ninja, plus a
+clang-format-15 check. **CI configures with `DRIFTER_USE_VTK=OFF`, `DRIFTER_USE_ZARR=OFF` and no
+GDAL**, so anything guarded behind those options — most of the bathymetry app path — is not
+compiled there. A local build with the defaults exercises far more code than CI does; do not treat
+a green CI run as coverage for GeoTIFF/VTK work. `nightly.yml` runs the extended suite on a cron.
+
+## Logging and Profiling
+
+- `core/logger.hpp` — singleton `Logger` behind `LOG_DEBUG/INFO/WARNING/ERROR(msg)` macros that
+  capture the enclosing function name and short-circuit before building the message string when
+  the level is disabled. Default level is INFO (DEBUG off). Use these rather than `std::cout`.
+- `core/scoped_timer.hpp` — `ScopedTimer` accumulates elapsed ms into a `double&`;
+  `OptionalScopedTimer` takes a pointer and is a true no-op when null, which is how the smoothers
+  carry per-phase timings without paying for them when profiling is off.
+
 ## Architecture
 
 ### Core Data Types (`include/core/types.hpp`)
@@ -241,6 +258,15 @@ Hermite-specific config (`CGHermiteSmootherConfig`): `continuity_order`, `lambda
 `ridge_epsilon`, `ngauss_data` (2 for C⁰, 4 for C¹), `enable_zero_gradient_bc` (silently inactive
 at r=0), `use_equilibration` (symmetric scaling of the mixed-unit DOFs inside `solve()` only),
 `boundary_relaxation`.
+
+`AdaptiveCGHermiteConfig` additionally stops refinement at the data resolution (the Bezier path
+does not read these from JSON): `enforce_pixel_limit` (default true) with `min_element_size`
+(0 = auto from the data resolution), and `min_data_points_per_element` (default 4) — the minimum
+number of raster pixels a *child* element must cover. The resolution is per element, supplied by
+`AdaptiveCGHermiteSmoother::set_resolution_func()`, which `Drifter::run()` wires to
+`MultiSourceBathymetry::get_min_element_size_meters()` so high-resolution tiles allow finer
+refinement than the primary raster. Hitting either limit reports
+`ConvergenceReason::PixelResolution`.
 
 **Adaptive variants:** `AdaptiveCGCubicBezierSmoother`, `AdaptiveCGLinearBezierSmoother`,
 `AdaptiveCGHermiteSmoother` - error-driven mesh refinement (solve → estimate → Dörfler-mark →
