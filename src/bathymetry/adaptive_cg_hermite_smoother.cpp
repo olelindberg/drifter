@@ -441,27 +441,45 @@ int AdaptiveCGHermiteSmoother::refine_coastline() {
     coastline_refined_ = true;
 
     if (!coastline_index_ || coastline_index_->num_segments() == 0) {
+        LOG_INFO("Coastline refinement stopped: no coastline data (0 sweeps, "
+                 << quadtree_->num_elements() << " elements)");
         return 0;
     }
 
+    // Refine while the tightest coastline feature inside the element is smaller
+    // than the element itself. min_curvature_radius() clamps its result from
+    // below, so this converges on elements of about coastline_min_curvature_radius_
+    // along the coast, and returns infinity - refining nothing - where the element
+    // holds no coastline vertex at all. Kept separate from the sweep so the
+    // stopping reason can re-test the elements a limit skipped.
+    auto wants_refinement = [this](Index elem) {
+        const QuadBounds &bounds = quadtree_->element_bounds(elem);
+        const Real element_side =
+            std::min(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
+        const Real min_curvature = coastline_index_->min_curvature_radius(
+            bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
+            coastline_min_curvature_radius_);
+        return min_curvature < element_side;
+    };
+
     int sweeps = 0;
-    bool changed = true;
+    const char *reason = "coastline resolved to the curvature limit";
 
-    while (changed) {
-        changed = false;
-
+    while (true) {
         // Bounded here as well as in the error-driven loop: a min_curvature_radius
         // far below the mesh scale would otherwise refine the whole coast to the
         // pixel limit before the first solve.
         if (static_cast<int>(quadtree_->num_elements()) >= config_.max_elements) {
-            LOG_INFO("Coastline refinement stopped at max_elements ("
-                     << config_.max_elements << ")");
+            reason = "maximum elements reached";
             break;
         }
 
         std::vector<Index> to_refine;
+        std::vector<Index> at_max_level;
+        std::vector<Index> at_data_limit;
         for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
             if (quadtree_->element_level(elem).max_level() >= coastline_max_level_) {
+                at_max_level.push_back(elem);
                 continue;
             }
             // Shares the data-resolution limits with the error-driven loop. Its
@@ -469,46 +487,47 @@ int AdaptiveCGHermiteSmoother::refine_coastline() {
             // which is what we want: the coast is exactly where the pinned land
             // and beach elements are, and resolving them is the point.
             if (!refinement_allowed(elem)) {
+                at_data_limit.push_back(elem);
                 continue;
             }
 
-            const QuadBounds &bounds = quadtree_->element_bounds(elem);
-
-            // Refine while the tightest coastline feature inside the element is
-            // smaller than the element itself. min_curvature_radius() clamps its
-            // result from below, so this converges on elements of about
-            // coastline_min_curvature_radius_ along the coast, and returns
-            // infinity - refining nothing - where the element holds no coastline
-            // vertex at all.
-            const Real element_side =
-                std::min(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
-            const Real min_curvature = coastline_index_->min_curvature_radius(
-                bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
-                coastline_min_curvature_radius_);
-
-            if (min_curvature < element_side) {
+            if (wants_refinement(elem)) {
                 to_refine.push_back(elem);
             }
         }
 
-        if (!to_refine.empty()) {
-            // Refinement rebalances to 2:1 and invalidates every element index,
-            // so the next sweep rescans from scratch.
-            refine_octree_only(to_refine);
-            changed = true;
-            ++sweeps;
-            LOG_INFO("Coastline sweep " << sweeps << ": refined " << to_refine.size()
-                                        << " elements, " << quadtree_->num_elements()
-                                        << " total");
+        if (to_refine.empty()) {
+            // Nothing left to refine, so this sweep is the last one: the reason is
+            // whichever limit held back an element that still wanted refining.
+            const bool level_bound =
+                std::any_of(at_max_level.begin(), at_max_level.end(), wants_refinement);
+            const bool data_bound =
+                std::any_of(at_data_limit.begin(), at_data_limit.end(), wants_refinement);
+            if (level_bound && data_bound) {
+                reason = "maximum refinement level and data resolution limit reached";
+            } else if (level_bound) {
+                reason = "maximum refinement level reached";
+            } else if (data_bound) {
+                reason = "data resolution limit reached";
+            }
+            break;
         }
+
+        // Refinement rebalances to 2:1 and invalidates every element index,
+        // so the next sweep rescans from scratch.
+        refine_octree_only(to_refine);
+        ++sweeps;
+        LOG_INFO("Coastline sweep " << sweeps << ": refined " << to_refine.size()
+                                    << " elements, " << quadtree_->num_elements() << " total");
     }
 
     if (sweeps > 0) {
         // The mesh changed under any smoother built from an earlier mesh
         smoother_.reset();
-        LOG_INFO("Coastline refinement: " << sweeps << " sweeps, "
-                                          << quadtree_->num_elements() << " elements");
     }
+
+    LOG_INFO("Coastline refinement stopped: " << reason << " (" << sweeps << " sweeps, "
+                                              << quadtree_->num_elements() << " elements)");
 
     return sweeps;
 }

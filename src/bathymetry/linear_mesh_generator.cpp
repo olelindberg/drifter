@@ -126,19 +126,36 @@ void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) 
 
 int LinearMeshGenerator::refine_coastline() {
     if (!coastline_index_ || coastline_index_->num_segments() == 0) {
+        LOG_INFO("Coastline refinement stopped: no coastline data (0 iterations, "
+                 << mesh_.num_elements() << " elements)");
         return 0;
     }
 
-    int iterations = 0;
-    bool changed = true;
+    // Curvature-based refinement: refine if smallest curvature radius within the
+    // element is smaller than the element side length. Kept separate from the
+    // scan so the stopping reason can re-test the elements a limit skipped.
+    auto wants_refinement = [this](Index elem) {
+        const auto& bounds = mesh_.element_bounds(elem);
+        Real element_side = std::min(bounds.xmax - bounds.xmin,
+                                      bounds.ymax - bounds.ymin);
+        Real min_curvature = coastline_index_->min_curvature_radius(
+            bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
+            coastline_min_curvature_radius_);
+        return min_curvature < element_side;
+    };
 
-    while (changed) {
-        changed = false;
+    int iterations = 0;
+    const char* reason = "coastline resolved to the curvature limit";
+
+    while (true) {
         std::vector<Index> to_refine;
+        std::vector<Index> at_max_level;
+        std::vector<Index> at_pixel_limit;
 
         for (Index elem = 0; elem < mesh_.num_elements(); ++elem) {
             auto level = mesh_.element_level(elem);
             if (level.max_level() >= coastline_max_level_) {
+                at_max_level.push_back(elem);
                 continue;
             }
 
@@ -155,33 +172,44 @@ int LinearMeshGenerator::refine_coastline() {
                     Real elem_min_size = std::min(size(0), size(1));
                     // Check if CHILDREN would be below pixel resolution
                     if (elem_min_size < 2.0 * min_size) {
+                        at_pixel_limit.push_back(elem);
                         continue;  // Children would be below pixel resolution
                     }
                 }
             }
 
-            // Curvature-based refinement: refine if smallest curvature radius
-            // within the element is smaller than the element side length.
-            Real element_side = std::min(bounds.xmax - bounds.xmin,
-                                          bounds.ymax - bounds.ymin);
-            Real min_curvature = coastline_index_->min_curvature_radius(
-                bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
-                coastline_min_curvature_radius_);
-
-            if (min_curvature < element_side) {
+            if (wants_refinement(elem)) {
                 to_refine.push_back(elem);
             }
         }
 
-        if (!to_refine.empty()) {
-            refine_elements(to_refine);
-            changed = true;
-            ++iterations;
-
-            LOG_INFO("Coastline iteration " << iterations << ": refined " << to_refine.size()
-                                              << " elements, " << mesh_.num_elements() << " total");
+        if (to_refine.empty()) {
+            // Nothing left to refine, so this pass is the last one: the reason is
+            // whichever limit held back an element that still wanted refining.
+            bool level_bound =
+                std::any_of(at_max_level.begin(), at_max_level.end(), wants_refinement);
+            bool pixel_bound =
+                std::any_of(at_pixel_limit.begin(), at_pixel_limit.end(), wants_refinement);
+            if (level_bound && pixel_bound) {
+                reason = "max refinement level and pixel resolution reached";
+            } else if (level_bound) {
+                reason = "max refinement level reached";
+            } else if (pixel_bound) {
+                reason = "pixel resolution reached";
+            }
+            break;
         }
+
+        refine_elements(to_refine);
+        ++iterations;
+
+        LOG_INFO("Coastline iteration " << iterations << ": refined " << to_refine.size()
+                                          << " elements, " << mesh_.num_elements() << " total");
     }
+
+    LOG_INFO("Coastline refinement stopped: " << reason << " (" << iterations
+                                              << " iterations, " << mesh_.num_elements()
+                                              << " elements)");
 
     // Rebuild surface after coastline refinement
     if (iterations > 0) {
