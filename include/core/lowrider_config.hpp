@@ -4,6 +4,7 @@
 /// @brief Configuration structures for Lowrider adaptive mesh generator
 
 #include "bathymetry/adaptive_smoother_types.hpp"
+#include "core/coastline_config.hpp"
 #include "core/types.hpp"
 #include <string>
 #include <vector>
@@ -56,16 +57,9 @@ struct LowriderDataConfig {
 };
 
 /// @brief Coastline refinement configuration
-struct LowriderCoastlineConfig {
-    std::string file;              ///< Path to shapefile/GeoPackage (empty = disabled)
-    std::string layer;             ///< Layer name (optional, defaults to first)
-    std::string srs;               ///< Target SRS (e.g., "EPSG:3034")
-    int max_level = 10;            ///< Max refinement level near coastline
-    Real min_polygon_area = 0.0;   ///< Filter small polygons (0 = no filter)
-    Real min_curvature_radius = 1000.0;  ///< Minimum curvature radius to consider (meters)
-
-    bool enabled() const { return !file.empty(); }
-};
+///
+/// Shared with the highrider path; see core/coastline_config.hpp.
+using LowriderCoastlineConfig = CoastlineConfig;
 
 /// @brief Main configuration structure
 struct LowriderConfig {

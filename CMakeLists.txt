@@ -110,6 +110,7 @@ endif()
 
 # Source files by module
 set(CORE_SOURCES
+    src/core/coastline_config.cpp
     src/core/config.cpp
     src/core/config_reader.cpp
     src/core/drifter.cpp

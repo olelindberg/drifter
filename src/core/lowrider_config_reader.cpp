@@ -94,14 +94,8 @@ LowriderConfig LowriderConfigReader::load(const std::string &path) {
   }
 
   // Coastline configuration (optional)
-  if (tree.count("coastline")) {
-    const auto &coast               = tree.get_child("coastline");
-    config.coastline.file           = coast.get<std::string>("file", "");
-    config.coastline.layer          = coast.get<std::string>("layer", "");
-    config.coastline.srs            = coast.get<std::string>("srs", "");
-    config.coastline.max_level      = coast.get<int>("max_level", 10);
-    config.coastline.min_polygon_area = coast.get<Real>("min_polygon_area", 0.0);
-    config.coastline.min_curvature_radius = coast.get<Real>("min_curvature_radius", 1000.0);
+  if (auto coast = tree.get_child_optional("coastline")) {
+    config.coastline = parse_coastline_config(*coast);
   }
 
   config.verbose = tree.get<bool>("verbose", true);

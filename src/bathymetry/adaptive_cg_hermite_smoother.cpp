@@ -1,5 +1,6 @@
 #include "bathymetry/adaptive_cg_hermite_smoother.hpp"
 #include "bathymetry/basis_2d_base.hpp"
+#include "core/logger.hpp"
 #include "core/scoped_timer.hpp"
 #include "io/bathymetry_vtk_writer.hpp"
 #include "mesh/geotiff_reader.hpp"
@@ -413,6 +414,105 @@ void AdaptiveCGHermiteSmoother::refine_elements(const std::vector<Index> &elemen
     }
 }
 
+void AdaptiveCGHermiteSmoother::refine_octree_only(
+    const std::vector<Index> &elements_to_refine) {
+    if (elements_to_refine.empty()) {
+        return;
+    }
+
+    const std::vector<RefineMask> masks(elements_to_refine.size(), RefineMask::XY);
+    octree_->refine(elements_to_refine, masks); // auto-balances to 2:1
+    quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
+}
+
+// =============================================================================
+// Coastline pre-pass
+// =============================================================================
+
+void AdaptiveCGHermiteSmoother::set_coastline(std::shared_ptr<const CoastlineIndex> index,
+                                              int max_level, Real min_curvature_radius) {
+    coastline_index_ = std::move(index);
+    coastline_max_level_ = max_level;
+    coastline_min_curvature_radius_ = min_curvature_radius;
+    coastline_refined_ = false;
+}
+
+int AdaptiveCGHermiteSmoother::refine_coastline() {
+    coastline_refined_ = true;
+
+    if (!coastline_index_ || coastline_index_->num_segments() == 0) {
+        return 0;
+    }
+
+    int sweeps = 0;
+    bool changed = true;
+
+    while (changed) {
+        changed = false;
+
+        // Bounded here as well as in the error-driven loop: a min_curvature_radius
+        // far below the mesh scale would otherwise refine the whole coast to the
+        // pixel limit before the first solve.
+        if (static_cast<int>(quadtree_->num_elements()) >= config_.max_elements) {
+            LOG_INFO("Coastline refinement stopped at max_elements ("
+                     << config_.max_elements << ")");
+            break;
+        }
+
+        std::vector<Index> to_refine;
+        for (Index elem = 0; elem < quadtree_->num_elements(); ++elem) {
+            if (quadtree_->element_level(elem).max_level() >= coastline_max_level_) {
+                continue;
+            }
+            // Shares the data-resolution limits with the error-driven loop. Its
+            // pinned-element test is inert here because no smoother exists yet,
+            // which is what we want: the coast is exactly where the pinned land
+            // and beach elements are, and resolving them is the point.
+            if (!refinement_allowed(elem)) {
+                continue;
+            }
+
+            const QuadBounds &bounds = quadtree_->element_bounds(elem);
+
+            // Refine while the tightest coastline feature inside the element is
+            // smaller than the element itself. min_curvature_radius() clamps its
+            // result from below, so this converges on elements of about
+            // coastline_min_curvature_radius_ along the coast, and returns
+            // infinity - refining nothing - where the element holds no coastline
+            // vertex at all.
+            const Real element_side =
+                std::min(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
+            const Real min_curvature = coastline_index_->min_curvature_radius(
+                bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
+                coastline_min_curvature_radius_);
+
+            if (min_curvature < element_side) {
+                to_refine.push_back(elem);
+            }
+        }
+
+        if (!to_refine.empty()) {
+            // Refinement rebalances to 2:1 and invalidates every element index,
+            // so the next sweep rescans from scratch.
+            refine_octree_only(to_refine);
+            changed = true;
+            ++sweeps;
+            LOG_INFO("Coastline sweep " << sweeps << ": refined " << to_refine.size()
+                                        << " elements, " << quadtree_->num_elements()
+                                        << " total");
+        }
+    }
+
+    if (sweeps > 0) {
+        // The mesh changed under any smoother built from an earlier mesh
+        smoother_.reset();
+        LOG_INFO("Coastline refinement: " << sweeps << " sweeps, "
+                                          << quadtree_->num_elements() << " elements");
+    }
+
+    return sweeps;
+}
+
 // =============================================================================
 // Adaptive solve
 // =============================================================================
@@ -559,6 +659,13 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
 HermiteAdaptationResult AdaptiveCGHermiteSmoother::solve_adaptive() {
     if (!bathy_func_) {
         throw std::runtime_error("AdaptiveCGHermiteSmoother: bathymetry data not set");
+    }
+
+    // Resolve the coastline before the error-driven loop starts, so the first
+    // solve already sees a mesh that follows the shoreline. A no-op when no
+    // coastline was set.
+    if (!coastline_refined_) {
+        refine_coastline();
     }
 
     profiles_.clear();

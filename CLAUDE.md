@@ -15,41 +15,60 @@ DRIFTER is a 3D Discontinuous Galerkin (DG) adaptive multi-resolution coastal oc
 
 ## Build Commands
 
+Every command that builds or runs a binary needs `LD_LIBRARY_PATH=/home/ole/.local/lib` — see the
+note below for why. Shell state does not persist between Bash tool calls, so prefix each
+invocation rather than relying on an earlier `export`.
+
 ```bash
-# Configure (from project root)
+# Configure (from project root) - no prefix needed, nothing is executed
 cmake -B build
 
 # Build (use max 6 parallel jobs to avoid memory issues)
-cmake --build build --parallel 6
+LD_LIBRARY_PATH=/home/ole/.local/lib cmake --build build --parallel 6
 
 # Run all tests
-ctest --test-dir build --output-on-failure
+LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build --output-on-failure
 
 # Run only unit / integration tests
-ctest --test-dir build -L unit --output-on-failure
-ctest --test-dir build -L integration --output-on-failure
+LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -L unit --output-on-failure
+LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -L integration --output-on-failure
 
 # Run a single test by name
-ctest --test-dir build -R "TestName" --output-on-failure
+LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -R "TestName" --output-on-failure
 
-# List available test names
+# List available test names (no binary is run)
 ctest --test-dir build -N
 
 # Run test executable directly (shows all logging output)
-./build/tests/drifter_unit_tests
-./build/tests/drifter_integration_tests
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_unit_tests
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_integration_tests
 
 # Run specific test(s) with gtest filter
-./build/tests/drifter_unit_tests --gtest_filter="TestName*"
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_unit_tests --gtest_filter="TestName*"
 
 # Run tests with verbose output
-ctest --test-dir build -V
+LD_LIBRARY_PATH=/home/ole/.local/lib ctest --test-dir build -V
 ```
 
-Note: README.md and older notes prefix every command with
-`LD_LIBRARY_PATH=/home/ole/.local/lib`. That path does not exist on this machine — GDAL and the
-other dependencies resolve from the system lib dir, so the prefix is unnecessary. Only re-add a
-`LD_LIBRARY_PATH` if a link/run actually fails to find a library.
+**Why the `LD_LIBRARY_PATH` prefix is required** (README.md and the older notes are right about
+this; a previous revision of this file wrongly claimed the path did not exist and the prefix was
+unnecessary):
+
+GDAL and PROJ are local builds in `/home/ole/.local/lib`, not system packages — the system
+`ldconfig` only knows `libproj.so.15` / `.22`, and the build needs `libproj.so.25`. CMake gives
+the binaries `RUNPATH=/home/ole/.local/lib`, which is why `libgdal.so.37` resolves without help,
+but **`RUNPATH` is not inherited by transitive dependencies**: `libgdal.so.37` carries no
+`RUNPATH` of its own, so *its* dependency `libproj.so.25` is not found. Hence the prefix.
+
+This bites at **build** time, not just at run time: `gtest_discover_tests` executes the freshly
+linked test binaries, so without the prefix `cmake --build` fails with
+
+```
+build/tests/drifter_unit_tests: error while loading shared libraries: libproj.so.25: ...
+CMake Error at .../GoogleTestAddTests.cmake:83 (message): Error running test executable.
+```
+
+which looks like a compile failure but is purely a loader path problem.
 
 Two further test executables exist beyond unit/integration:
 - `./build/tests/drifter_benchmarks` (ctest label `benchmark`) from `tests/benchmarks/` -
@@ -68,9 +87,9 @@ both of which are bathymetry mesh tools, not ocean simulations:
 | `lowrider` | `apps/lowrider/main.cpp` → `Lowrider` (`src/core/lowrider.cpp`) | Low-order path: adaptive **bilinear** mesh generation — no smoothing solve, just refine-and-sample | `config/lowrider_example.json` |
 
 ```bash
-./build/apps/highrider/highrider config/highrider_example.json
-./build/apps/highrider/highrider config/highrider_hermite_example.json
-./build/apps/lowrider/lowrider  config/lowrider_example.json
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/apps/highrider/highrider config/highrider_example.json
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/apps/highrider/highrider config/highrider_hermite_example.json
+LD_LIBRARY_PATH=/home/ole/.local/lib ./build/apps/lowrider/lowrider  config/lowrider_example.json
 ```
 
 Each app has its own config struct and reader — `DrifterConfig`/`ConfigReader` vs
@@ -410,7 +429,8 @@ Test files in `tests/integration/`:
 | `test_simulation_full.cpp` | Full simulation pipeline with diagnostics and VTK output |
 | `test_vtk_output.cpp` | VTK writer, PVD time series |
 
-Run specific tests with gtest filter: `./build/tests/drifter_integration_tests --gtest_filter="CG*Bezier*"`
+Run specific tests with gtest filter:
+`LD_LIBRARY_PATH=/home/ole/.local/lib ./build/tests/drifter_integration_tests --gtest_filter="CG*Bezier*"`
 
 The lowrider path is covered by unit tests instead: `test_linear_mesh.cpp`,
 `test_pixel_error_estimator.cpp`, `test_pixel_max_error_estimator.cpp`, and

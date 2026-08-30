@@ -6,8 +6,10 @@
 #include "bathymetry/adaptive_cg_hermite_smoother.hpp"
 #include "core/logger.hpp"
 #include "io/raster_vtk_writer.hpp"
+#include "mesh/coastline_refinement.hpp"
 #include "mesh/multi_source_bathymetry.hpp"
 #include <chrono>
+#include <memory>
 #include <cmath>
 #include <filesystem>
 #include <functional>
@@ -37,7 +39,9 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
                           const std::function<bool(Real, Real)> &land_mask,
                           const std::function<bool(Real, Real)> &has_data_func,
                           const std::function<bool(Real, Real)> &is_land_func, int vtk_arg,
-                          const std::function<Real(Real, Real)> &resolution_func) {
+                          const std::function<Real(Real, Real)> &resolution_func,
+                          const std::shared_ptr<const CoastlineIndex> &coastline_index,
+                          const CoastlineConfig &coastline_config) {
   std::cout << "\n=== " << label << " ===" << std::endl;
   std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]" << std::endl;
 
@@ -52,6 +56,14 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
   // Only the Hermite path enforces the data-resolution refinement limits
   if constexpr (requires { smoother.set_resolution_func(resolution_func); }) {
     smoother.set_resolution_func(resolution_func);
+  }
+
+  // Likewise the coastline pre-pass, which respects those same limits
+  if constexpr (requires { smoother.set_coastline(coastline_index, 0, 0.0); }) {
+    if (coastline_index) {
+      smoother.set_coastline(coastline_index, coastline_config.max_level,
+                             coastline_config.min_curvature_radius);
+    }
   }
 
   // Solve with timing
@@ -115,6 +127,12 @@ bool Drifter::data_files_exist() const {
             LOG_ERROR("Tile file not found: " << tile_path);
             return false;
         }
+    }
+
+    // The coastline path is absolute, not relative to data_dir
+    if (config_.coastline.enabled() && !std::filesystem::exists(config_.coastline.file)) {
+        LOG_ERROR("Coastline file not found: " << config_.coastline.file);
+        return false;
     }
 
     return true;
@@ -191,6 +209,41 @@ int Drifter::run() {
     }
   };
 
+  // Load the coastline the mesh should resolve, if one was configured. The
+  // domain-filtered overload pushes the bounds into GDAL's spatial filter, which
+  // is what makes a global dataset usable here.
+  std::shared_ptr<const CoastlineIndex> coastline_index;
+  if (config_.coastline.enabled()) {
+    LOG_INFO("Loading coastline: " << config_.coastline.file);
+    CoastlineReader reader;
+    if (!reader.load(config_.coastline.file, config_.coastline.layer, config_.coastline.srs, xmin,
+                     ymin, xmax, ymax)) {
+      LOG_ERROR("Failed to load coastline: " << reader.last_error());
+      return 1;
+    }
+
+    auto index = reader.build_index(xmin, ymin, xmax, ymax);
+    LOG_INFO("Coastline index: " << index->num_segments() << " segments, "
+                                 << index->num_curvature_points() << " curvature points");
+    if (index->num_curvature_points() == 0) {
+      LOG_WARNING("Coastline carries no curvature points in this domain; the pre-pass "
+                  "will refine nothing");
+    }
+
+    // Written alongside the input raster, and under the same flag: both exist to
+    // be overlaid on the fitted surface when checking what the mesh followed.
+    if (config_.write_input_raster) {
+      const std::string coast_path = config_.output_file + "_coastline";
+      reader.write_vtk(coast_path);
+      CurvatureCombConfig comb_config;
+      comb_config.scale = 0.1; // 10% of the curvature radius
+      reader.write_curvature_comb_vtk(coast_path + "_comb", comb_config);
+      LOG_INFO("Coastline written to     : " << coast_path << ".vtp");
+    }
+
+    coastline_index = std::move(index);
+  }
+
   // Dispatch on the configured smoother family
   int status = 1;
   switch (config_.smoother_kind) {
@@ -198,7 +251,7 @@ int Drifter::run() {
     status = run_adaptive_smoother<AdaptiveCGCubicBezierSmoother>(
         config_, config_.adaptive, "Adaptive CG Cubic Bezier Bathymetry Smoother", xmin, xmax, ymin,
         ymax, depth_func, land_mask, has_data_func, is_land_func, config_.vtk_subdivision,
-        resolution_func);
+        resolution_func, coastline_index, config_.coastline);
     break;
   case BathySmootherKind::HermiteC0:
   case BathySmootherKind::HermiteC1: {
@@ -210,7 +263,7 @@ int Drifter::run() {
         config_, hermite_config,
         "Adaptive CG " + to_string(config_.smoother_kind) + " Bathymetry Smoother", xmin, xmax,
         ymin, ymax, depth_func, land_mask, has_data_func, is_land_func,
-        config_.vtk_surface_degree, resolution_func);
+        config_.vtk_surface_degree, resolution_func, coastline_index, config_.coastline);
     break;
   }
   }

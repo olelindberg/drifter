@@ -44,9 +44,16 @@
     "lambda": 1000000.0,
     "ridge_epsilon": 1e-4,
     "ngauss_data": 4,
-    "enable_zero_gradient_bc": false,
+    "enable_zero_gradient_bc": true,
     "use_equilibration": true,
     "verbose": true
+  },
+  "coastline": {
+    "file": "/home/ole/Projects/drifter/data/input/openstreetmap/coastlines-split-4326/lines.shp",
+    "layer": "",
+    "srs": "EPSG:3034",
+    "max_level": 100,
+    "min_curvature_radius": 500.0
   },
   "output": {
     "output_file": "/tmp/drifter_bathymetry_hermite",

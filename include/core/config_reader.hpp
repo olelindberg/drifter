@@ -5,6 +5,7 @@
 
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/adaptive_cg_hermite_smoother.hpp"
+#include "core/coastline_config.hpp"
 #include "core/enum_strings.hpp"
 #include "core/types.hpp"
 #include <string>
@@ -48,6 +49,14 @@ struct DrifterConfig {
   /// The adaptive fields are parsed from the same JSON "adaptive" section as
   /// `adaptive`; only the nested smoother config differs.
   AdaptiveCGHermiteConfig hermite_adaptive;
+
+  // =========================================================================
+  // Coastline refinement
+  // =========================================================================
+
+  /// Curvature-driven refinement toward a vector coastline, run once before the
+  /// error-driven loop. Only the Hermite path acts on it; empty `file` disables it.
+  CoastlineConfig coastline;
 
   // =========================================================================
   // Output

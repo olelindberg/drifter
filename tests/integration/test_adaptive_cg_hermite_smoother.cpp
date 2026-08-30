@@ -9,7 +9,9 @@
 
 #include "bathymetry/adaptive_cg_hermite_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
+#include "mesh/coastline_refinement.hpp"
 #include "mesh/octree_adapter.hpp"
+#include <memory>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -18,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -36,6 +39,45 @@ Real gaussian_bump(Real x, Real y) {
 /// Short-wavelength seabed: needs several levels before it is resolved
 Real high_frequency_bathy(Real x, Real y) {
     return 50.0 + 10.0 * std::sin(x * M_PI / 12.5) * std::cos(y * M_PI / 12.5);
+}
+
+/// Write a sawtooth "coastline" across the middle of the [0,100]^2 domain
+///
+/// Vertices alternate y = 45 / 55 every 5 in x, which puts the circumradius at
+/// every interior vertex at exactly 6.25: with legs a = b = sqrt(125) and chord
+/// c = 10, R = abc / (2|v1 x v2|) = 1250 / 200. That is the length the pre-pass
+/// drives coastal elements down to, and it is small enough that a 4x4 mesh of
+/// 25-wide elements needs two sweeps to reach it.
+///
+/// GeoJSON rather than a shapefile because GDAL reads it from a single text
+/// file; with an empty target SRS no transform is applied, so these are plain
+/// cartesian coordinates.
+constexpr Real SAWTOOTH_CURVATURE_RADIUS = 6.25;
+
+std::string write_sawtooth_geojson(const std::string &path) {
+    std::ofstream ofs(path);
+    ofs << R"({"type":"FeatureCollection","features":[{"type":"Feature",)"
+        << R"("properties":{},"geometry":{"type":"LineString","coordinates":[)";
+    for (int i = 0; i <= 20; ++i) {
+        if (i > 0) {
+            ofs << ",";
+        }
+        ofs << "[" << (i * 5) << "," << ((i % 2 == 0) ? 45 : 55) << "]";
+    }
+    ofs << "]}}]}";
+    return path;
+}
+
+/// Build a coastline index over the sawtooth, or nullptr if GDAL cannot read it
+std::shared_ptr<const CoastlineIndex> make_sawtooth_index() {
+    const std::string path = "/tmp/adaptive_cg_hermite_coastline.geojson";
+    write_sawtooth_geojson(path);
+
+    CoastlineReader reader;
+    if (!reader.load(path)) {
+        return nullptr;
+    }
+    return reader.build_index();
 }
 
 class AdaptiveCGHermiteSmootherTest : public ::testing::Test {
@@ -356,6 +398,141 @@ TEST_F(AdaptiveCGHermiteSmootherTest, StopsAtMinimumDataPointsPerElement) {
         EXPECT_GE((dx / 1.25) * (dy / 1.25),
                   static_cast<Real>(config.min_data_points_per_element) - TOLERANCE);
     }
+}
+
+// =============================================================================
+// Coastline pre-pass
+// =============================================================================
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassIsNoOpWhenUnset) {
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
+
+    EXPECT_EQ(smoother.refine_coastline(), 0);
+    EXPECT_EQ(smoother.mesh().num_elements(), 16);
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassIsNoOpOnEmptyIndex) {
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
+    smoother.set_coastline(std::make_shared<CoastlineIndex>(), 20, 5.0);
+
+    EXPECT_EQ(smoother.refine_coastline(), 0);
+    EXPECT_EQ(smoother.mesh().num_elements(), 16);
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRefinesTowardTheCoastline) {
+    auto index = make_sawtooth_index();
+    ASSERT_NE(index, nullptr) << "GDAL could not read the test GeoJSON";
+    ASSERT_GT(index->num_curvature_points(), 0u);
+
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
+    // Floor below the sawtooth's own radius, so the geometry is what stops it
+    smoother.set_coastline(index, 20, 1.0);
+
+    const int sweeps = smoother.refine_coastline();
+    EXPECT_GT(sweeps, 0);
+    EXPECT_GT(smoother.mesh().num_elements(), 16);
+
+    // Coastal elements shrink to the curvature radius; the pre-pass refines while
+    // the radius is *strictly* smaller than the element, so it stops at 6.25 and
+    // must not go below it.
+    Real min_side = std::numeric_limits<Real>::max();
+    int level_at_coast = 0;
+    for (Index e = 0; e < smoother.mesh().num_elements(); ++e) {
+        const auto &b = smoother.mesh().element_bounds(e);
+        min_side = std::min(min_side, std::min(b.xmax - b.xmin, b.ymax - b.ymin));
+
+        const Real cy = 0.5 * (b.ymin + b.ymax);
+        if (cy > 45.0 && cy < 55.0) {
+            level_at_coast = std::max(level_at_coast, smoother.mesh().element_level(e).max_level());
+        }
+    }
+
+    // The corner is well clear of the y in [45, 55] band, so 2:1 balancing does
+    // not reach it and it stays at the level the base mesh gave it.
+    const Index far = smoother.mesh().find_element(Vec2(12.5, 12.5));
+    ASSERT_GE(far, 0);
+    const int level_far = smoother.mesh().element_level(far).max_level();
+
+    EXPECT_NEAR(min_side, SAWTOOTH_CURVATURE_RADIUS, TOLERANCE);
+    EXPECT_GT(level_at_coast, level_far) << "refinement did not concentrate on the coastline";
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRespectsMaxLevel) {
+    auto index = make_sawtooth_index();
+    ASSERT_NE(index, nullptr);
+
+    // The 4x4 base mesh is at level 2, so this permits exactly one sweep of the
+    // two the sawtooth would otherwise drive.
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
+    smoother.set_coastline(index, 3, 1.0);
+
+    EXPECT_GT(smoother.refine_coastline(), 0);
+
+    for (Index e = 0; e < smoother.mesh().num_elements(); ++e) {
+        EXPECT_LE(smoother.mesh().element_level(e).max_level(), 3);
+    }
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRespectsMinElementSize) {
+    auto index = make_sawtooth_index();
+    ASSERT_NE(index, nullptr);
+
+    auto config = make_config(1);
+    config.enforce_pixel_limit = true;
+    config.min_element_size = 12.5; // base elements are 25, so one sweep fits
+
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+    smoother.set_coastline(index, 20, 1.0);
+
+    EXPECT_GT(smoother.refine_coastline(), 0);
+
+    for (Index e = 0; e < smoother.mesh().num_elements(); ++e) {
+        const auto &b = smoother.mesh().element_bounds(e);
+        EXPECT_GE(std::min(b.xmax - b.xmin, b.ymax - b.ymin), config.min_element_size - TOLERANCE);
+    }
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRespectsMaxElements) {
+    auto index = make_sawtooth_index();
+    ASSERT_NE(index, nullptr);
+
+    auto uncapped = make_config(1);
+    uncapped.max_elements = 100000;
+    AdaptiveCGHermiteSmoother full(0.0, 100.0, 0.0, 100.0, 4, 4, uncapped);
+    full.set_coastline(index, 20, 1.0);
+    full.refine_coastline();
+
+    auto capped_config = make_config(1);
+    capped_config.max_elements = 20; // the base mesh already has 16
+    AdaptiveCGHermiteSmoother capped(0.0, 100.0, 0.0, 100.0, 4, 4, capped_config);
+    capped.set_coastline(index, 20, 1.0);
+    capped.refine_coastline();
+
+    EXPECT_LT(capped.mesh().num_elements(), full.mesh().num_elements());
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, SolveAdaptiveRunsThePrePassOnce) {
+    auto index = make_sawtooth_index();
+    ASSERT_NE(index, nullptr);
+
+    auto config = make_config(1);
+    config.error_threshold = 1e9; // converge immediately, isolating the pre-pass
+    config.max_iterations = 1;
+    config.smoother_config.lambda = 100.0;
+
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+    smoother.set_coastline(index, 20, 1.0);
+    smoother.set_bathymetry_data(gaussian_bump);
+
+    const auto result = smoother.solve_adaptive();
+    EXPECT_GT(result.num_elements, 16);
+    EXPECT_TRUE(smoother.is_solved());
+
+    // A second solve must not refine again: the coastline is already resolved,
+    // and re-running the pre-pass would compound it every call.
+    const Index after_first = smoother.mesh().num_elements();
+    smoother.solve_adaptive();
+    EXPECT_EQ(smoother.mesh().num_elements(), after_first);
 }
 
 // =============================================================================

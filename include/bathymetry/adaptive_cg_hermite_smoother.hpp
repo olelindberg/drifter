@@ -13,6 +13,7 @@
 #include "bathymetry/adaptive_smoother_types.hpp"
 #include "bathymetry/cg_hermite_bathymetry_smoother.hpp"
 #include "core/types.hpp"
+#include "mesh/coastline_refinement.hpp"
 #include <functional>
 #include <memory>
 #include <utility>
@@ -170,6 +171,36 @@ public:
         resolution_func_ = std::move(f);
     }
 
+    // =========================================================================
+    // Coastline pre-pass
+    // =========================================================================
+
+    /// @brief Supply the coastline to refine toward before the error-driven loop
+    ///
+    /// The index is a pure geometry query object; loading the vector file is the
+    /// caller's job. A null or empty index leaves the pre-pass a no-op.
+    ///
+    /// @param index Segment / curvature R-tree, from CoastlineReader::build_index()
+    /// @param max_level Level cap for the pre-pass, independent of
+    ///        config().max_refinement_level, which bounds the error-driven loop
+    /// @param min_curvature_radius Floor passed to
+    ///        CoastlineIndex::min_curvature_radius(). Because that argument
+    ///        clamps rather than filters, it is in effect the target element
+    ///        size along the coast, and it is what stops the pre-pass on a
+    ///        coastline whose sampled vertices are noisier than the mesh.
+    void set_coastline(std::shared_ptr<const CoastlineIndex> index, int max_level,
+                       Real min_curvature_radius);
+
+    /// @brief Refine toward the coastline until every element is smaller than the
+    ///        tightest coastline feature it contains
+    ///
+    /// Runs automatically at the start of solve_adaptive(), once. Refines the mesh
+    /// only - no surface is fitted, so this is cheap relative to an adaptive
+    /// iteration and needs no bathymetry data.
+    ///
+    /// @return Number of refinement sweeps performed (0 if no coastline was set)
+    int refine_coastline();
+
     /// @brief Write the fitted surface as per-element VTK_LAGRANGE_QUAD cells
     ///
     /// @param order Degree of the emitted cells; <= 0 falls back to
@@ -192,6 +223,14 @@ private:
     std::vector<Index>
     select_elements_for_refinement(const std::vector<HermiteElementErrorEstimate> &errors) const;
     void refine_elements(const std::vector<Index> &elements_to_refine);
+
+    /// @brief Refine the mesh without rebuilding the smoother
+    ///
+    /// Used by the coastline pre-pass, which runs before the first solve: there
+    /// is no solution to carry over, so building a Hermite system per sweep only
+    /// to discard it would be wasted work. adapt_once() builds it lazily.
+    void refine_octree_only(const std::vector<Index> &elements_to_refine);
+
     /// @brief L2 error over the element, ignoring pinned (land / NoData) points
     /// @param elem Element index
     /// @param l2_error Output error, renormalised by the weight actually sampled
@@ -227,6 +266,12 @@ private:
 
     AdaptiveCGHermiteConfig config_;
     std::function<Real(Real, Real)> resolution_func_;
+
+    std::shared_ptr<const CoastlineIndex> coastline_index_;
+    int coastline_max_level_ = 10;
+    Real coastline_min_curvature_radius_ = 1000.0;
+    bool coastline_refined_ = false;
+
     std::unique_ptr<CGHermiteBathymetrySmoother> smoother_;
     std::vector<HermiteAdaptationResult> history_;
     std::vector<HermiteIterationProfile> profiles_;

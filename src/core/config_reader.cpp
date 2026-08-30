@@ -370,6 +370,13 @@ DrifterConfig ConfigReader::load(const std::string &filepath) {
   config.adaptive.smoother_config.multigrid_config.min_tree_level = initial_level;
 
   // =========================================================================
+  // Coastline refinement (optional)
+  // =========================================================================
+  if (auto coast_tree = root.get_child_optional("coastline")) {
+    config.coastline = parse_coastline_config(*coast_tree);
+  }
+
+  // =========================================================================
   // Output configuration
   // =========================================================================
   if (auto output_tree = root.get_child_optional("output")) {
@@ -433,6 +440,13 @@ void ConfigReader::save(const DrifterConfig &config, const std::string &filepath
                                                      config.smoother_kind));
   }
 
+  // Coastline section, only when one was configured: an empty block would read
+  // back as disabled anyway, and writing it invites editing a section that does
+  // nothing until `file` is filled in.
+  if (config.coastline.enabled()) {
+    root.add_child("coastline", serialize_coastline_config(config.coastline));
+  }
+
   // Output section
   pt::ptree output_tree;
   output_tree.put("output_file", config.output_file);
@@ -488,6 +502,27 @@ void print_hermite_smoother_section(int w, const CGHermiteSmootherConfig &sc) {
   std::cout << "  " << std::left << std::setw(w) << "solver" << ": SimplicialLDLT (direct, SPD)\n";
 }
 
+/// @brief Print the coastline pre-pass section
+///
+/// Only the Hermite path runs the pre-pass, so the caller reports it there.
+void print_coastline_section(int w, const CoastlineConfig &c) {
+  std::cout << "\nCoastline:\n";
+  if (!c.enabled()) {
+    std::cout << "  " << std::left << std::setw(w) << "file" << ": (disabled)\n";
+    return;
+  }
+  std::cout << "  " << std::left << std::setw(w) << "file" << ": " << c.file << "\n";
+  if (!c.layer.empty()) {
+    std::cout << "  " << std::left << std::setw(w) << "layer" << ": " << c.layer << "\n";
+  }
+  if (!c.srs.empty()) {
+    std::cout << "  " << std::left << std::setw(w) << "srs" << ": " << c.srs << "\n";
+  }
+  std::cout << "  " << std::left << std::setw(w) << "max_level" << ": " << c.max_level << "\n";
+  std::cout << "  " << std::left << std::setw(w) << "min_curvature_radius" << ": "
+            << c.min_curvature_radius << " m\n";
+}
+
 } // namespace
 
 void print_config(const DrifterConfig &config) {
@@ -514,6 +549,7 @@ void print_config(const DrifterConfig &config) {
   if (config.smoother_kind != BathySmootherKind::CubicBezier) {
     print_adaptive_section(w, config.hermite_adaptive);
     print_hermite_smoother_section(w, config.hermite_adaptive.smoother_config);
+    print_coastline_section(w, config.coastline);
 
     std::cout << "\nOutput:\n";
     std::cout << "  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file << "\n";
