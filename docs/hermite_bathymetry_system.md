@@ -699,4 +699,5 @@ equilibration of §11 to be in place.
 - [hermite_smoothness_operator.md](hermite_smoothness_operator.md) — full discretization of the smoothness operator $H$ (§7)
 - [cg_bezier_matrix_system.md](cg_bezier_matrix_system.md) — the system this one replaces
 - [cg_bezier_solver_verification.md](cg_bezier_solver_verification.md) — solver and multigrid benchmarks
+- [coastline_adaptivity.md](coastline_adaptivity.md) — how the mesh this system is assembled on is refined toward the coastline, and where the pinned land DOFs come from
 - [references/paper-audit.md](references/paper-audit.md) — single-core audit against the AMR literature

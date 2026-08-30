@@ -650,3 +650,4 @@ condensed path where those rows never entered the solve.
 - [cg_bezier_solver_verification.md](cg_bezier_solver_verification.md) — solver and multigrid benchmarks
 - [cg_cubic_bezier_uniform_evaluation.md](cg_cubic_bezier_uniform_evaluation.md) — λ and mesh-resolution sweeps
 - [uniform_vs_adaptive_convergence.md](uniform_vs_adaptive_convergence.md) — AMR convergence study
+- [coastline_adaptivity.md](coastline_adaptivity.md) — curvature-driven refinement toward a vector coastline, and the element classification that precedes assembly
