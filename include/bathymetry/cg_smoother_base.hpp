@@ -8,6 +8,7 @@
 /// methods for customization points. Virtual dispatch overhead is acceptable
 /// since these methods are not in performance-critical inner loops.
 
+#include "bathymetry/element_data_mask.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
 #include "core/types.hpp"
 #include "mesh/seabed_surface.hpp"
@@ -84,24 +85,19 @@ public:
 
     /// @brief Tell the smoother where there is no data, and where there is land
     ///
-    /// The two are handled differently, and conflating them puts a spike over every
-    /// survey gap:
+    /// Both predicates drop their points from the least-squares term: a gap has no
+    /// observation to fit, and land is a known value imposed strongly instead of
+    /// fitted as weak data the smoothness term would fight.
     ///
-    /// - **No data** (@p has_data false): the point is dropped from the
-    ///   least-squares term and nothing else. A gap is the *absence* of an
-    ///   observation, not an observation of zero, so the surface is carried across
-    ///   it by the smoothness term at whatever depth the surrounding data implies.
-    ///   It must never be pinned: the seabed does not rise to sea level at the edge
-    ///   of a hole.
-    /// - **Land** (@p is_land true): a known value. Also dropped from the
-    ///   least-squares term, but instead held at depth 0 by a Dirichlet condition
-    ///   in smoothers that can express one (see CGHermiteDofManager). Imposing it
-    ///   strongly, rather than as weak data the smoothness term fights, is what
-    ///   stops the fit overshooting at the coast.
+    /// Beyond that, the two are pooled into a single "not water" region, which
+    /// ElementDataMask then classifies per element - Water is solved for, Beach
+    /// (the rim) is pinned to depth 0, and Inland (the interior) leaves the system
+    /// altogether. Smoothers that cannot express a Dirichlet condition
+    /// (the Bezier family) use only the least-squares exclusion.
     ///
     /// Must be set before set_bathymetry_data() to affect that assembly. Empty
-    /// predicates (the default) mean "data everywhere, no land", i.e. the previous
-    /// behaviour.
+    /// predicates (the default) mean "water everywhere", i.e. the analytic-function
+    /// path, which is unaffected by any of this.
     void set_data_masks(std::function<bool(Real, Real)> has_data,
                         std::function<bool(Real, Real)> is_land) {
         has_data_func_ = std::move(has_data);
@@ -110,6 +106,11 @@ public:
 
     /// @brief The land predicate, or an empty function if none is set
     const std::function<bool(Real, Real)> &land_predicate() const { return is_land_func_; }
+
+    /// @brief Per-element water / beach / inland classification, or null if unset
+    ///
+    /// Built by smoothers that act on it; the Bezier family leaves it null.
+    const ElementDataMask *element_mask() const { return element_mask_.get(); }
 
     /// @brief Number of data-fitting quadrature points dropped by the last assembly
     Index num_excluded_quadrature_points() const { return num_excluded_quad_points_; }
@@ -222,6 +223,26 @@ protected:
 
     /// Quadrature points dropped by the last assemble_data_fitting_global()
     Index num_excluded_quad_points_ = 0;
+
+    /// Per-element classification; null until a derived smoother builds one
+    std::shared_ptr<const ElementDataMask> element_mask_;
+
+    /// @brief Classify the mesh from the current data masks
+    ///
+    /// Called by derived smoothers that act on the classification, after the mesh
+    /// and the masks are both known. Leaves element_mask_ null when there are no
+    /// masks, so the analytic path allocates nothing.
+    void build_element_mask();
+
+    /// @brief Whether an element is dropped from assembly
+    ///
+    /// Every non-water element, Beach as well as Inland: the DOF manager pins all
+    /// of their DOFs, so assembling them would only build rows that condensation
+    /// removes again. Beach and Inland differ in output, not in the solve - a Beach
+    /// element is drawn as the flat zero it is, an Inland element is not drawn.
+    bool is_element_excluded(Index elem) const {
+        return element_mask_ && element_mask_->is_pinned(elem);
+    }
 
     /// @brief Whether (x, y) is land, and so pinned to depth 0
     bool is_land(Real x, Real y) const { return is_land_func_ && is_land_func_(x, y); }

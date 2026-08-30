@@ -163,11 +163,15 @@ std::vector<std::pair<int, int>> lagrange_quad_ordering(int order);
 /// @param order Polynomial degree of the emitted cells (>= 1)
 /// @param scalar_name Name for the elevation/depth scalar field
 /// @param element_cell_data Per-element cell data arrays, indexed by element id
+/// @param include_element Optional filter; elements it rejects are left out of the
+///        file entirely, leaving a hole in the surface rather than a flat patch.
+///        Cell data is still indexed by original element id. Empty emits everything.
 void write_high_order_surface_vtk(
     const std::string &filename, const QuadtreeAdapter &mesh,
     const std::function<Real(Index, Real, Real)> &evaluate_in_element, int order,
     const std::string &scalar_name = "elevation",
-    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data = {});
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data = {},
+    const std::function<bool(Index)> &include_element = {});
 
 /// @brief Write a polygon boundary to VTK PolyData format
 ///

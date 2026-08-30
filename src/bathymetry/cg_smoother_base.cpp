@@ -75,6 +75,15 @@ void CGSmootherBase::set_bathymetry_data(std::function<Real(Real, Real)> bathy_f
     data_set_ = true;
 }
 
+void CGSmootherBase::build_element_mask() {
+    if (!quadtree_ || (!has_data_func_ && !is_land_func_)) {
+        element_mask_.reset();
+        return;
+    }
+    element_mask_ =
+        std::make_shared<const ElementDataMask>(*quadtree_, has_data_func_, is_land_func_);
+}
+
 void CGSmootherBase::set_scattered_points(const std::vector<Vec3> &points) {
     std::vector<BathymetryPoint> bathy_points;
     bathy_points.reserve(points.size());
@@ -293,6 +302,12 @@ void CGSmootherBase::assemble_hessian_global(const HessianBase &hessian) {
     }
 
     for (Index elem = 0; elem < num_elements; ++elem) {
+        // A non-water element has every DOF pinned to 0, so contributing smoothness
+        // energy it can never influence would only add rows condensation drops again.
+        if (is_element_excluded(elem)) {
+            continue;
+        }
+
         Vec2 size = quadtree_->element_size(elem);
         Real dx = size(0);
         Real dy = size(1);
@@ -343,6 +358,13 @@ void CGSmootherBase::assemble_data_fitting_global(
     num_excluded_quad_points_ = 0;
 
     for (Index elem = 0; elem < num_elements; ++elem) {
+        // See assemble_hessian_global(): a non-water element is out of the system,
+        // and skipping it here also skips its raster lookups, which is where the
+        // per-element cost actually is.
+        if (is_element_excluded(elem)) {
+            continue;
+        }
+
         const auto &bounds = quadtree_->element_bounds(elem);
         Real dx = bounds.xmax - bounds.xmin;
         Real dy = bounds.ymax - bounds.ymin;

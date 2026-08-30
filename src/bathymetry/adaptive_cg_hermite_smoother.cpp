@@ -193,6 +193,16 @@ Real AdaptiveCGHermiteSmoother::element_resolution(Index elem) const {
 }
 
 bool AdaptiveCGHermiteSmoother::refinement_allowed(Index elem) const {
+    // A non-water element is pinned to depth 0, or out of the system entirely.
+    // There is no fit to improve there, so refining it only adds DOFs.
+    if (smoother_) {
+        if (const ElementDataMask *mask = smoother_->element_mask()) {
+            if (mask->is_pinned(elem)) {
+                return false;
+            }
+        }
+    }
+
     const QuadBounds &bounds = quadtree_->element_bounds(elem);
     const Real dx = bounds.xmax - bounds.xmin;
     const Real dy = bounds.ymax - bounds.ymin;
@@ -635,10 +645,25 @@ void AdaptiveCGHermiteSmoother::write_vtk(const std::string &filename, int order
     const int emit_order = requested > 0 ? std::max(requested, smoother_->surface_degree())
                                          : smoother_->surface_degree();
 
+    // Inland elements carry no data and are not solved for, so they are left out of
+    // the file entirely - a hole in the surface rather than a misleading flat patch.
+    // Water and Beach are emitted, tagged so the rim is identifiable in ParaView.
+    auto cell_data = element_cell_data(estimate_errors());
+    std::function<bool(Index)> include_element;
+    if (const ElementDataMask *mask = smoother_->element_mask()) {
+        std::vector<Real> element_class(static_cast<size_t>(quadtree_->num_elements()));
+        for (Index e = 0; e < quadtree_->num_elements(); ++e) {
+            element_class[static_cast<size_t>(e)] =
+                static_cast<Real>(static_cast<int>((*mask)[e]));
+        }
+        cell_data.emplace_back("element_class", std::move(element_class));
+        include_element = [mask](Index elem) { return !mask->is_excluded(elem); };
+    }
+
     io::write_high_order_surface_vtk(
         filename, *quadtree_,
         [this](Index elem, Real x, Real y) { return smoother_->evaluate_in_element(elem, x, y); },
-        emit_order, "elevation", element_cell_data(estimate_errors()));
+        emit_order, "elevation", cell_data, include_element);
 }
 
 void AdaptiveCGHermiteSmoother::print_profile_report() const {

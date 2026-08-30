@@ -928,7 +928,8 @@ void write_high_order_surface_vtk(
     const std::string &filename, const QuadtreeAdapter &mesh,
     const std::function<Real(Index, Real, Real)> &evaluate_in_element, int order,
     const std::string &scalar_name,
-    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data) {
+    const std::vector<std::pair<std::string, std::vector<Real>>> &element_cell_data,
+    const std::function<bool(Index)> &include_element) {
 
     if (order < 1) {
         throw std::invalid_argument("write_high_order_surface_vtk: order must be >= 1");
@@ -941,13 +942,24 @@ void write_high_order_surface_vtk(
 
     const std::vector<std::pair<int, int>> ordering = lagrange_quad_ordering(order);
     const Index pts_per_cell = static_cast<Index>(ordering.size());
-    const Index num_elements = mesh.num_elements();
+
+    // Emitted elements, in mesh order. Cell data stays indexed by original element
+    // id, so the filter changes what is written, not how the caller addresses it.
+    std::vector<Index> emitted;
+    emitted.reserve(static_cast<size_t>(mesh.num_elements()));
+    for (Index elem = 0; elem < mesh.num_elements(); ++elem) {
+        if (!include_element || include_element(elem)) {
+            emitted.push_back(elem);
+        }
+    }
+
+    const Index num_elements = static_cast<Index>(emitted.size());
     const Index total_points = num_elements * pts_per_cell;
 
     std::vector<Vec3> vertices;
     vertices.reserve(static_cast<size_t>(total_points));
 
-    for (Index elem = 0; elem < num_elements; ++elem) {
+    for (const Index elem : emitted) {
         const auto &bounds = mesh.element_bounds(elem);
         const Real dx = bounds.xmax - bounds.xmin;
         const Real dy = bounds.ymax - bounds.ymin;
@@ -1011,13 +1023,13 @@ void write_high_order_surface_vtk(
 
     file << "<CellData Scalars=\"element_id\">\n";
     file << "<DataArray type=\"Int64\" Name=\"element_id\" format=\"ascii\">\n";
-    for (Index elem = 0; elem < num_elements; ++elem) {
+    for (const Index elem : emitted) {
         file << elem << "\n";
     }
     file << "</DataArray>\n";
     for (const auto &[name, values] : element_cell_data) {
         file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
-        for (Index elem = 0; elem < num_elements; ++elem) {
+        for (const Index elem : emitted) {
             file << values[static_cast<size_t>(elem)] << "\n";
         }
         file << "</DataArray>\n";

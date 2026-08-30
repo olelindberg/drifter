@@ -50,9 +50,12 @@ void CGHermiteBathymetrySmoother::init_components() {
 
     basis_ = std::make_unique<HermiteBasis2D>(r);
     hessian_ = std::make_unique<HermiteHessian>(r);
-    // Land only: a NoData gap must be interpolated across, never pinned to 0.
+
+    // Classify first: the pins are decided per element, and the DOF manager needs
+    // that classification while it is numbering.
+    build_element_mask();
     dof_manager_ = std::make_unique<CGHermiteDofManager>(
-        *quadtree_, r, config_.enable_zero_gradient_bc, is_land_func_);
+        *quadtree_, r, config_.enable_zero_gradient_bc, element_mask_.get());
 
     slave_to_constraint_.clear();
     const auto &constraints = dof_manager_->constraints();
@@ -101,13 +104,16 @@ void CGHermiteBathymetrySmoother::set_bathymetry_data_impl(
     std::function<Real(Real, Real)> bathy_func) {
     relaxation_config_ = config_.boundary_relaxation;
 
-    // The land region is only known once the data source is attached, and it
+    // The non-water region is only known once the data source is attached, and it
     // changes the constraint set, so the DOF manager is rebuilt here rather than in
-    // init_components(). Cheap next to the assembly that follows.
-    if (is_land_func_) {
+    // init_components(). Cheap next to the assembly that follows, and re-running it
+    // on every re-fit is what keeps the classification correct after refinement.
+    if (has_data_func_ || is_land_func_) {
         init_components();
-        LOG_DEBUG("Hermite land Dirichlet: " << dof_manager_->num_land_pinned_dofs()
-                                             << " DOFs pinned to depth 0");
+        LOG_DEBUG("Hermite elements: " << element_mask_->num_water() << " water, "
+                                       << element_mask_->num_beach() << " beach (pinned to 0), "
+                                       << element_mask_->num_inland() << " inland (excluded); "
+                                       << dof_manager_->num_pinned_dofs() << " DOFs pinned");
     }
 
     {
@@ -246,10 +252,28 @@ void CGHermiteBathymetrySmoother::write_vtk(const std::string &filename, int ord
         throw std::runtime_error("CGHermiteBathymetrySmoother: must solve() before write_vtk()");
     }
 
+    // Inland elements carry no data and are not solved for, so they are left out of
+    // the file entirely - a hole in the surface rather than a misleading flat patch.
+    // Water and Beach are emitted, tagged so the rim is identifiable in ParaView.
+    std::vector<std::pair<std::string, std::vector<Real>>> cell_data;
+    std::function<bool(Index)> include_element;
+    if (element_mask_) {
+        std::vector<Real> element_class(static_cast<size_t>(quadtree_->num_elements()));
+        for (Index e = 0; e < quadtree_->num_elements(); ++e) {
+            element_class[static_cast<size_t>(e)] =
+                static_cast<Real>(static_cast<int>((*element_mask_)[e]));
+        }
+        cell_data.emplace_back("element_class", std::move(element_class));
+
+        const auto mask = element_mask_;
+        include_element = [mask](Index elem) { return !mask->is_excluded(elem); };
+    }
+
     io::write_high_order_surface_vtk(
         filename, *quadtree_,
         [this](Index elem, Real x, Real y) { return evaluate_in_element(elem, x, y); },
-        order > 0 ? std::max(order, surface_degree()) : surface_degree(), "elevation");
+        order > 0 ? std::max(order, surface_degree()) : surface_degree(), "elevation", cell_data,
+        include_element);
 }
 
 void CGHermiteBathymetrySmoother::write_control_points_vtk(const std::string &filename) const {
