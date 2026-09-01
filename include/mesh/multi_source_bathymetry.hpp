@@ -147,6 +147,12 @@ public:
 
     /// @brief Get minimum element size in meters for a point
     ///
+    /// The primary's bounding box wins outright: any point inside it is resolved
+    /// at the primary's pixel size, whether the value there is data or NoData.
+    /// Only a point outside that box falls through to the tiles. This is a
+    /// statement about sampling geometry, not about coverage - see the note in
+    /// the implementation.
+    ///
     /// For sources in geographic CRS (EPSG:4326), converts pixel size from degrees
     /// to meters using the local latitude. For projected CRS sources, returns the
     /// pixel size directly.

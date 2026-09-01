@@ -145,6 +145,50 @@ TEST_F(MultiSourceBathymetryTest, IsLandReturnsCorrectly) {
   }
 }
 
+TEST_F(MultiSourceBathymetryTest, ResolutionInsidePrimaryIgnoresNoData) {
+  if (!data_files_exist()) {
+    GTEST_SKIP() << "Data files not available";
+  }
+
+  MultiSourceBathymetry bathy(primary_file, tile_files);
+
+  Real xmin, xmax, ymin, ymax;
+  bathy.get_bounds(xmin, xmax, ymin, ymax);
+
+  // Resolution is a property of the raster's sampling, not of the values it
+  // carries, so a point inside the primary's bounds must report the primary's
+  // pixel size whether or not there is a measurement there. This is load-bearing
+  // for the coastline pre-pass: the primary is NoData over land, and letting
+  // that fall through to a tile capped refinement on the land side of every
+  // shoreline at the tile's coarser size.
+  const Real primary_res = bathy.get_primary().min_element_size();
+  ASSERT_GT(primary_res, 0.0);
+
+  Real gap_res = -1.0;
+  Real data_res = -1.0;
+  constexpr int N = 60;
+  for (int i = 1; i < N && (gap_res < 0.0 || data_res < 0.0); ++i) {
+    for (int j = 1; j < N && (gap_res < 0.0 || data_res < 0.0); ++j) {
+      const Real x = xmin + (xmax - xmin) * i / N;
+      const Real y = ymin + (ymax - ymin) * j / N;
+      if (!bathy.is_in_primary(x, y)) {
+        continue;
+      }
+      Real &slot = bathy.has_data(x, y) ? data_res : gap_res;
+      if (slot < 0.0) {
+        slot = bathy.get_min_element_size_meters(x, y);
+      }
+    }
+  }
+
+  ASSERT_GE(data_res, 0.0) << "no covered point found inside the primary bounds";
+  ASSERT_GE(gap_res, 0.0) << "no NoData point found inside the primary bounds";
+
+  EXPECT_NEAR(data_res, primary_res, TOLERANCE);
+  EXPECT_NEAR(gap_res, primary_res, TOLERANCE)
+      << "a NoData point inside the primary fell through to another source";
+}
+
 TEST_F(MultiSourceBathymetryTest, OutsideAllSourcesThrows) {
   if (!data_files_exist()) {
     GTEST_SKIP() << "Data files not available";

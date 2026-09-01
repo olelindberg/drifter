@@ -401,12 +401,16 @@ const BathymetryData* MultiSourceBathymetry::get_source_for_point(Real x, Real y
 
 Real MultiSourceBathymetry::get_min_element_size_meters(Real x, Real y) const {
     // Check primary source first (EPSG:3034 - projected, meters)
+    //
+    // Resolution is a property of the raster's geometry, not of its values: a
+    // NoData pixel over land still says the primary samples this location every
+    // 50 m. Testing the value here would hand the land side of a coastline to
+    // whatever other source happens to cover it - which is a coarser one
+    // whenever the primary is the finest - and cap refinement there at that
+    // coarser size. So the primary's bounding box alone decides.
     if (Impl::is_inside_bounds(impl_->primary, x, y)) {
-        float val = impl_->primary.interpolate(x, y);
-        if (!Impl::is_nodata(val, impl_->primary.nodata_value)) {
-            // Primary is in projected CRS - pixel size already in meters
-            return impl_->primary.min_element_size();
-        }
+        // Primary is in projected CRS - pixel size already in meters
+        return impl_->primary.min_element_size();
     }
 
     // Transform to EPSG:4326 for tile lookup
