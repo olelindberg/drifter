@@ -1303,12 +1303,12 @@ TEST_F(IOTest, CoastlineRefinementMaxLevel) {
     EXPECT_FALSE(refinement.should_refine(bounds, max_level + 1));
 }
 
-TEST_F(IOTest, CoastlineCurvatureCombEmptyReader) {
+TEST_F(IOTest, CoastlineCircumradiusCombEmptyReader) {
     CoastlineReader reader;
 
     // Empty reader should generate empty comb file without crashing
     std::string comb_path = (test_dir_ / "empty_comb").string();
-    reader.write_curvature_comb_vtk(comb_path);
+    reader.write_circumradius_comb_vtk(comb_path);
 
     // Verify file was created
     std::ifstream file(comb_path + ".vtp");

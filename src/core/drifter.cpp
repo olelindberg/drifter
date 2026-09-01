@@ -5,6 +5,7 @@
 #include "bathymetry/adaptive_cg_cubic_bezier_smoother.hpp"
 #include "bathymetry/adaptive_cg_hermite_smoother.hpp"
 #include "core/logger.hpp"
+#include "io/quadtree_vtk_writer.hpp"
 #include "io/raster_vtk_writer.hpp"
 #include "mesh/coastline_refinement.hpp"
 #include "mesh/multi_source_bathymetry.hpp"
@@ -59,10 +60,20 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
   }
 
   // Likewise the coastline pre-pass, which respects those same limits
-  if constexpr (requires { smoother.set_coastline(coastline_index, 0, 0.0); }) {
+  if constexpr (requires { smoother.set_coastline(coastline_index, 0); }) {
     if (coastline_index) {
-      smoother.set_coastline(coastline_index, coastline_config.max_level,
-                             coastline_config.min_curvature_radius);
+      smoother.set_coastline(coastline_index, coastline_config.max_level);
+
+      // Run the pre-pass here rather than leaving it to solve_adaptive(), so the
+      // shoreline-driven mesh can be written before any surface is fitted - which
+      // is the whole run when max_iterations is 0. The call is idempotent, so
+      // solve_adaptive() will not repeat it.
+      smoother.refine_coastline();
+      if (config.write_input_raster) {
+        const std::string mesh_path = config.output_file + "_coastline_mesh";
+        QuadtreeVTKWriter().write_mesh_only(mesh_path, smoother.mesh());
+        std::cout << "Coastline mesh written to: " << mesh_path << ".vtu" << std::endl;
+      }
     }
   }
 
@@ -104,9 +115,16 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
     std::cout << "Data points in smallest  : " << pts << std::endl;
   }
 
-  // Write VTK output
-  smoother.write_vtk(config.output_file, vtk_arg);
-  std::cout << "Output written to        : " << config.output_file << ".vtu" << std::endl;
+  // Write VTK output. With max_iterations = 0 the run is a coastline pre-pass only:
+  // there is no fitted surface to write, and the mesh it produced has already been
+  // written above.
+  if (smoother.is_solved()) {
+    smoother.write_vtk(config.output_file, vtk_arg);
+    std::cout << "Output written to        : " << config.output_file << ".vtu" << std::endl;
+  } else {
+    std::cout << "No surface was fitted (max_iterations = " << adaptive_config.max_iterations
+              << "); no surface VTK written" << std::endl;
+  }
 
   return 0;
 }
@@ -224,9 +242,9 @@ int Drifter::run() {
 
     auto index = reader.build_index(xmin, ymin, xmax, ymax);
     LOG_INFO("Coastline index: " << index->num_segments() << " segments, "
-                                 << index->num_curvature_points() << " curvature points");
-    if (index->num_curvature_points() == 0) {
-      LOG_WARNING("Coastline carries no curvature points in this domain; the pre-pass "
+                                 << index->num_circumradius_points() << " circumradius samples");
+    if (index->num_circumradius_points() == 0) {
+      LOG_WARNING("Coastline carries no circumradius samples in this domain; the pre-pass "
                   "will refine nothing");
     }
 
@@ -235,9 +253,7 @@ int Drifter::run() {
     if (config_.write_input_raster) {
       const std::string coast_path = config_.output_file + "_coastline";
       reader.write_vtk(coast_path);
-      CurvatureCombConfig comb_config;
-      comb_config.scale = 0.1; // 10% of the curvature radius
-      reader.write_curvature_comb_vtk(coast_path + "_comb", comb_config);
+      reader.write_circumradius_comb_vtk(coast_path + "_comb");
       LOG_INFO("Coastline written to     : " << coast_path << ".vtp");
     }
 

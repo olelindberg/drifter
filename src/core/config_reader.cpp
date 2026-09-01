@@ -519,8 +519,6 @@ void print_coastline_section(int w, const CoastlineConfig &c) {
     std::cout << "  " << std::left << std::setw(w) << "srs" << ": " << c.srs << "\n";
   }
   std::cout << "  " << std::left << std::setw(w) << "max_level" << ": " << c.max_level << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "min_curvature_radius" << ": "
-            << c.min_curvature_radius << " m\n";
 }
 
 } // namespace

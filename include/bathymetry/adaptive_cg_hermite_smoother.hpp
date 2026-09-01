@@ -180,19 +180,13 @@ public:
     /// The index is a pure geometry query object; loading the vector file is the
     /// caller's job. A null or empty index leaves the pre-pass a no-op.
     ///
-    /// @param index Segment / curvature R-tree, from CoastlineReader::build_index()
+    /// @param index Segment / circumradius R-tree, from CoastlineReader::build_index()
     /// @param max_level Level cap for the pre-pass, independent of
     ///        config().max_refinement_level, which bounds the error-driven loop
-    /// @param min_curvature_radius Floor passed to
-    ///        CoastlineIndex::min_curvature_radius(). Because that argument
-    ///        clamps rather than filters, it is in effect the target element
-    ///        size along the coast, and it is what stops the pre-pass on a
-    ///        coastline whose sampled vertices are noisier than the mesh.
-    void set_coastline(std::shared_ptr<const CoastlineIndex> index, int max_level,
-                       Real min_curvature_radius);
+    void set_coastline(std::shared_ptr<const CoastlineIndex> index, int max_level);
 
-    /// @brief Refine toward the coastline until every element is smaller than the
-    ///        tightest coastline feature it contains
+    /// @brief Refine while an element is larger than the tightest coastline
+    ///        feature it contains
     ///
     /// Runs automatically at the start of solve_adaptive(), once. Refines the mesh
     /// only - no surface is fitted, so this is cheap relative to an adaptive
@@ -269,7 +263,6 @@ private:
 
     std::shared_ptr<const CoastlineIndex> coastline_index_;
     int coastline_max_level_ = 10;
-    Real coastline_min_curvature_radius_ = 1000.0;
     bool coastline_refined_ = false;
 
     std::unique_ptr<CGHermiteBathymetrySmoother> smoother_;

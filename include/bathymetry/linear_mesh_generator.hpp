@@ -101,7 +101,6 @@ private:
     // Coastline refinement
     std::shared_ptr<CoastlineIndex> coastline_index_;  ///< Coastline R-tree index
     int coastline_max_level_ = 10;                      ///< Max level for coastline refinement
-    Real coastline_min_curvature_radius_ = 1000.0;      ///< Min curvature radius threshold (m)
 
     // Error caching for incremental computation
     std::vector<ElementError> cached_errors_;  ///< Cached per-element errors

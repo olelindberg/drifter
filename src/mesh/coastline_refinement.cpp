@@ -43,9 +43,9 @@ struct SegmentInfo {
 using SegmentValue = std::pair<Segment2D, SegmentInfo>;
 using SegmentRTree = bgi::rtree<SegmentValue, bgi::rstar<16>>;
 
-// Curvature point: location + curvature radius
-using CurvatureValue = std::pair<Point2D, double>;
-using CurvatureRTree = bgi::rtree<CurvatureValue, bgi::rstar<16>>;
+// Circumradius sample: location + discrete circumradius
+using CircumradiusValue = std::pair<Point2D, double>;
+using CircumradiusRTree = bgi::rtree<CircumradiusValue, bgi::rstar<16>>;
 
 // PIMPL implementation structs
 struct CoastlineReader::Impl {
@@ -55,9 +55,9 @@ struct CoastlineReader::Impl {
 
 struct CoastlineIndex::Impl {
     std::shared_ptr<SegmentRTree> rtree;
-    std::shared_ptr<CurvatureRTree> curvature_rtree;
+    std::shared_ptr<CircumradiusRTree> circumradius_rtree;
     size_t num_segments = 0;
-    size_t num_curvature_points = 0;
+    size_t num_circumradius_points = 0;
 };
 
 // Internal utility functions (moved from public header)
@@ -492,8 +492,8 @@ std::vector<std::vector<Point2D>> build_vertex_chains(const std::vector<Segment2
     return chains;
 }
 
-// Compute curvature radius from 3 consecutive points
-double compute_curvature_radius(const Point2D &p0, const Point2D &p1, const Point2D &p2) {
+// Compute the circumradius of the triangle through 3 consecutive points
+double compute_circumradius(const Point2D &p0, const Point2D &p1, const Point2D &p2) {
     double x0 = bg::get<0>(p0), y0 = bg::get<1>(p0);
     double x1 = bg::get<0>(p1), y1 = bg::get<1>(p1);
     double x2 = bg::get<0>(p2), y2 = bg::get<1>(p2);
@@ -520,7 +520,7 @@ double compute_curvature_radius(const Point2D &p0, const Point2D &p1, const Poin
     return (a * b * c) / (2.0 * std::abs(cross));
 }
 
-// Compute normal direction pointing toward center of curvature
+// Compute normal direction pointing toward the circumcenter
 Point2D compute_normal(const Point2D &p0, const Point2D &p1, const Point2D &p2) {
     double x0 = bg::get<0>(p0), y0 = bg::get<1>(p0);
     double x1 = bg::get<0>(p1), y1 = bg::get<1>(p1);
@@ -569,8 +569,7 @@ Point2D compute_normal(const Point2D &p0, const Point2D &p1, const Point2D &p2) 
 
 } // anonymous namespace
 
-void CoastlineReader::write_curvature_comb_vtk(const std::string &filename,
-                                                const CurvatureCombConfig &config) const {
+void CoastlineReader::write_circumradius_comb_vtk(const std::string &filename) const {
     std::string vtk_filename = filename + ".vtp";
     std::ofstream out(vtk_filename);
     if (!out) {
@@ -581,18 +580,18 @@ void CoastlineReader::write_curvature_comb_vtk(const std::string &filename,
     // Build vertex chains from segments
     auto chains = build_vertex_chains(impl_->segments);
 
-    // Collect curvature data for all interior vertices
+    // Collect circumradius data for all interior vertices
     struct CombLine {
         double x0, y0;  // Start point (on coastline)
         double x1, y1;  // End point (comb tip)
-        double radius;  // Curvature radius
+        double radius;  // Discrete circumradius
     };
     std::vector<CombLine> comb_lines;
 
     for (const auto &chain : chains) {
-        // Compute curvature at interior vertices (skip endpoints)
+        // Compute the circumradius at interior vertices (skip endpoints)
         for (size_t i = 1; i + 1 < chain.size(); ++i) {
-            double radius = compute_curvature_radius(chain[i - 1], chain[i], chain[i + 1]);
+            double radius = compute_circumradius(chain[i - 1], chain[i], chain[i + 1]);
             Point2D normal = compute_normal(chain[i - 1], chain[i], chain[i + 1]);
 
             // Skip infinite radii (straight sections)
@@ -600,8 +599,12 @@ void CoastlineReader::write_curvature_comb_vtk(const std::string &filename,
                 continue;
             }
 
-            // Clamp comb line length for visualization (max 10km)
-            double length = std::min(radius * config.scale, 10000.0);
+            // Drawn at the same length scale as the mesh, so a tooth is directly
+            // comparable to the element it sits in. Clamped only so a nearly
+            // straight stretch cannot draw a tooth the size of the domain - the
+            // untruncated radius still goes out as cell data below.
+            constexpr double MAX_COMB_LENGTH_M = 10000.0;
+            double length = std::min(radius, MAX_COMB_LENGTH_M);
             double x0 = bg::get<0>(chain[i]);
             double y0 = bg::get<1>(chain[i]);
             double x1 = x0 + bg::get<0>(normal) * length;
@@ -646,9 +649,9 @@ void CoastlineReader::write_curvature_comb_vtk(const std::string &filename,
     out << "        </DataArray>\n";
     out << "      </Lines>\n";
 
-    // Cell data: curvature radius
+    // Cell data: discrete circumradius
     out << "      <CellData>\n";
-    out << "        <DataArray type=\"Float64\" Name=\"curvature_radius\" format=\"ascii\">\n";
+    out << "        <DataArray type=\"Float64\" Name=\"circumradius\" format=\"ascii\">\n";
     for (const auto &line : comb_lines) {
         out << "          " << line.radius << "\n";
     }
@@ -660,16 +663,16 @@ void CoastlineReader::write_curvature_comb_vtk(const std::string &filename,
     out << "</VTKFile>\n";
 
     out.close();
-    std::cout << "Wrote curvature comb to " << vtk_filename << " (" << num_lines
+    std::cout << "Wrote circumradius comb to " << vtk_filename << " (" << num_lines
               << " comb lines from " << chains.size() << " chains)\n";
 }
 
 std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
     auto index = std::make_shared<CoastlineIndex>();
     index->impl_->rtree = std::make_shared<SegmentRTree>();
-    index->impl_->curvature_rtree = std::make_shared<CurvatureRTree>();
+    index->impl_->circumradius_rtree = std::make_shared<CircumradiusRTree>();
     index->impl_->num_segments = 0;
-    index->impl_->num_curvature_points = 0;
+    index->impl_->num_circumradius_points = 0;
 
     // Insert all segments into R-tree
     for (size_t i = 0; i < impl_->segments.size(); ++i) {
@@ -677,14 +680,14 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index() const {
         ++index->impl_->num_segments;
     }
 
-    // Build curvature index from vertex chains
+    // Build circumradius index from vertex chains
     auto chains = build_vertex_chains(impl_->segments);
     for (const auto& chain : chains) {
         for (size_t i = 1; i + 1 < chain.size(); ++i) {
-            double radius = compute_curvature_radius(chain[i - 1], chain[i], chain[i + 1]);
+            double radius = compute_circumradius(chain[i - 1], chain[i], chain[i + 1]);
             if (!std::isinf(radius)) {
-                index->impl_->curvature_rtree->insert({chain[i], radius});
-                ++index->impl_->num_curvature_points;
+                index->impl_->circumradius_rtree->insert({chain[i], radius});
+                ++index->impl_->num_circumradius_points;
             }
         }
     }
@@ -696,9 +699,9 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
     Real domain_xmin, Real domain_ymin, Real domain_xmax, Real domain_ymax) const {
     auto index = std::make_shared<CoastlineIndex>();
     index->impl_->rtree = std::make_shared<SegmentRTree>();
-    index->impl_->curvature_rtree = std::make_shared<CurvatureRTree>();
+    index->impl_->circumradius_rtree = std::make_shared<CircumradiusRTree>();
     index->impl_->num_segments = 0;
-    index->impl_->num_curvature_points = 0;
+    index->impl_->num_circumradius_points = 0;
 
     // Create domain bounding box for filtering
     Box2D domain_box(Point2D(domain_xmin, domain_ymin),
@@ -712,14 +715,14 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
         }
     }
 
-    // Build curvature index from vertex chains
+    // Build circumradius index from vertex chains
     auto chains = build_vertex_chains(impl_->segments);
     for (const auto& chain : chains) {
         for (size_t i = 1; i + 1 < chain.size(); ++i) {
-            double radius = compute_curvature_radius(chain[i - 1], chain[i], chain[i + 1]);
+            double radius = compute_circumradius(chain[i - 1], chain[i], chain[i + 1]);
             if (!std::isinf(radius)) {
-                index->impl_->curvature_rtree->insert({chain[i], radius});
-                ++index->impl_->num_curvature_points;
+                index->impl_->circumradius_rtree->insert({chain[i], radius});
+                ++index->impl_->num_circumradius_points;
             }
         }
     }
@@ -733,31 +736,24 @@ std::shared_ptr<CoastlineIndex> CoastlineReader::build_index(
 
 size_t CoastlineIndex::num_segments() const { return impl_->num_segments; }
 
-size_t CoastlineIndex::num_curvature_points() const { return impl_->num_curvature_points; }
+size_t CoastlineIndex::num_circumradius_points() const {
+    return impl_->num_circumradius_points;
+}
 
-Real CoastlineIndex::min_curvature_radius(Real xmin, Real ymin, Real xmax, Real ymax,
-                                           Real min_threshold) const {
-    if (!impl_->curvature_rtree || impl_->curvature_rtree->empty()) {
-        return std::numeric_limits<Real>::infinity();
+bool CoastlineIndex::has_circumradius_below(Real xmin, Real ymin, Real xmax, Real ymax,
+                                            Real threshold) const {
+    if (!impl_->circumradius_rtree) {
+        return false;
     }
 
+    // Stops at the first sample under the ceiling rather than gathering every
+    // sample in the box: at coarse levels a single box can cover the whole coast.
     Box2D box(Point2D(xmin, ymin), Point2D(xmax, ymax));
-    std::vector<CurvatureValue> candidates;
-    impl_->curvature_rtree->query(bgi::intersects(box), std::back_inserter(candidates));
-
-    if (candidates.empty()) {
-        return std::numeric_limits<Real>::infinity();
-    }
-
-    // Find true minimum curvature radius
-    Real min_radius = std::numeric_limits<Real>::infinity();
-    for (const auto& [point, radius] : candidates) {
-        min_radius = std::min(min_radius, radius);
-    }
-
-    // Apply floor threshold to prevent over-refinement from noise
-    // (e.g., if min_threshold=100m and min_radius=10m, return 100m)
-    return std::max(min_radius, min_threshold);
+    auto below = [threshold](const CircumradiusValue &value) {
+        return value.second < threshold;
+    };
+    return impl_->circumradius_rtree->qbegin(bgi::intersects(box) && bgi::satisfies(below)) !=
+           impl_->circumradius_rtree->qend();
 }
 
 bool CoastlineIndex::intersects(Real xmin, Real ymin, Real xmax, Real ymax) const {

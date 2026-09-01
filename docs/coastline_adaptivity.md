@@ -1,9 +1,9 @@
-# Coastline Adaptivity — Curvature-Driven Refinement and the Water Mask
+# Coastline Adaptivity — Circumradius-Driven Refinement and the Water Mask
 
 This document derives the two stages that stand between a vector coastline dataset and the linear
-system the bathymetry smoothers assemble. The first is *geometric*: a discrete curvature is
+system the bathymetry smoothers assemble. The first is *geometric*: a discrete circumradius is
 computed along the shoreline, indexed spatially, and used to drive a refinement pre-pass that
-sizes elements to the features they must resolve. The second is *classificatory*: the elements
+resolves the stretches of coast that turn sharply. The second is *classificatory*: the elements
 that pre-pass produces are sorted into water, beach and inland, and only the water elements carry
 a problem worth solving.
 
@@ -13,10 +13,11 @@ where the classification changes, so resolving it geometrically is what makes th
 sharp.
 
 Every claim is anchored to source. Three results are load-bearing and stated as such: the
-refinement criterion is a curvature comparison and not a distance comparison (§7.1), the
-element-box query clamps rather than filters and therefore converts a noise floor into a target
-element size (§6), and inland elements can be dropped from assembly only because adjacency is
-defined by shared node rather than shared edge (§12).
+refinement criterion is a shape comparison and not a distance comparison (§7.1), the sweep has a
+geometric fixed point at the circumradius of the features an element contains but no floor beneath
+it, so the resolution limits decide where it actually stops (§7.2), and inland elements can be
+dropped from assembly only because adjacency is defined by shared node rather than shared edge
+(§12).
 
 **Scope:** `CoastlineReader` and `CoastlineIndex` (`mesh/coastline_refinement.hpp`), the
 `refine_coastline()` pre-pass as implemented in both `AdaptiveCGHermiteSmoother` and
@@ -36,17 +37,17 @@ $$
 \underbrace{\text{vector file} \;\to\; \mathcal{S} \;\to\; \mathcal{C} \;\to\; \{(v, R(v))\}}
 _{\text{geometric (§2–§5)}}
 \;\to\;
-\underbrace{R(B_E) < h_E \;\to\; \text{mesh}}_{\text{criterion (§6–§9)}}
+\underbrace{\big(\exists\, v \in B_E : R(v) < h_E\big) \;\to\; \text{mesh}}_{\text{criterion (§6–§9)}}
 \;\to\;
 \underbrace{\{\text{Water},\ \text{Beach},\ \text{Inland}\}}_{\text{classification (§10–§13)}}
 $$
 
 Reading left to right: a georeferenced vector dataset is filtered to the domain, reprojected and
 flattened into an unordered set of two-dimensional segments $\mathcal{S}$; the segments are
-reassembled into ordered polylines $\mathcal{C}$, because curvature is a three-point quantity;
-each interior vertex receives a discrete curvature radius $R(v)$; the vertices and their radii are
-put into a spatial index; the mesh is refined while any element is larger than the tightest
-feature it contains; and the resulting elements are classified by whether they hold data.
+reassembled into ordered polylines $\mathcal{C}$, because the circumradius is a three-point
+quantity; each interior vertex receives a discrete circumradius $R(v)$; the vertices and their
+radii are put into a spatial index; the mesh is refined while any element is larger than the
+tightest feature it contains; and the resulting elements are classified by whether they hold data.
 
 The pre-pass runs **once**, before the Dörfler-marked error loop, and is idempotent.
 
@@ -56,11 +57,10 @@ The pre-pass runs **once**, before the Dörfler-marked error loop, and is idempo
 |---|---|---|
 | $\mathcal{S}$ | Unordered set of 2D coastline segments in the working SRS | [coastline_refinement.cpp:232-329](../src/mesh/coastline_refinement.cpp#L232-L329) |
 | $\mathcal{C}$ | Polylines reconstructed from $\mathcal{S}$; $\lvert\text{chain}\rvert \geq 3$ | [:431-493](../src/mesh/coastline_refinement.cpp#L431-L493) |
-| $\mathcal{V}$ | Interior vertices of $\mathcal{C}$ with finite radius — the curvature samples | [:715-725](../src/mesh/coastline_refinement.cpp#L715-L725) |
-| $R(v)$ | Discrete curvature radius at vertex $v$, $\kappa = 1/R$ | [:496-521](../src/mesh/coastline_refinement.cpp#L496-L521) |
-| $R_{\min}$ | Floor on the reported radius; effectively the target coastal element size | `coastline.min_curvature_radius` |
-| $R(B)$ | Radius reported for an element box $B$ | [:738-761](../src/mesh/coastline_refinement.cpp#L738-L761) |
-| $h_E$ | Element size $\min(\Delta x_E, \Delta y_E)$ | [quadtree_adapter.hpp](../include/bathymetry/quadtree_adapter.hpp) |
+| $\mathcal{V}$ | Interior vertices of $\mathcal{C}$ with finite radius — the circumradius samples | [:715-725](../src/mesh/coastline_refinement.cpp#L715-L725) |
+| $R(v)$ | Discrete circumradius at vertex $v$; curvature is its reciprocal $\kappa = 1/R$ and is never computed | [:496-521](../src/mesh/coastline_refinement.cpp#L496-L521) |
+| $S(B,\tau)$ | Whether an element box $B$ holds a vertex with $R(v) < \tau$ | [:740-754](../src/mesh/coastline_refinement.cpp#L740-L754) |
+| $h_E$ | Element size $\min(\Delta x_E, \Delta y_E)$; the criterion's threshold | [quadtree_adapter.hpp](../include/bathymetry/quadtree_adapter.hpp) |
 | $\ell_E,\ \ell_{\max}$ | Element refinement level and its cap | `coastline.max_level` |
 | $\rho(x,y)$ | Local raster resolution in metres | [multi_source_bathymetry.hpp](../include/mesh/multi_source_bathymetry.hpp) |
 | $r$ | Hermite continuity order; $(r+1)^2$ DOFs per corner | [cg_hermite_dof_manager.hpp:63](../include/bathymetry/cg_hermite_dof_manager.hpp#L63) |
@@ -116,7 +116,7 @@ Everything downstream is derived from this set.
 
 ## 3. Chain reconstruction
 
-Curvature at a vertex needs its two neighbours, so it needs *ordering*, and $\mathcal{S}$ has
+The circumradius at a vertex needs its two neighbours, so it needs *ordering*, and $\mathcal{S}$ has
 none. The ordering is rebuilt rather than preserved, which keeps the reader's output a single
 uniform type regardless of which geometry classes the source file happened to use.
 
@@ -129,7 +129,7 @@ remains.
 
 The walk yields maximal chains under the adjacency relation. Chains of fewer than three vertices
 are discarded — [:487](../src/mesh/coastline_refinement.cpp#L487) — because they contain no
-interior vertex and therefore contribute no curvature sample.
+interior vertex and therefore contribute no circumradius sample.
 
 The result is
 
@@ -143,12 +143,18 @@ whose interior vertices $p_1, \dots, p_{n-2}$ are the sample points of §4.
 > or more segments meet, the walk picks one continuation and the others start chains of their own.
 > The criterion in §7 depends only on the *set* of (vertex, radius) pairs, never on which chain a
 > vertex belongs to or on the direction of traversal, so any consistent decomposition of the
-> segment set into chains produces the same refinement. Only the curvature-comb diagnostic (§4.1)
+> segment set into chains produces the same refinement. Only the circumradius-comb diagnostic (§4.1)
 > is sensitive to orientation, and there only in the sign of the drawn normal.
 
 ---
 
-## 4. Discrete curvature
+## 4. Discrete circumradius
+
+> **Circumradius, not curvature.** The quantity computed, indexed and compared everywhere below is
+> the circumradius $R$ — a *length*. Curvature is its reciprocal, $\kappa = 1/R$, and is never
+> computed or stored anywhere in the code. The two are mutually exclusive names for reciprocal
+> quantities, so this document and the implementation use "circumradius" throughout, and reserve
+> "curvature" for the geometric notion it names.
 
 For three consecutive vertices $p_0, p_1, p_2$ define the leg vectors and side lengths
 
@@ -157,7 +163,7 @@ v_1 = p_1 - p_0, \qquad v_2 = p_2 - p_1, \qquad
 a = \lVert v_1 \rVert, \quad b = \lVert v_2 \rVert, \quad c = \lVert p_2 - p_0 \rVert .
 $$
 
-The discrete curvature radius at $p_1$ is the **circumradius of the triangle** $(p_0, p_1, p_2)$ —
+The discrete circumradius at $p_1$ is the **circumradius of the triangle** $(p_0, p_1, p_2)$ —
 [:496-521](../src/mesh/coastline_refinement.cpp#L496-L521). Starting from the classical
 circumradius identity and substituting twice the signed area of the triangle,
 $2A = \lvert v_1 \times v_2 \rvert$ where $v_1 \times v_2 = v_{1x} v_{2y} - v_{1y} v_{2x}$:
@@ -169,7 +175,7 @@ R(p_1) \;=\; \frac{abc}{4A}
 \kappa(p_1) \;=\; \frac{1}{R(p_1)} \;=\; \frac{2\,\lvert v_1 \times v_2 \rvert}{a\,b\,c} .
 $$
 
-Collinear vertices carry no curvature, and the cross product vanishes with them. The guard is
+A collinear triple has no circumcircle, and the cross product vanishes with it. The guard is
 written relative to the leg lengths — [:514-516](../src/mesh/coastline_refinement.cpp#L514-L516):
 
 $$
@@ -188,15 +194,15 @@ Infinite radii are never inserted into the index —
 [:719-723](../src/mesh/coastline_refinement.cpp#L719-L723). A straight shoreline therefore exerts
 no refinement pressure at all, however long it is and however many vertices describe it.
 
-> **Why the circumradius is the right discrete curvature here.** It is exact on the case that
+> **Why the circumradius is the right discrete measure here.** It is exact on the case that
 > matters: if $p_0, p_1, p_2$ are sampled from a circle of radius $\varrho$, the circumradius is
 > $\varrho$ regardless of the sample spacing. So the quantity does not drift as the coastline
 > dataset's vertex density varies, which it does substantially between digitized survey sections.
 > It is also positively homogeneous of degree one — scaling the geometry by $s$ scales $R$ by $s$
-> — which is what makes §7 a comparison of a length against a length, with no calibration
-> constant anywhere in it.
+> — which is what makes §7 a comparison of a length against a length, with the configured ceiling
+> the only constant in it.
 
-### 4.1 Normal toward the centre of curvature
+### 4.1 Normal toward the circumcentre
 
 The refinement criterion needs only $R$, but the diagnostic output also needs a direction. The
 normal at $p_1$ is built from the averaged unit tangent —
@@ -210,15 +216,21 @@ $$
 \mathsf{R}_{90} = \begin{bmatrix} 0 & -1 \\ 1 & 0 \end{bmatrix} .
 $$
 
-The sign flip points $\hat{n}$ at the concave side, i.e. toward the centre of the osculating
-circle. Where the two legs are antiparallel — a hairpin, at which the averaged tangent degenerates
-— the normal falls back to the rotated first leg.
+The sign flip points $\hat{n}$ at the concave side, i.e. toward the circumcentre. Where the two
+legs are antiparallel — a hairpin, at which the averaged tangent degenerates — the normal falls
+back to the rotated first leg.
 
-The curvature comb draws one tooth per interior vertex, of length $\min(R \cdot s, 10^4)$ with
-$s$ the comb scale, and tags each tooth with its radius as cell data —
+The circumradius comb draws one tooth per interior vertex, of length $\min(R,\ 10^4\,\text{m})$,
+and tags each tooth with its untruncated radius as cell data —
 [:572-665](../src/mesh/coastline_refinement.cpp#L572-L665). Long teeth mark flat coast, short
 teeth mark tight features; the clamp keeps a nearly straight section from drawing a tooth the size
-of the domain. This is purely a visualization: nothing in §6–§9 reads it.
+of the domain.
+
+The tooth carries **no scale factor**: it is drawn in the same length units as the mesh, which
+makes the criterion of §7 readable straight off the picture — a tooth longer than the element it
+sits in is a feature the element already resolves, and one shorter than the element is a feature
+that should have refined it, unless a limit of §8 held it back. This is purely a visualization:
+nothing in §6–§9 reads it.
 
 ---
 
@@ -230,12 +242,12 @@ Two Boost.Geometry R\*-trees of node capacity 16 hold the results —
 | Tree | Key | Value | Query used |
 |---|---|---|---|
 | Segment tree | segment bounding box | segment | box overlap (`intersects`) |
-| Curvature tree | vertex point | radius $R(v)$ | box overlap (`intersects`) |
+| Circumradius tree | vertex point | radius $R(v)$ | box overlap (`intersects`) |
 
 Both are built by `build_index()` —
 [:695-728](../src/mesh/coastline_refinement.cpp#L695-L728). The segment tree answers "does the
-coastline pass through this box"; the curvature tree answers "what is the tightest feature inside
-this box". Only the second drives refinement.
+coastline pass through this box"; the circumradius tree answers "does this box hold a feature
+sharper than a given length". Only the second drives refinement.
 
 The index exposes no nearest-neighbour and no distance query. Every downstream question is
 answered by box overlap against an element's bounds, which is what keeps the per-element cost at
@@ -243,37 +255,36 @@ one R-tree descent and makes the criterion in §7 a purely local test.
 
 ---
 
-## 6. The element curvature query
+## 6. The element circumradius query
 
-For an element with bounding box $B$ and a floor $R_{\min}$, `min_curvature_radius()` reports —
-[:738-761](../src/mesh/coastline_refinement.cpp#L738-L761):
+For an element with bounding box $B$ and a threshold length $\tau$,
+`has_circumradius_below()` reports —
+[:740-754](../src/mesh/coastline_refinement.cpp#L740-L754):
 
 $$
-R(B) \;=\;
+S(B, \tau) \;=\;
 \begin{cases}
-\max\!\left(\;\displaystyle\min_{v \,\in\, \mathcal{V} \cap B} R(v),\;\; R_{\min} \right)
-  & \mathcal{V} \cap B \neq \emptyset, \\[6pt]
-+\infty & \mathcal{V} \cap B = \emptyset .
+\text{true} & \exists\, v \in \mathcal{V} \cap B : R(v) < \tau, \\[4pt]
+\text{false} & \text{otherwise.}
 \end{cases}
 $$
 
-Two properties of this definition carry the whole scheme.
+The threshold is supplied by the caller; §7 passes the element's own size. Two properties of this
+definition carry the whole scheme.
 
-**The outer maximum clamps; it does not filter.** A vertex whose true radius lies below $R_{\min}$
-is not discarded from the minimum — its radius is reported *as* $R_{\min}$. The distinction is
-invisible in isolation and decisive in combination with §7: a filtering implementation would let
-the next-tightest vertex in the box set the reported radius, and refinement would continue below
-$R_{\min}$ wherever coastline detail is dense. Clamping instead gives
+**It is a predicate, not a reduction.** The query answers whether the box holds a feature tighter
+than $\tau$, and nothing is clamped, floored or averaged on the way out. That matters because the
+sharpest vertex in a box is the one that should decide: a box holding one tight inlet among a
+hundred gentle vertices is refined on the strength of the inlet alone. The implementation exploits
+this by stopping at the first qualifying sample rather than gathering every sample in the box —
+which is what keeps a coarse-level query, whose box may cover the entire coastline, cheap.
 
-$$
-R(B) \;\geq\; R_{\min} \qquad \text{whenever } R(B) < \infty ,
-$$
+There is **no floor** on the radius. An earlier revision clamped the reported radius from below by
+a configured $R_{\min}$, which silently converted a noise floor into a target coastal element size;
+the criterion now sees the true circumradius, and the limits of §8 are the only thing that bounds
+how far a very tight feature is chased.
 
-which is precisely the invariant that terminates the sweep (§7.2). The parameter named
-`min_curvature_radius` is therefore best read as a **target coastal element size**, not as a noise
-threshold.
-
-**An empty box reports $+\infty$.** No coastline vertex inside the element means no refinement
+**An empty box reports false.** No coastline vertex inside the element means no refinement
 pressure, with no special case and no distance cutoff to calibrate. This is what makes the
 criterion self-limiting away from the coast, and it is the reason the pre-pass can be run over
 every element of the mesh on every sweep without a proximity pre-filter.
@@ -282,21 +293,24 @@ every element of the mesh on every sweep without a proximity pre-filter.
 
 ## 7. The refinement criterion
 
-An element $E$ is marked for refinement exactly when the tightest coastline feature inside it is
-smaller than the element itself:
+An element $E$ is marked for refinement exactly when it holds a coastline feature tighter than the
+element itself — the threshold of §6 is the element's own size:
 
 $$
-\boxed{\;\text{refine } E \iff R(B_E) \;<\; h_E, \qquad h_E = \min(\Delta x_E,\, \Delta y_E)\;}
+\boxed{\;\text{refine } E \iff \exists\, v \in \mathcal{V} \cap B_E : R(v) \;<\; h_E,
+\qquad h_E = \min(\Delta x_E,\, \Delta y_E)\;}
 $$
 
 The comparison is strict, and $h_E$ is the **shorter** side, so an anisotropic element is sized by
 its narrow dimension. Implemented identically in both pipelines —
-[adaptive_cg_hermite_smoother.cpp:479-490](../src/bathymetry/adaptive_cg_hermite_smoother.cpp#L479-L490)
+[adaptive_cg_hermite_smoother.cpp:449-462](../src/bathymetry/adaptive_cg_hermite_smoother.cpp#L449-L462)
 and
-[linear_mesh_generator.cpp:165-172](../src/bathymetry/linear_mesh_generator.cpp#L165-L172).
+[linear_mesh_generator.cpp:133-144](../src/bathymetry/linear_mesh_generator.cpp#L133-L144).
 
-Both sides are lengths in the working SRS, so the test is dimensionless and scale-covariant: it
-carries no tuning constant beyond $R_{\min}$ itself.
+Both sides are lengths in the working SRS, so the test is dimensionless and scale-covariant, and it
+carries **no tuning constant at all** — the coastline section names no parameter beyond `max_level`.
+Because $h_E$ halves with every sweep while $R(v)$ is fixed by the data, an element stops as soon as
+it is smaller than the tightest feature it contains (§7.2).
 
 ### 7.1 Why it is not a distance criterion
 
@@ -306,11 +320,11 @@ carries no tuning constant beyond $R_{\min}$ itself.
 
 The three cases follow directly from §6:
 
-| Configuration of $E$ | $R(B_E)$ | Marked |
+| Configuration of $E$ | Sharpest $R(v)$ in $B_E$ | Marked |
 |---|---|---|
-| No coastline vertex inside $E$ | $+\infty$ | no |
-| Straight coast crossing $E$ | $+\infty$ (collinear, §4) | no |
-| Fjord, inlet or headland inside $E$ | finite, small | yes, while $R(B_E) < h_E$ |
+| No coastline vertex inside $E$ | none | no |
+| Straight coast crossing $E$ | $+\infty$, never indexed (collinear, §4) | no |
+| Fjord, inlet or headland inside $E$ | finite, small | yes, while it is $< h_E$ |
 
 The second row is the substantive one. A long straight coast is resolved by the coarsest element
 that contains it, at zero refinement cost, because the geometry there is already exactly
@@ -323,26 +337,34 @@ coast, spending its budget on the sections that need it least.
 
 ### 7.2 Fixed point of the sweep
 
-The clamp of §6 gives $R(B) \geq R_{\min}$ on every non-empty box, so
+Refinement halves the element while $R(v)$ is a property of the data, so the criterion is monotone
+in the right direction: an element that fires at size $h$ becomes children of size $h/2$, and it
+stops as soon as $h_E \leq R_E^\star$, where
 
 $$
-h_E \;\leq\; R_{\min} \qquad\Longrightarrow\qquad R(B_E) \;\geq\; R_{\min} \;\geq\; h_E
-\qquad\Longrightarrow\qquad \text{$E$ is not marked} .
+R_E^\star \;=\; \min_{v \,\in\, \mathcal{V} \cap B_E} R(v)
 $$
 
-The criterion is therefore monotone in the right direction and the sweep terminates. Since each
-refinement halves the element, an element that fires at size $h$ becomes children of size $h/2$,
-and the sweep leaves coastal elements at
+is the tightest feature the element still contains. The sweep therefore leaves coastal elements at
 
 $$
 h_E \;\in\; \left(\tfrac{1}{2} R_E^\star,\; R_E^\star\right],
-\qquad
-R_E^\star = \max\big(R_{\min},\; R_{\text{local}}\big),
 $$
 
-where $R_{\text{local}}$ is the tightest feature the element still contains. Away from the coast
-$R_E^\star = \infty$ and the base size is untouched. The upper endpoint is attained exactly when
-the base mesh size is a power-of-two multiple of $R_E^\star$.
+with the upper endpoint attained exactly when the base mesh size is a power-of-two multiple of
+$R_E^\star$. Away from the coast $R_E^\star = \infty$ and the base size is untouched.
+
+The fixed point is geometric, but it is **not by itself a bound on cost**: $R_E^\star$ is whatever
+the dataset contains, and a digitized shoreline can carry sub-metre circumradii. Nothing floors it —
+the clamp that used to (§6) is gone — so the admissibility limits of §8 are what stop the sweep on
+real data, and the pre-pass reports which one held:
+
+| Stop | Test | Reported as |
+|---|---|---|
+| Element budget | `num_elements >= max_elements`, at the top of each sweep | "maximum elements reached" |
+| Level cap | $\ell_E \geq \ell_{\max}$ | "maximum refinement level reached" |
+| Data resolution | children would fall below the raster limit (§8) | "data resolution limit reached" |
+| Fixed point reached | every element is smaller than the features it holds | "coastline resolved to the circumradius of its features" |
 
 This fixed point is verified analytically in the integration suite. The test coastline is a
 sawtooth with legs $a = b = \sqrt{125}$ and chord $c = 10$, giving
@@ -351,15 +373,18 @@ $$
 R = \frac{abc}{2\,\lvert v_1 \times v_2 \rvert} = \frac{125 \cdot 10}{200} = 6.25 ,
 $$
 
-and `CoastlinePrePassRefinesTowardTheCoastline`
+one radius shared by the whole coastline. `CoastlinePrePassRefinesTowardTheCoastline`
 (`tests/integration/test_adaptive_cg_hermite_smoother.cpp:422`) asserts that the smallest element
 side after the pre-pass equals $6.25$ to within $10^{-10}$ — that the sweep converges *to* the
-curvature radius and, because the comparison is strict, does not step below it.
+circumradius and, because the comparison is strict, does not step below it. Its companion
+`CoastlinePrePassLeavesAnAlreadyFineMeshAlone` starts from a $32\times32$ mesh of $3.125$-wide
+elements and asserts zero sweeps, which is what pins the threshold to $h_E$ rather than to any
+configured length.
 
 ### 7.3 Sweep structure
 
 The outer loop repeats until a full pass marks nothing —
-[adaptive_cg_hermite_smoother.cpp:449-505](../src/bathymetry/adaptive_cg_hermite_smoother.cpp#L449-L505).
+[adaptive_cg_hermite_smoother.cpp:449-513](../src/bathymetry/adaptive_cg_hermite_smoother.cpp#L449-L513).
 Each pass rescans the mesh from element zero, because refinement rebalances the quadtree to a 2:1
 level ratio and invalidates every element index.
 
@@ -367,6 +392,10 @@ That rebalancing also means the marked set is a *lower bound* on what is refined
 across a newly created T-junction can refine a neighbour that the criterion did not select. The
 fixed point of §7.2 is unaffected — rebalancing only ever makes elements smaller, and small
 elements do not fire.
+
+When a pass marks nothing, the elements it skipped at a limit are re-tested with the same criterion
+so the reported reason names the limit that actually held, rather than claiming the coast was
+resolved.
 
 ---
 
@@ -394,9 +423,9 @@ permits finer coastal refinement inside its footprint than the primary raster al
 without any per-region configuration.
 
 The element budget is checked once per sweep rather than per element, so a sweep completes the
-marking it started; the bound is honoured at sweep granularity. It exists because $R_{\min}$ set
-far below the base mesh scale would otherwise drive the entire coast to the pixel limit before the
-first solve.
+marking it started; the bound is honoured at sweep granularity. It exists because §7 has no floor
+on the circumradius: coastline detail far below the mesh scale would otherwise drive the entire
+coast to the pixel limit before the first solve.
 
 The pinned-element test is shared with the error-driven loop and is **inert during the pre-pass**,
 since no smoother — and hence no mask — exists yet. That is the intended behaviour: the coast is
@@ -410,19 +439,17 @@ Both applications run the same criterion over their own mesh generator:
 
 | | highrider (`AdaptiveCGHermiteSmoother`) | lowrider (`LinearMeshGenerator`) |
 |---|---|---|
-| Entry point | [`refine_coastline()`:440-511](../src/bathymetry/adaptive_cg_hermite_smoother.cpp#L440-L511) | [`refine_coastline()`:127-194](../src/bathymetry/linear_mesh_generator.cpp#L127-L194) |
+| Entry point | [`refine_coastline()`:440-530](../src/bathymetry/adaptive_cg_hermite_smoother.cpp#L440-L530) | [`refine_coastline()`:127-220](../src/bathymetry/linear_mesh_generator.cpp#L127-L220) |
 | Element | Hermite, $(r+1)^2$ DOFs per corner | bilinear, 4 DOFs per element |
-| Criterion | $R(B_E) < h_E$ | identical |
+| Criterion | $\exists\, v \in B_E : R(v) < h_E$ | identical |
 | After refining | `refine_octree_only()`, then discards the smoother | `refine_elements()`, then rebuilds the surface |
 | Budget bound | `max_elements`, per sweep | not applied in the pre-pass |
 | Idempotence | `coastline_refined_` flag, cleared by `set_coastline()` | re-entrant; called once by `Lowrider::run()` |
-| Typical $R_{\min}$ | 500 m | 100 m |
 
 The structural difference is what each pipeline must rebuild after the mesh moves. The highrider
 refines the quadtree only and drops any smoother built from the previous mesh, deferring all
 assembly until the first solve; the lowrider's surface is fitted by sampling rather than solving,
-so it can rebuild immediately and cheaply. The finer $R_{\min}$ on the lowrider side follows from
-that: bilinear elements are cheap enough to spend on a finer coast.
+so it can rebuild immediately and cheaply.
 
 The pre-pass is wired only for the Hermite family —
 [drifter.cpp:61-67](../src/core/drifter.cpp#L61-L67) — through an `if constexpr (requires ...)`
@@ -645,16 +672,15 @@ at [config_reader.cpp:373-376](../src/core/config_reader.cpp#L373-L376) and
 | `layer` | `""` | Layer name; empty takes the first layer | §2 |
 | `srs` | `""` | Working SRS, e.g. `"EPSG:3034"`; empty applies no transform and no spatial filter | §2 |
 | `max_level` | `10` | Level cap $\ell_{\max}$ for the pre-pass, independent of the error loop's cap | §8 |
-| `min_curvature_radius` | `1000.0` | Floor $R_{\min}$ on the reported radius — the target coastal element size | §6, §7.2 |
 
 The mask has one knob of its own, `nsamples` (default 3, §11.1), set in code rather than from
 JSON, and inherits the resolution limits `min_element_size`, `min_data_points_per_element` and
 `enforce_pixel_limit` from `AdaptiveCGHermiteConfig` (§8).
 
-The shipped configurations set `max_level: 100`, which is effectively unbounded — deliberately, so
-that the operative stops are the fixed point of §7.2 and the data-resolution limits of §8 rather
-than an arbitrary depth. `min_curvature_radius` differs by application: 500 m for the Hermite
-highrider, 100 m for the bilinear lowrider (§9). See
+The coastline section carries no length parameter at all: the criterion compares the circumradius
+against the element's own size (§7). The shipped configurations set `max_level: 12` — a deliberate
+figure, since the fixed point of §7.2 has no floor under it and a densely digitized shoreline will
+otherwise run to the data-resolution limit of §8. See
 [config/highrider_hermite_example.json](../config/highrider_hermite_example.json) and
 [config/lowrider_example.json](../config/lowrider_example.json).
 

@@ -108,20 +108,16 @@ void LinearMeshGenerator::load_coastline(const LowriderCoastlineConfig& config) 
     // Write coastline to VTK for debugging
     reader.write_vtk("/tmp/coastline_debug");
 
-    // Write curvature comb visualization
-    CurvatureCombConfig comb_config;
-    comb_config.scale = 0.1;  // 10% of curvature radius
-    reader.write_curvature_comb_vtk("/tmp/coastline_curvature_comb", comb_config);
+    // Write circumradius comb visualization
+    reader.write_circumradius_comb_vtk("/tmp/coastline_circumradius_comb");
 
     // Build R-tree with domain filter (segments already filtered during load)
     coastline_index_ = reader.build_index(domain.xmin, domain.ymin,
                                            domain.xmax, domain.ymax);
     coastline_max_level_ = config.max_level;
-    coastline_min_curvature_radius_ = config.min_curvature_radius;
-
     LOG_INFO("Built coastline index: " << coastline_index_->num_segments() << " segments, "
-                                       << coastline_index_->num_curvature_points()
-                                       << " curvature points (filtered to domain)");
+                                       << coastline_index_->num_circumradius_points()
+                                       << " circumradius samples (filtered to domain)");
 }
 
 int LinearMeshGenerator::refine_coastline() {
@@ -131,21 +127,20 @@ int LinearMeshGenerator::refine_coastline() {
         return 0;
     }
 
-    // Curvature-based refinement: refine if smallest curvature radius within the
-    // element is smaller than the element side length. Kept separate from the
-    // scan so the stopping reason can re-test the elements a limit skipped.
+    // Circumradius-based refinement: refine while the element holds a coastline
+    // feature tighter than the element itself. The threshold is the element's own
+    // shorter side, so it halves with every pass and an element stops as soon as it
+    // is smaller than the tightest feature inside it. Kept separate from the scan
+    // so the stopping reason can re-test the elements a limit skipped.
     auto wants_refinement = [this](Index elem) {
         const auto& bounds = mesh_.element_bounds(elem);
-        Real element_side = std::min(bounds.xmax - bounds.xmin,
-                                      bounds.ymax - bounds.ymin);
-        Real min_curvature = coastline_index_->min_curvature_radius(
-            bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
-            coastline_min_curvature_radius_);
-        return min_curvature < element_side;
+        Real element_side = std::min(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
+        return coastline_index_->has_circumradius_below(bounds.xmin, bounds.ymin, bounds.xmax,
+                                                        bounds.ymax, element_side);
     };
 
     int iterations = 0;
-    const char* reason = "coastline resolved to the curvature limit";
+    const char* reason = "coastline resolved to the circumradius of its features";
 
     while (true) {
         std::vector<Index> to_refine;

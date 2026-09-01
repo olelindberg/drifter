@@ -11,13 +11,11 @@ namespace drifter {
 CoastlineConfig parse_coastline_config(const pt::ptree &tree) {
     CoastlineConfig config;
 
-    config.file                 = tree.get<std::string>("file", config.file);
-    config.layer                = tree.get<std::string>("layer", config.layer);
-    config.srs                  = tree.get<std::string>("srs", config.srs);
-    config.max_level            = tree.get<int>("max_level", config.max_level);
-    config.min_polygon_area     = tree.get<Real>("min_polygon_area", config.min_polygon_area);
-    config.min_curvature_radius =
-        tree.get<Real>("min_curvature_radius", config.min_curvature_radius);
+    config.file             = tree.get<std::string>("file", config.file);
+    config.layer            = tree.get<std::string>("layer", config.layer);
+    config.srs              = tree.get<std::string>("srs", config.srs);
+    config.max_level        = tree.get<int>("max_level", config.max_level);
+    config.min_polygon_area = tree.get<Real>("min_polygon_area", config.min_polygon_area);
 
     if (config.min_polygon_area > 0.0) {
         LOG_WARNING("coastline.min_polygon_area = "
@@ -36,7 +34,6 @@ pt::ptree serialize_coastline_config(const CoastlineConfig &config) {
     tree.put("srs", config.srs);
     tree.put("max_level", config.max_level);
     tree.put("min_polygon_area", config.min_polygon_area);
-    tree.put("min_curvature_radius", config.min_curvature_radius);
 
     return tree;
 }

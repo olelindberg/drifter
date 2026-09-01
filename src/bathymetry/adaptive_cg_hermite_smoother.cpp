@@ -430,10 +430,9 @@ void AdaptiveCGHermiteSmoother::refine_octree_only(
 // =============================================================================
 
 void AdaptiveCGHermiteSmoother::set_coastline(std::shared_ptr<const CoastlineIndex> index,
-                                              int max_level, Real min_curvature_radius) {
+                                              int max_level) {
     coastline_index_ = std::move(index);
     coastline_max_level_ = max_level;
-    coastline_min_curvature_radius_ = min_curvature_radius;
     coastline_refined_ = false;
 }
 
@@ -446,29 +445,27 @@ int AdaptiveCGHermiteSmoother::refine_coastline() {
         return 0;
     }
 
-    // Refine while the tightest coastline feature inside the element is smaller
-    // than the element itself. min_curvature_radius() clamps its result from
-    // below, so this converges on elements of about coastline_min_curvature_radius_
-    // along the coast, and returns infinity - refining nothing - where the element
-    // holds no coastline vertex at all. Kept separate from the sweep so the
-    // stopping reason can re-test the elements a limit skipped.
+    // Refine while the element holds a coastline feature tighter than the element
+    // itself, and never where it holds no coastline vertex at all. The threshold
+    // is the element's own shorter side, so it halves with every sweep: an element
+    // stops as soon as it is smaller than the tightest feature inside it. There is
+    // no floor on the reported radius, so a sub-metre feature is still chased down
+    // to the admissibility limits. Kept separate from the sweep so the stopping
+    // reason can re-test the elements a limit skipped.
     auto wants_refinement = [this](Index elem) {
         const QuadBounds &bounds = quadtree_->element_bounds(elem);
-        const Real element_side =
-            std::min(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
-        const Real min_curvature = coastline_index_->min_curvature_radius(
-            bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax,
-            coastline_min_curvature_radius_);
-        return min_curvature < element_side;
+        const Real element_side = std::min(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
+        return coastline_index_->has_circumradius_below(bounds.xmin, bounds.ymin, bounds.xmax,
+                                                        bounds.ymax, element_side);
     };
 
     int sweeps = 0;
-    const char *reason = "coastline resolved to the curvature limit";
+    const char *reason = "coastline resolved to the circumradius of its features";
 
     while (true) {
-        // Bounded here as well as in the error-driven loop: a min_curvature_radius
-        // far below the mesh scale would otherwise refine the whole coast to the
-        // pixel limit before the first solve.
+        // Bounded here as well as in the error-driven loop: coastline detail far
+        // below the mesh scale would otherwise refine the whole coast to the pixel
+        // limit before the first solve.
         if (static_cast<int>(quadtree_->num_elements()) >= config_.max_elements) {
             reason = "maximum elements reached";
             break;
@@ -689,6 +686,10 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::solve_adaptive() {
 
     profiles_.clear();
     HermiteAdaptationResult result;
+    // Seeded from the mesh so that a zero-iteration run - the coastline pre-pass on
+    // its own - still reports the mesh it produced. The error fields stay 0 because
+    // no surface was fitted.
+    result.num_elements = quadtree_->num_elements();
 
     for (int iter = 0; iter < config_.max_iterations; ++iter) {
         result = adapt_once();

@@ -54,7 +54,7 @@ struct DrifterConfig {
   // Coastline refinement
   // =========================================================================
 
-  /// Curvature-driven refinement toward a vector coastline, run once before the
+  /// Circumradius-driven refinement toward a vector coastline, run once before the
   /// error-driven loop. Only the Hermite path acts on it; empty `file` disables it.
   CoastlineConfig coastline;
 

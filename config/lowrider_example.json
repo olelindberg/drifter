@@ -38,9 +38,8 @@
     "file": "/home/ole/Projects/drifter/data/input/openstreetmap/coastlines-split-4326/lines.shp",
     "layer": "",
     "srs": "EPSG:3034",
-    "max_level": 100,
-    "min_polygon_area": 10000.0,
-    "min_curvature_radius": 100.0
+    "max_level": 12,
+    "min_polygon_area": 10000.0
   },
   "output": {
     "vtk_file": "/tmp/lowrider_mesh",

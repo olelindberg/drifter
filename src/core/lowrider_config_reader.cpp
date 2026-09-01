@@ -136,7 +136,6 @@ void print_lowrider_config(const LowriderConfig &config) {
             LOG_INFO("  Coastline SRS: " << config.coastline.srs);
         }
         LOG_INFO("  Coastline max level: " << config.coastline.max_level);
-        LOG_INFO("  Coastline min curvature radius: " << config.coastline.min_curvature_radius << " m");
         if (config.coastline.min_polygon_area > 0.0) {
             LOG_INFO("  Coastline min polygon area: " << config.coastline.min_polygon_area);
         }

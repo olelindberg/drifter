@@ -3,7 +3,7 @@
 /// @file coastline_config.hpp
 /// @brief Coastline refinement configuration, shared by the highrider and lowrider apps
 ///
-/// Both apps drive the same curvature-based coastline pre-pass over their own mesh
+/// Both apps drive the same circumradius-based coastline pre-pass over their own mesh
 /// generator, so they read the same JSON section rather than each carrying a copy of
 /// the schema. The parse/serialize helpers live here for the same reason.
 
@@ -28,12 +28,10 @@ struct CoastlineConfig {
     /// measure an area over and does nothing. Setting it is warned about at load.
     Real min_polygon_area = 0.0;
 
-    /// Target element size along the coast, in metres.
-    ///
-    /// Passed as the floor argument of CoastlineIndex::min_curvature_radius(),
-    /// which clamps rather than filters - so refinement stops once elements are
-    /// about this size, and coastline noise below it cannot drive it further.
-    Real min_curvature_radius = 1000.0;
+    /// The refinement criterion itself carries no parameter: an element is refined
+    /// while it holds a coastline vertex whose discrete circumradius is smaller
+    /// than the element's own shorter side. How far that runs is bounded by
+    /// max_level and by the data-resolution limits of the mesh generator.
 
     bool enabled() const { return !file.empty(); }
 };

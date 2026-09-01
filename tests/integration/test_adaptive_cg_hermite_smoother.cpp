@@ -45,14 +45,14 @@ Real high_frequency_bathy(Real x, Real y) {
 ///
 /// Vertices alternate y = 45 / 55 every 5 in x, which puts the circumradius at
 /// every interior vertex at exactly 6.25: with legs a = b = sqrt(125) and chord
-/// c = 10, R = abc / (2|v1 x v2|) = 1250 / 200. That is the length the pre-pass
-/// drives coastal elements down to, and it is small enough that a 4x4 mesh of
-/// 25-wide elements needs two sweeps to reach it.
+/// c = 10, R = abc / (2|v1 x v2|) = 1250 / 200. Every vertex sharing one radius
+/// makes the sawtooth an exact instrument: the pre-pass drives coastal elements
+/// down to 6.25 and, because the comparison is strict, no further.
 ///
 /// GeoJSON rather than a shapefile because GDAL reads it from a single text
 /// file; with an empty target SRS no transform is applied, so these are plain
 /// cartesian coordinates.
-constexpr Real SAWTOOTH_CURVATURE_RADIUS = 6.25;
+constexpr Real SAWTOOTH_CIRCUMRADIUS = 6.25;
 
 std::string write_sawtooth_geojson(const std::string &path) {
     std::ofstream ofs(path);
@@ -413,7 +413,7 @@ TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassIsNoOpWhenUnset) {
 
 TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassIsNoOpOnEmptyIndex) {
     AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
-    smoother.set_coastline(std::make_shared<CoastlineIndex>(), 20, 5.0);
+    smoother.set_coastline(std::make_shared<CoastlineIndex>(), 20);
 
     EXPECT_EQ(smoother.refine_coastline(), 0);
     EXPECT_EQ(smoother.mesh().num_elements(), 16);
@@ -422,18 +422,17 @@ TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassIsNoOpOnEmptyIndex) {
 TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRefinesTowardTheCoastline) {
     auto index = make_sawtooth_index();
     ASSERT_NE(index, nullptr) << "GDAL could not read the test GeoJSON";
-    ASSERT_GT(index->num_curvature_points(), 0u);
+    ASSERT_GT(index->num_circumradius_points(), 0u);
 
     AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
-    // Floor below the sawtooth's own radius, so the geometry is what stops it
-    smoother.set_coastline(index, 20, 1.0);
+    smoother.set_coastline(index, 20);
 
     const int sweeps = smoother.refine_coastline();
     EXPECT_GT(sweeps, 0);
     EXPECT_GT(smoother.mesh().num_elements(), 16);
 
-    // Coastal elements shrink to the curvature radius; the pre-pass refines while
-    // the radius is *strictly* smaller than the element, so it stops at 6.25 and
+    // Coastal elements shrink to the circumradius; the pre-pass refines while the
+    // radius is *strictly* smaller than the element side, so it stops at 6.25 and
     // must not go below it.
     Real min_side = std::numeric_limits<Real>::max();
     int level_at_coast = 0;
@@ -453,18 +452,33 @@ TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRefinesTowardTheCoastline)
     ASSERT_GE(far, 0);
     const int level_far = smoother.mesh().element_level(far).max_level();
 
-    EXPECT_NEAR(min_side, SAWTOOTH_CURVATURE_RADIUS, TOLERANCE);
+    EXPECT_NEAR(min_side, SAWTOOTH_CIRCUMRADIUS, TOLERANCE);
     EXPECT_GT(level_at_coast, level_far) << "refinement did not concentrate on the coastline";
+}
+
+TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassLeavesAnAlreadyFineMeshAlone) {
+    auto index = make_sawtooth_index();
+    ASSERT_NE(index, nullptr);
+
+    // 32x32 over [0,100]^2 gives 3.125-wide elements, already below the sawtooth's
+    // 6.25, so no element holds a feature tighter than itself and nothing is
+    // marked. This is what pins the threshold to the element side rather than to
+    // any configured length.
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 32, 32, make_config(1));
+    smoother.set_coastline(index, 20);
+
+    EXPECT_EQ(smoother.refine_coastline(), 0);
+    EXPECT_EQ(smoother.mesh().num_elements(), 1024);
 }
 
 TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRespectsMaxLevel) {
     auto index = make_sawtooth_index();
     ASSERT_NE(index, nullptr);
 
-    // The 4x4 base mesh is at level 2, so this permits exactly one sweep of the
-    // two the sawtooth would otherwise drive.
+    // The 4x4 base mesh is at level 2, so this permits exactly one sweep before
+    // the cap holds every coastal element back.
     AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, make_config(1));
-    smoother.set_coastline(index, 3, 1.0);
+    smoother.set_coastline(index, 3);
 
     EXPECT_GT(smoother.refine_coastline(), 0);
 
@@ -482,7 +496,7 @@ TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRespectsMinElementSize) {
     config.min_element_size = 12.5; // base elements are 25, so one sweep fits
 
     AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-    smoother.set_coastline(index, 20, 1.0);
+    smoother.set_coastline(index, 20);
 
     EXPECT_GT(smoother.refine_coastline(), 0);
 
@@ -499,13 +513,13 @@ TEST_F(AdaptiveCGHermiteSmootherTest, CoastlinePrePassRespectsMaxElements) {
     auto uncapped = make_config(1);
     uncapped.max_elements = 100000;
     AdaptiveCGHermiteSmoother full(0.0, 100.0, 0.0, 100.0, 4, 4, uncapped);
-    full.set_coastline(index, 20, 1.0);
+    full.set_coastline(index, 20);
     full.refine_coastline();
 
     auto capped_config = make_config(1);
     capped_config.max_elements = 20; // the base mesh already has 16
     AdaptiveCGHermiteSmoother capped(0.0, 100.0, 0.0, 100.0, 4, 4, capped_config);
-    capped.set_coastline(index, 20, 1.0);
+    capped.set_coastline(index, 20);
     capped.refine_coastline();
 
     EXPECT_LT(capped.mesh().num_elements(), full.mesh().num_elements());
@@ -521,7 +535,7 @@ TEST_F(AdaptiveCGHermiteSmootherTest, SolveAdaptiveRunsThePrePassOnce) {
     config.smoother_config.lambda = 100.0;
 
     AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
-    smoother.set_coastline(index, 20, 1.0);
+    smoother.set_coastline(index, 20);
     smoother.set_bathymetry_data(gaussian_bump);
 
     const auto result = smoother.solve_adaptive();

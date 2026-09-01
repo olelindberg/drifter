@@ -27,9 +27,9 @@
     "ny": 8
   },
   "adaptive": {
-    "error_threshold": 0.1,
+    "error_threshold": 12.0,
     "error_metric_type": "PixelMaxError",
-    "max_iterations": 100,
+    "max_iterations": 10,
     "max_elements": 100000,
     "max_refinement_level": 100,
     "enforce_pixel_limit": true,
@@ -52,8 +52,7 @@
     "file": "/home/ole/Projects/drifter/data/input/openstreetmap/coastlines-split-4326/lines.shp",
     "layer": "",
     "srs": "EPSG:3034",
-    "max_level": 100,
-    "min_curvature_radius": 500.0
+    "max_level": 12
   },
   "output": {
     "output_file": "/tmp/drifter_bathymetry_hermite",

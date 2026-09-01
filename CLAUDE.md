@@ -178,8 +178,8 @@ a green CI run as coverage for GeoTIFF/VTK work. `nightly.yml` runs the extended
   `source_id` carried into VTK output for provenance
 - `CoastlineRefinement` - R-tree based coastline-adaptive mesh refinement. Loading and indexing
   are **domain-filtered** (bounds passed to `load()`/`build_index()`) — required for global
-  datasets. Also provides `min_curvature_radius()` over a box, which drives lowrider's
-  coastline stage, and curvature-comb VTK debug output
+  datasets. Also provides `has_circumradius_below()` over a box, which drives both apps'
+  coastline stage, and circumradius-comb VTK debug output
 - `Hilbert2D` (`mesh/hilbert.hpp`) - 2D Hilbert encode/decode, alongside the Morton codes used
   for quadtree leaf ordering
 

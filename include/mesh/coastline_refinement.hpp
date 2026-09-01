@@ -12,11 +12,6 @@
 
 namespace drifter {
 
-/// @brief Configuration for curvature comb visualization
-struct CurvatureCombConfig {
-    Real scale = 0.01;  // Scale factor for comb line lengths
-};
-
 // Forward declarations for PIMPL
 class CoastlineIndex;
 
@@ -81,13 +76,19 @@ public:
     /// @param filename Output filename (without extension)
     void write_vtk(const std::string &filename) const;
 
-    /// @brief Write curvature comb visualization to VTK file
-    /// Shows curvature radius at each coastline vertex as line segments
-    /// extending in the normal direction (toward center of curvature)
+    /// @brief Write circumradius comb visualization to VTK file
+    ///
+    /// Shows the discrete circumradius at each coastline vertex as a line segment
+    /// extending in the normal direction (toward the circumcenter). Teeth are drawn
+    /// at **the same length scale as the mesh**, so a tooth can be compared
+    /// directly against the element it sits in: longer than the element means the
+    /// refinement criterion is satisfied there and the element is left alone.
+    /// Lengths are clamped at 10 km so a nearly straight stretch cannot draw a
+    /// tooth the size of the domain; the untruncated radius is still written as
+    /// cell data.
+    ///
     /// @param filename Output filename (without extension, .vtp added)
-    /// @param config Visualization parameters (scale, radius limits)
-    void write_curvature_comb_vtk(const std::string &filename,
-                                   const CurvatureCombConfig &config = {}) const;
+    void write_circumradius_comb_vtk(const std::string &filename) const;
 
     /// @brief Check if GDAL/OGR is available
     static bool is_available();
@@ -115,19 +116,26 @@ public:
     /// @brief Check if a box intersects any coastline segment
     bool intersects(Real xmin, Real ymin, Real xmax, Real ymax) const;
 
-    /// @brief Query minimum curvature radius within a bounding box
+    /// @brief Check whether the box holds a coastline feature sharper than a ceiling
+    ///
+    /// The discrete circumradius R(v) is a length: the smaller it is, the tighter
+    /// the shoreline turns at that vertex. A box holding no circumradius sample at
+    /// all reports false, so the query exerts no refinement pressure away from the
+    /// coast and none along a straight coast, where R is infinite.
+    ///
     /// @param xmin, ymin, xmax, ymax Query bounding box
-    /// @param min_radius Minimum radius threshold (ignore smaller values as noise)
-    /// @return Minimum curvature radius >= min_radius in the box,
-    ///         or infinity if no qualifying curvature points are present
-    Real min_curvature_radius(Real xmin, Real ymin, Real xmax, Real ymax,
-                               Real min_radius = 0.0) const;
+    /// @param threshold Length to compare against, in SRS units. The refinement
+    ///        pre-pass passes the element's own shorter side, so an element is
+    ///        marked while it is larger than the tightest feature it holds.
+    /// @return true if any vertex in the box has R(v) < threshold
+    bool has_circumradius_below(Real xmin, Real ymin, Real xmax, Real ymax,
+                                Real threshold) const;
 
     /// @brief Get number of segments in the index
     size_t num_segments() const;
 
-    /// @brief Get number of curvature points in the index
-    size_t num_curvature_points() const;
+    /// @brief Get number of circumradius samples in the index
+    size_t num_circumradius_points() const;
 
 private:
     friend class CoastlineReader;
