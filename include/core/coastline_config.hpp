@@ -23,7 +23,7 @@ struct CoastlineConfig {
 
     /// Filter small polygons (0 = no filter).
     ///
-    /// Currently inert: CoastlineReader stores a flat segment soup rather than
+    /// Currently inert: CoastlineReader stores open polylines rather than
     /// polygons, so CoastlineReader::remove_small_polygons() has nothing to
     /// measure an area over and does nothing. Setting it is warned about at load.
     Real min_polygon_area = 0.0;

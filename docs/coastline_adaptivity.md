@@ -34,7 +34,7 @@ follows this pre-pass is studied in
 The chain has six links, three per stage:
 
 $$
-\underbrace{\text{vector file} \;\to\; \mathcal{S} \;\to\; \mathcal{C} \;\to\; \{(v, R(v))\}}
+\underbrace{\text{vector file} \;\to\; \mathcal{P} \;\to\; \mathcal{C} \;\to\; \{(v, R(v))\}}
 _{\text{geometric (§2–§5)}}
 \;\to\;
 \underbrace{\big(\exists\, v \in B_E : R(v) < h_E\big) \;\to\; \text{mesh}}_{\text{criterion (§6–§9)}}
@@ -43,9 +43,9 @@ _{\text{geometric (§2–§5)}}
 $$
 
 Reading left to right: a georeferenced vector dataset is filtered to the domain, reprojected and
-flattened into an unordered set of two-dimensional segments $\mathcal{S}$; the segments are
-reassembled into ordered polylines $\mathcal{C}$, because the circumradius is a three-point
-quantity; each interior vertex receives a discrete circumradius $R(v)$; the vertices and their
+flattened into ordered two-dimensional polylines $\mathcal{P}$; polylines that continue one another
+are stitched into chains $\mathcal{C}$, because the circumradius is a three-point quantity; each
+interior vertex receives a discrete circumradius $R(v)$; the vertices and their
 radii are put into a spatial index; the mesh is refined while any element is larger than the
 tightest feature it contains; and the resulting elements are classified by whether they hold data.
 
@@ -55,11 +55,12 @@ The pre-pass runs **once**, before the Dörfler-marked error loop, and is idempo
 
 | Symbol | Meaning | Built at |
 |---|---|---|
-| $\mathcal{S}$ | Unordered set of 2D coastline segments in the working SRS | [coastline_refinement.cpp:232-329](../src/mesh/coastline_refinement.cpp#L232-L329) |
-| $\mathcal{C}$ | Polylines reconstructed from $\mathcal{S}$; $\lvert\text{chain}\rvert \geq 3$ | [:431-493](../src/mesh/coastline_refinement.cpp#L431-L493) |
-| $\mathcal{V}$ | Interior vertices of $\mathcal{C}$ with finite radius — the circumradius samples | [:715-725](../src/mesh/coastline_refinement.cpp#L715-L725) |
-| $R(v)$ | Discrete circumradius at vertex $v$; curvature is its reciprocal $\kappa = 1/R$ and is never computed | [:496-521](../src/mesh/coastline_refinement.cpp#L496-L521) |
-| $S(B,\tau)$ | Whether an element box $B$ holds a vertex with $R(v) < \tau$ | [:740-754](../src/mesh/coastline_refinement.cpp#L740-L754) |
+| $\mathcal{P}$ | Ordered polylines in the working SRS, stored as concatenated vertices plus offsets | [coastline_refinement.cpp:279-375](../src/mesh/coastline_refinement.cpp#L279-L375) |
+| $\mathcal{S}$ | The $n-1$ segments implied by each polyline of $\mathcal{P}$; never stored | [:132-141](../src/mesh/coastline_refinement.cpp#L132-L141) |
+| $\mathcal{C}$ | Chains: maximal runs of polylines joined end to end; $\lvert\text{chain}\rvert \geq 3$ | [:526-608](../src/mesh/coastline_refinement.cpp#L526-L608) |
+| $\mathcal{V}$ | Interior vertices of $\mathcal{C}$ with finite radius, inside the domain — the circumradius samples | [:855-884](../src/mesh/coastline_refinement.cpp#L855-L884) |
+| $R(v)$ | Discrete circumradius at vertex $v$; curvature is its reciprocal $\kappa = 1/R$ and is never computed | [:611-636](../src/mesh/coastline_refinement.cpp#L611-L636) |
+| $S(B,\tau)$ | Whether an element box $B$ holds a vertex with $R(v) < \tau$ | [:937-947](../src/mesh/coastline_refinement.cpp#L937-L947) |
 | $h_E$ | Element size $\min(\Delta x_E, \Delta y_E)$; the criterion's threshold | [quadtree_adapter.hpp](../include/bathymetry/quadtree_adapter.hpp) |
 | $\ell_E,\ \ell_{\max}$ | Element refinement level and its cap | `coastline.max_level` |
 | $\rho(x,y)$ | Local raster resolution in metres | [multi_source_bathymetry.hpp](../include/mesh/multi_source_bathymetry.hpp) |
@@ -71,10 +72,10 @@ The pre-pass runs **once**, before the Dörfler-marked error loop, and is idempo
 
 The reader opens the dataset through GDAL's vector driver, selects a layer by name or takes the
 first, and builds a coordinate transform from the layer's spatial reference to the working SRS —
-[coastline_refinement.cpp:232-329](../src/mesh/coastline_refinement.cpp#L232-L329).
+[coastline_refinement.cpp:279-375](../src/mesh/coastline_refinement.cpp#L279-L375).
 
 Both spatial references are put into traditional GIS axis order —
-[:274-275](../src/mesh/coastline_refinement.cpp#L274-L275). This matters for geographic
+[:321-322](../src/mesh/coastline_refinement.cpp#L321-L322). This matters for geographic
 coordinate systems: EPSG:4326 is officially defined as latitude-then-longitude, while every
 shapefile written in practice stores longitude first. Forcing traditional order makes the stored
 ordering the authoritative one, so a coastline in EPSG:4326 reprojects to a projected working SRS
@@ -88,7 +89,7 @@ SRS, which requires mapping the domain box backwards through the inverse transfo
 
 A rectangle in the target SRS is not a rectangle in the source SRS — projection curves its edges.
 Transforming two opposite corners is therefore insufficient. All four corners are transformed and
-their envelope taken — [:294-302](../src/mesh/coastline_refinement.cpp#L294-L302):
+their envelope taken — [:337-346](../src/mesh/coastline_refinement.cpp#L337-L346):
 
 $$
 \left[\min_i x_i,\ \max_i x_i\right] \times \left[\min_i y_i,\ \max_i y_i\right],
@@ -99,36 +100,46 @@ $$
 This is a conservative outer bound: the envelope of the transformed corners contains the
 transformed rectangle whenever the projection's edge curvature does not exceed the corner spread,
 which holds for any domain small enough that the transform is close to affine over it. The
-envelope is then handed to `SetSpatialFilterRect` — [:305](../src/mesh/coastline_refinement.cpp#L305).
+envelope is then handed to `SetSpatialFilterRect` — [:348](../src/mesh/coastline_refinement.cpp#L348).
 
-### 2.2 Flattening to segments
+### 2.2 Flattening to polylines
 
 Each surviving feature is cloned, flattened to two dimensions, and walked recursively —
-[:121-146](../src/mesh/coastline_refinement.cpp#L121-L146). Line strings contribute their $n-1$
-consecutive segments; polygons contribute the exterior ring **and every interior ring**, so lakes
-and inner harbours are coastline too; multi-geometries and geometry collections recurse.
-Coordinates are transformed in bulk per line string rather than per point.
+[:168-193](../src/mesh/coastline_refinement.cpp#L168-L193). Line strings contribute their vertices
+in order; polygons contribute the exterior ring **and every interior ring**, so lakes and inner
+harbours are coastline too; multi-geometries and geometry collections recurse. Coordinates are
+transformed in bulk per line string rather than per point.
 
-The output is $\mathcal{S}$: a flat set of segments with no polygon topology and no ordering.
-Everything downstream is derived from this set.
+The output is $\mathcal{P}$, held in CSR form — every vertex once in a flat array, plus one offset
+per polyline — [:54-59](../src/mesh/coastline_refinement.cpp#L54-L59). Segments are *implied*:
+segment $j$ of polyline $k$ runs from vertex $\text{offsets}[k]+j$ to its successor, so the shared
+vertex between consecutive segments is stored once rather than twice. Nothing downstream stores a
+segment; the consumers that want segment semantics unpack them on the fly through a single
+`for_each_segment` helper — [:132-141](../src/mesh/coastline_refinement.cpp#L132-L141).
 
 ---
 
-## 3. Chain reconstruction
+## 3. Chain stitching
 
-The circumradius at a vertex needs its two neighbours, so it needs *ordering*, and $\mathcal{S}$ has
-none. The ordering is rebuilt rather than preserved, which keeps the reader's output a single
-uniform type regardless of which geometry classes the source file happened to use.
+The circumradius at a vertex needs its two neighbours, so it needs *ordering*. That ordering is
+**preserved from the input** rather than rebuilt: an OSM split line and a polygon ring are already
+ordered, and §2.2 keeps them that way. What remains is only to join polylines that continue one
+another, so a vertex where two features meet still gets a sample.
 
-`build_vertex_chains()` — [:431-493](../src/mesh/coastline_refinement.cpp#L431-L493) — proceeds in
-two steps. First, endpoints are hashed on a quantized integer grid, so that two segments meeting at
-a shared vertex map to the same key; this produces an adjacency map from vertex to incident
-segments. Second, a greedy walk starts at any unused segment and repeatedly hops to an unused
-incident segment at the current endpoint, marking segments used, until no incident segment
-remains.
+`build_chains()` — [:526-608](../src/mesh/coastline_refinement.cpp#L526-L608) — therefore hashes
+**only the two endpoints of each polyline** onto a quantized integer grid, giving an adjacency map
+from endpoint to incident polylines. A greedy walk then starts at any unused polyline and
+repeatedly hops to an unused polyline sharing the current end, recording for each whether it is
+traversed forwards or backwards, until no continuation remains. A chain is thus a run of polyline
+ids, and its vertices are enumerated without ever being copied — consecutive links share a vertex,
+which is emitted once.
+
+This is what keeps the pass affordable at continental scale. A 2000 km domain over the OSM
+coastline holds ~16.2 M segments across ~260 k polylines, so the endpoint map has ~520 k entries
+rather than the ~32 M a per-segment adjacency would need.
 
 The walk yields maximal chains under the adjacency relation. Chains of fewer than three vertices
-are discarded — [:487](../src/mesh/coastline_refinement.cpp#L487) — because they contain no
+are discarded — [:602](../src/mesh/coastline_refinement.cpp#L602) — because they contain no
 interior vertex and therefore contribute no circumradius sample.
 
 The result is
@@ -139,12 +150,12 @@ $$
 
 whose interior vertices $p_1, \dots, p_{n-2}$ are the sample points of §4.
 
-> **Chains need not be the original polylines, and do not have to be.** At a junction where three
-> or more segments meet, the walk picks one continuation and the others start chains of their own.
-> The criterion in §7 depends only on the *set* of (vertex, radius) pairs, never on which chain a
-> vertex belongs to or on the direction of traversal, so any consistent decomposition of the
-> segment set into chains produces the same refinement. Only the circumradius-comb diagnostic (§4.1)
-> is sensitive to orientation, and there only in the sign of the drawn normal.
+> **The decomposition into chains is not unique, and does not have to be.** At a junction where
+> three or more polylines meet, the walk picks one continuation and the others start chains of
+> their own. The criterion in §7 depends only on the *set* of (vertex, radius) pairs, never on
+> which chain a vertex belongs to or on the direction of traversal, so any consistent decomposition
+> produces the same refinement. Only the circumradius-comb diagnostic (§4.1) is sensitive to
+> orientation, and there only in the sign of the drawn normal.
 
 ---
 
@@ -164,7 +175,7 @@ a = \lVert v_1 \rVert, \quad b = \lVert v_2 \rVert, \quad c = \lVert p_2 - p_0 \
 $$
 
 The discrete circumradius at $p_1$ is the **circumradius of the triangle** $(p_0, p_1, p_2)$ —
-[:496-521](../src/mesh/coastline_refinement.cpp#L496-L521). Starting from the classical
+[:611-636](../src/mesh/coastline_refinement.cpp#L611-L636). Starting from the classical
 circumradius identity and substituting twice the signed area of the triangle,
 $2A = \lvert v_1 \times v_2 \rvert$ where $v_1 \times v_2 = v_{1x} v_{2y} - v_{1y} v_{2x}$:
 
@@ -176,7 +187,7 @@ R(p_1) \;=\; \frac{abc}{4A}
 $$
 
 A collinear triple has no circumcircle, and the cross product vanishes with it. The guard is
-written relative to the leg lengths — [:514-516](../src/mesh/coastline_refinement.cpp#L514-L516):
+written relative to the leg lengths — [:629-631](../src/mesh/coastline_refinement.cpp#L629-L631):
 
 $$
 \lvert v_1 \times v_2 \rvert < 10^{-12}\, a\, b
@@ -191,7 +202,7 @@ the raw cross product makes it scale-invariant: a straight coast sampled at 10 m
 same coast sampled at 10 km spacing are both recognised as straight.
 
 Infinite radii are never inserted into the index —
-[:719-723](../src/mesh/coastline_refinement.cpp#L719-L723). A straight shoreline therefore exerts
+[:859-863](../src/mesh/coastline_refinement.cpp#L859-L863). A straight shoreline therefore exerts
 no refinement pressure at all, however long it is and however many vertices describe it.
 
 > **Why the circumradius is the right discrete measure here.** It is exact on the case that
@@ -206,7 +217,7 @@ no refinement pressure at all, however long it is and however many vertices desc
 
 The refinement criterion needs only $R$, but the diagnostic output also needs a direction. The
 normal at $p_1$ is built from the averaged unit tangent —
-[:524-568](../src/mesh/coastline_refinement.cpp#L524-L568):
+[:639-683](../src/mesh/coastline_refinement.cpp#L639-L683):
 
 $$
 \hat{t} = \frac{\hat{v}_1 + \hat{v}_2}{\lVert \hat{v}_1 + \hat{v}_2 \rVert},
@@ -222,7 +233,7 @@ back to the rotated first leg.
 
 The circumradius comb draws one tooth per interior vertex, of length $\min(R,\ 10^4\,\text{m})$,
 and tags each tooth with its untruncated radius as cell data —
-[:572-665](../src/mesh/coastline_refinement.cpp#L572-L665). Long teeth mark flat coast, short
+[:687-781](../src/mesh/coastline_refinement.cpp#L687-L781). Long teeth mark flat coast, short
 teeth mark tight features; the clamp keeps a nearly straight section from drawing a tooth the size
 of the domain.
 
@@ -237,21 +248,38 @@ nothing in §6–§9 reads it.
 ## 5. Spatial indexing
 
 Two Boost.Geometry R\*-trees of node capacity 16 hold the results —
-[:43-48](../src/mesh/coastline_refinement.cpp#L43-L48):
+[:46-52](../src/mesh/coastline_refinement.cpp#L46-L52):
 
-| Tree | Key | Value | Query used |
-|---|---|---|---|
-| Segment tree | segment bounding box | segment | box overlap (`intersects`) |
-| Circumradius tree | vertex point | radius $R(v)$ | box overlap (`intersects`) |
+| Tree | Key | Value | Query used | Built |
+|---|---|---|---|---|
+| Segment tree | segment bounding box | — | box overlap (`intersects`) | on first query |
+| Circumradius tree | vertex point | radius $R(v)$ | box overlap (`intersects`) | by `build_index()` |
 
-Both are built by `build_index()` —
-[:695-728](../src/mesh/coastline_refinement.cpp#L695-L728). The segment tree answers "does the
-coastline pass through this box"; the circumradius tree answers "does this box hold a feature
-sharper than a given length". Only the second drives refinement.
+The segment tree answers "does the coastline pass through this box"; the circumradius tree answers
+"does this box hold a feature sharper than a given length". **Only the second drives refinement**,
+and that asymmetry is reflected in what `build_index()` —
+[:790-908](../src/mesh/coastline_refinement.cpp#L790-L908) — actually does: it records which
+segments fall inside the domain, but defers building a tree over them until something calls
+`intersects()`. The pre-pass never does, so on a continental domain that tree is never built.
+
+Both trees are **bulk-loaded** through the rtree's packing constructor rather than by repeated
+`insert()`. The distinction is not a micro-optimization: `insert()` runs the R\* insertion path,
+forced reinsertion and split heuristic included, once per element, whereas the packing constructor
+performs a single STR-style build. On the 2000 km domain (~14.4 M samples) this is the difference
+between minutes and seconds. Note that `rtree::insert(first, last)` does *not* pack — only the
+constructor does.
+
+Samples are filtered to the domain box before packing. The GDAL filter of §2.1 works on the
+source-SRS envelope, which is strictly larger than the target-SRS domain box, so without this a
+few percent of samples sit outside the domain and slow every query.
 
 The index exposes no nearest-neighbour and no distance query. Every downstream question is
 answered by box overlap against an element's bounds, which is what keeps the per-element cost at
 one R-tree descent and makes the criterion in §7 a purely local test.
+
+The index shares the reader's CSR vertex storage rather than copying it, and keeps only a list of
+in-domain segment ids of its own, so it stays valid after the reader is destroyed without
+duplicating hundreds of megabytes of geometry.
 
 ---
 
@@ -259,7 +287,7 @@ one R-tree descent and makes the criterion in §7 a purely local test.
 
 For an element with bounding box $B$ and a threshold length $\tau$,
 `has_circumradius_below()` reports —
-[:740-754](../src/mesh/coastline_refinement.cpp#L740-L754):
+[:937-947](../src/mesh/coastline_refinement.cpp#L937-L947):
 
 $$
 S(B, \tau) \;=\;

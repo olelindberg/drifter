@@ -47,7 +47,9 @@ public:
               const std::string &target_srs,
               Real domain_xmin, Real domain_ymin, Real domain_xmax, Real domain_ymax);
 
-    /// @brief Get the number of polygons
+    /// @brief Get the number of loaded segments
+    /// Vertices are stored as ordered polylines, so this is the vertex count
+    /// less one per polyline - not a polygon count, despite the name.
     size_t num_polygons() const;
 
     /// @brief Swap X and Y coordinates (needed for some coordinate systems)
@@ -60,13 +62,16 @@ public:
     /// @param xmin, ymin, xmax, ymax Output parameters for bounds
     void bounding_box(Real &xmin, Real &ymin, Real &xmax, Real &ymax) const;
 
-    /// @brief Build coastline index from loaded polygons
+    /// @brief Build coastline index over everything loaded
+    /// Equivalent to the domain-filtered overload with unbounded bounds.
     /// @return Shared pointer to the built index
     std::shared_ptr<CoastlineIndex> build_index() const;
 
     /// @brief Build coastline index filtered to domain bounds
-    /// Only segments intersecting the domain bounding box are indexed.
-    /// This is critical for performance with global datasets.
+    /// Both the segment set and the circumradius samples are restricted to the
+    /// domain bounding box. This is critical for performance with global
+    /// datasets. The index shares the reader's vertex storage rather than
+    /// copying it, and stays valid after the reader is destroyed.
     /// @param xmin, ymin, xmax, ymax Domain bounding box
     /// @return Shared pointer to the built index
     std::shared_ptr<CoastlineIndex> build_index(Real xmin, Real ymin,
@@ -114,6 +119,9 @@ public:
     CoastlineIndex &operator=(CoastlineIndex &&) noexcept;
 
     /// @brief Check if a box intersects any coastline segment
+    /// The segment R-tree backing this is built on the first call, not by
+    /// build_index(): the refinement pre-pass drives off
+    /// has_circumradius_below() alone and never pays for it.
     bool intersects(Real xmin, Real ymin, Real xmax, Real ymax) const;
 
     /// @brief Check whether the box holds a coastline feature sharper than a ceiling
