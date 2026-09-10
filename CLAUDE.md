@@ -390,6 +390,7 @@ for diagnostics — these are what the sparsity tooling and the docs figures con
 | `uniform_vs_adaptive_convergence.md` | Uniform vs AMR convergence on synthetic bathymetry |
 | `hierarchical_ordering_benchmark.md` | Hierarchical vs Morton DOF ordering — concludes no benefit |
 | `hermite_bathymetry_system.md` | Derivation of the Hermite system now implemented by `CGHermiteBathymetrySmoother` — corner elevation/derivative DOFs, structural C^r, no KKT. Covers C⁰/C¹/C² (only C⁰ and C¹ are implemented). Section numbering parallels `cg_bezier_matrix_system.md` |
+| `sea_water_equation_of_state.md` | The forms of ρ(T,S,p) in the literature — linear/quadratic (cabbeling, thermobaricity), UNESCO 1983 with full coefficients, the potential-temperature fits (Jackett & McDougall 1995, MDJWF 2003, Wright 1997, Brydon 1999), TEOS-10, and the Roquet polynomial approximations. Theory document, literature citations only; `governing_equations.md` §6 links to it |
 | `coastline_adaptivity.md` | Theory of the coastline pre-pass and the water mask — discrete curvature as a circumradius, the R-tree query, the criterion `R(B) < min(Δx,Δy)` and its fixed point, then the Water/Beach/Inland element classification that decides what is assembled |
 
 **Matrix System:** See `docs/cg_bezier_matrix_system.md` for the full derivation of the assembled system - least-squares data term, thin plate/membrane energy, C⁰/C¹ continuity, hanging-node constraints, boundary conditions, and KKT layout.
