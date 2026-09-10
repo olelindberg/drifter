@@ -48,6 +48,69 @@ struct BoundaryRelaxationConfig {
     std::array<bool, 4> edge_enabled = {true, true, true, true};
 };
 
+/// @brief One element's fitted surface, ready to be evaluated repeatedly
+///
+/// Evaluating through CGSmootherBase::evaluate_in_element() rebuilds the
+/// element's coefficients on every call: a heap-allocated vector plus, for a
+/// Hermite basis, an h_x^a h_y^b scaling computed with two std::pow per DOF.
+/// The consumers - error quadrature, coarsening metrics, VTK sampling - all
+/// visit 36 to 49 points of the same element in a row, so that work belongs
+/// outside their point loop. This holds it.
+///
+/// Holds a reference to the basis and a copy of the coefficients; it stays
+/// valid only as long as the smoother that produced it.
+class ElementSurface {
+public:
+    ElementSurface(const Basis2DBase &basis, const QuadBounds &bounds, VecX coeffs);
+
+    /// @brief Value at a physical point, clamped to the element
+    /// @see CGSmootherBase::evaluate_in_element for the one-sided trace semantics
+    Real value(Real x, Real y) const;
+
+    /// @brief Value at parametric coordinates in [0, 1]^2
+    Real value_uv(Real u, Real v) const;
+
+    /// @brief Value from precomputed basis values at a parametric point
+    ///
+    /// For a fixed sample grid - Gauss points, VTK nodes - the basis values do
+    /// not depend on the element, so sample_basis() evaluates them once and
+    /// each point here costs one dot product. Pass a *column* of that result:
+    /// MatX is column-major, so a column binds to the Ref without copying,
+    /// where a row would be silently evaluated into a temporary.
+    Real value_of(const Eigen::Ref<const VecX> &basis_values) const {
+        return coeffs_.dot(basis_values);
+    }
+
+    /// @brief Physical gradient at a physical point, clamped to the element
+    Vec2 gradient(Real x, Real y) const;
+
+    const VecX &coefficients() const { return coeffs_; }
+
+private:
+    const Basis2DBase *basis_;
+    Real xmin_;
+    Real ymin_;
+    Real dx_;
+    Real dy_;
+    VecX coeffs_;
+};
+
+/// @brief Basis values at parametric points, one **column** per point
+///
+/// Pairs with ElementSurface::value_of() for repeated evaluation on a fixed
+/// parametric grid. Columns rather than rows so that each point's values are
+/// contiguous in the column-major MatX.
+MatX sample_basis(const Basis2DBase &basis, const std::vector<Vec2> &points);
+
+class CGSmootherBase;
+
+/// @brief An (elem, x, y) evaluator that reuses the current element's surface
+///
+/// The VTK writers visit an element's nodes consecutively, so holding on to the
+/// last ElementSurface turns (order+1)^2 coefficient rebuilds per element into
+/// one. The returned callable borrows the smoother and must not outlive it.
+std::function<Real(Index, Real, Real)> element_major_evaluator(const CGSmootherBase &smoother);
+
 /// @brief Abstract base class for CG Bezier bathymetry smoothers
 ///
 /// Implements common functionality for both linear and cubic Bezier smoothers:
@@ -401,6 +464,12 @@ public:
     /// @brief Evaluate gradient in a specific element
     /// @see evaluate_in_element for the one-sided trace semantics
     Vec2 evaluate_gradient_in_element(Index elem, Real x, Real y) const;
+
+    /// @brief The element's surface, for evaluation at many points
+    ///
+    /// Pays element_coefficients() once instead of once per point. Prefer this
+    /// over evaluate_in_element() in any loop over an element's interior.
+    ElementSurface element_surface(Index elem) const;
 
 protected:
 

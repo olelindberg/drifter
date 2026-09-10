@@ -1,15 +1,16 @@
 #include "core/config_reader.hpp"
 #include "core/drifter.hpp"
+#include "core/logger.hpp"
 #include <iostream>
 #include <string>
 
 using namespace drifter;
 
 int main(int argc, char *argv[]) {
-  std::cout << "====================================\n";
-  std::cout << "  HIGHRIDER - Coastal Ocean Model\n";
-  std::cout << "  Adaptive Bathymetry Smoother\n";
-  std::cout << "====================================\n\n";
+  LOG_INFO("====================================");
+  LOG_INFO("  HIGHRIDER - Coastal Ocean Model");
+  LOG_INFO("  Adaptive Bathymetry Smoother");
+  LOG_INFO("====================================");
 
   // Parse command line
   if (argc < 2) {
@@ -24,10 +25,10 @@ int main(int argc, char *argv[]) {
   // Load configuration
   DrifterConfig config;
   try {
-    std::cout << "Loading configuration from: " << config_path << std::endl;
+    LOG_INFO("Loading configuration from: " << config_path);
     config = ConfigReader::load(config_path);
   } catch (const std::exception &e) {
-    std::cerr << "Error loading config: " << e.what() << "\n";
+    LOG_ERROR("Error loading config: " << e.what());
     return 1;
   }
 

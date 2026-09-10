@@ -2,6 +2,7 @@
 #include "bathymetry/cg_hermite_bathymetry_smoother.hpp"
 #include "bathymetry/cg_linear_bezier_bathymetry_smoother.hpp"
 #include "bathymetry/quadtree_adapter.hpp"
+#include "core/enum_strings.hpp"
 #include <Eigen/SparseCholesky>
 #include <cmath>
 #include <gtest/gtest.h>
@@ -11,7 +12,9 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <string>
+#include <vector>
 
 using namespace drifter;
 
@@ -119,6 +122,88 @@ TEST_F(CGHermiteSmootherTest, EvaluateBeforeSolveThrows) {
     auto mesh = create_quadtree(2, 2);
     CGHermiteBathymetrySmoother smoother(mesh);
     EXPECT_THROW(smoother.evaluate(50.0, 50.0), std::runtime_error);
+}
+
+// Asking for a backend that was not compiled in is an error, not a quiet
+// substitution of another one: the config named a specific factorisation and
+// silently running a different one would make any timing meaningless.
+TEST_F(CGHermiteSmootherTest, UnavailableSolverKindThrows) {
+    // Whichever of these this build lacks; if it has them all there is nothing
+    // to assert and the test is trivially satisfied.
+    std::vector<HermiteSolverKind> unavailable;
+#ifndef DRIFTER_USE_MKL
+    unavailable.push_back(HermiteSolverKind::PardisoLDLT);
+#endif
+#ifndef DRIFTER_USE_UMFPACK
+    unavailable.push_back(HermiteSolverKind::UmfPackLU);
+#endif
+#ifndef DRIFTER_USE_CHOLMOD
+    unavailable.push_back(HermiteSolverKind::CholmodSupernodalLLT);
+#endif
+
+    auto mesh = create_quadtree(2, 2);
+    for (const auto kind : unavailable) {
+        CGHermiteSmootherConfig config;
+        config.solver = kind;
+        CGHermiteBathymetrySmoother smoother(mesh, config);
+        smoother.set_bathymetry_data(smooth_bathy);
+        EXPECT_THROW(smoother.solve(), std::invalid_argument);
+    }
+}
+
+// The default must stay the one backend that needs no optional dependency,
+// so that a build configured with nothing extra still solves.
+TEST_F(CGHermiteSmootherTest, DefaultSolverNeedsNoOptionalDependency) {
+    EXPECT_EQ(CGHermiteSmootherConfig{}.solver, HermiteSolverKind::SimplicialLDLT);
+}
+
+// Every backend this build has must reach the same surface. The benchmark times
+// them; this pins that they agree, which is what makes the timings comparable.
+TEST_F(CGHermiteSmootherTest, AvailableSolverKindsAgree) {
+    std::vector<HermiteSolverKind> kinds{HermiteSolverKind::SimplicialLLT};
+#ifdef DRIFTER_USE_METIS
+    kinds.push_back(HermiteSolverKind::SimplicialLDLTMetis);
+#endif
+#ifdef DRIFTER_USE_MKL
+    kinds.push_back(HermiteSolverKind::PardisoLDLT);
+    kinds.push_back(HermiteSolverKind::PardisoLLT);
+#endif
+#ifdef DRIFTER_USE_UMFPACK
+    kinds.push_back(HermiteSolverKind::UmfPackLU);
+#endif
+#ifdef DRIFTER_USE_CHOLMOD
+    kinds.push_back(HermiteSolverKind::CholmodSimplicialLDLT);
+    kinds.push_back(HermiteSolverKind::CholmodSupernodalLLT);
+    kinds.push_back(HermiteSolverKind::CholmodSupernodalNesdis);
+#endif
+
+    for_both_meshes([&](QuadtreeAdapter &mesh) {
+        auto solve_with = [&](HermiteSolverKind kind) {
+            CGHermiteSmootherConfig config;
+            config.continuity_order = 1;
+            config.lambda = 10.0;
+            config.solver = kind;
+            auto s = std::make_unique<CGHermiteBathymetrySmoother>(mesh, config);
+            s->set_bathymetry_data(smooth_bathy);
+            s->solve();
+            return s;
+        };
+
+        const auto reference = solve_with(HermiteSolverKind::SimplicialLDLT);
+        for (const auto kind : kinds) {
+            const auto other = solve_with(kind);
+            Real max_diff = 0.0;
+            for (int i = 0; i <= 15; ++i) {
+                for (int j = 0; j <= 15; ++j) {
+                    const Real x = 100.0 * i / 15.0;
+                    const Real y = 100.0 * j / 15.0;
+                    max_diff = std::max(
+                        max_diff, std::abs(reference->evaluate(x, y) - other->evaluate(x, y)));
+                }
+            }
+            EXPECT_LT(max_diff, 1e-7) << to_string(kind);
+        }
+    });
 }
 
 // =============================================================================

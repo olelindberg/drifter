@@ -210,6 +210,30 @@ protected:
     /// Must be called before refinement to enable coarsening metrics computation
     void store_current_solution();
 
+    /// @brief A stored coarse solution, with the bounds of the element it is on
+    ///
+    /// Resolving it costs a hierarchy walk and a map lookup, and the answer is
+    /// the same for every point of an element, so callers resolve it once and
+    /// evaluate it many times.
+    struct StoredSolution {
+        const VecX *coeffs = nullptr; ///< null when no ancestor was stored
+        Real xmin = 0.0;
+        Real ymin = 0.0;
+        Real dx = 1.0;
+        Real dy = 1.0;
+
+        bool valid() const { return coeffs != nullptr; }
+
+        /// @brief Value at a physical point, or 0 when there is no ancestor
+        Real value(const Basis2DBase &basis, Real x, Real y) const;
+    };
+
+    /// @brief The nearest stored ancestor solution of an element
+    ///
+    /// Starts at the element's parent, since comparing an element against its
+    /// own previous coefficients would report a near-zero difference.
+    StoredSolution find_prev_solution(Index elem) const;
+
     /// @brief Evaluate previous solution at a point using stored coefficients
     /// @param x, y Physical coordinates
     /// @return Previous solution depth at (x, y), or 0 if not found

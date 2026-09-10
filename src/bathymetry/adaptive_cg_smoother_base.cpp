@@ -133,14 +133,9 @@ void AdaptiveCGSmootherBase::store_current_solution() {
     }
 }
 
-Real AdaptiveCGSmootherBase::evaluate_prev_solution(Real x, Real y) const {
-    // Find element containing point in current mesh
-    Index elem = quadtree_->find_element(Vec2(x, y));
-    if (elem < 0) {
-        return 0.0; // Outside domain
-    }
-
-    QuadtreeNode* node = quadtree_->elements()[elem];
+AdaptiveCGSmootherBase::StoredSolution
+AdaptiveCGSmootherBase::find_prev_solution(Index elem) const {
+    const QuadtreeNode *node = quadtree_->elements()[elem];
     uint64_t morton = node->morton;
     QuadLevel level = node->level;
 
@@ -158,7 +153,7 @@ Real AdaptiveCGSmootherBase::evaluate_prev_solution(Real x, Real y) const {
         morton = MortonUtil::parent_y(morton);
         level.y--;
     } else {
-        return 0.0; // At root level, no parent to compare to
+        return {}; // At root level, no parent to compare to
     }
 
     // Walk up hierarchy looking for stored solution
@@ -167,27 +162,20 @@ Real AdaptiveCGSmootherBase::evaluate_prev_solution(Real x, Real y) const {
         auto key = std::make_tuple(morton, level.x, level.y);
         auto it = prev_solutions_.find(key);
         if (it != prev_solutions_.end()) {
-            // Found stored solution - evaluate at (x, y)
-            const VecX &c = it->second;
-
             // Compute element bounds from Morton and level
             const QuadBounds &domain = quadtree_->domain_bounds();
-            Real elem_dx = (domain.xmax - domain.xmin) / (1 << level.x);
-            Real elem_dy = (domain.ymax - domain.ymin) / (1 << level.y);
+            StoredSolution found;
+            found.coeffs = &it->second;
+            found.dx = (domain.xmax - domain.xmin) / (1 << level.x);
+            found.dy = (domain.ymax - domain.ymin) / (1 << level.y);
 
             // Decode Morton to get grid indices
             uint32_t ix, iy, iz;
             Morton3D::decode(morton, ix, iy, iz);
 
-            Real elem_xmin = domain.xmin + ix * elem_dx;
-            Real elem_ymin = domain.ymin + iy * elem_dy;
-
-            // Map to parameter space [0,1]²
-            Real u = std::clamp((x - elem_xmin) / elem_dx, 0.0, 1.0);
-            Real v = std::clamp((y - elem_ymin) / elem_dy, 0.0, 1.0);
-
-            // Use polymorphic basis to evaluate
-            return get_basis_impl().evaluate_scalar(c, u, v);
+            found.xmin = domain.xmin + ix * found.dx;
+            found.ymin = domain.ymin + iy * found.dy;
+            return found;
         }
 
         // Check if at root level
@@ -209,7 +197,26 @@ Real AdaptiveCGSmootherBase::evaluate_prev_solution(Real x, Real y) const {
         }
     }
 
-    return 0.0; // No stored solution found
+    return {}; // No stored solution found
+}
+
+Real AdaptiveCGSmootherBase::StoredSolution::value(const Basis2DBase &basis, Real x,
+                                                   Real y) const {
+    if (!valid()) {
+        return 0.0;
+    }
+    // Map to parameter space [0,1]²
+    return basis.evaluate_scalar(*coeffs, std::clamp((x - xmin) / dx, 0.0, 1.0),
+                                 std::clamp((y - ymin) / dy, 0.0, 1.0));
+}
+
+Real AdaptiveCGSmootherBase::evaluate_prev_solution(Real x, Real y) const {
+    // Find element containing point in current mesh
+    Index elem = quadtree_->find_element(Vec2(x, y));
+    if (elem < 0) {
+        return 0.0; // Outside domain
+    }
+    return find_prev_solution(elem).value(get_basis_impl(), x, y);
 }
 
 void AdaptiveCGSmootherBase::compute_coarsening_metrics(Index elem, Real &mean_difference,
@@ -232,6 +239,14 @@ void AdaptiveCGSmootherBase::compute_coarsening_metrics(Index elem, Real &mean_d
     Real area = dx * dy;
     int ngauss = static_cast<int>(gauss_nodes_.size());
 
+    // Every quadrature point of this element lies in the same element and under
+    // the same stored ancestor, so both are resolved once here rather than by a
+    // point location and a hierarchy walk per point. The points are interior, so
+    // the element the old lookup found was always this one.
+    const Basis2DBase &basis = get_basis_impl();
+    const VecX fine_coeffs = get_element_coefficients_impl(elem);
+    const StoredSolution prev = find_prev_solution(elem);
+
     Real sum_abs_diff = 0.0; // For L1 norm
 
     for (int j = 0; j < ngauss; ++j) {
@@ -243,8 +258,8 @@ void AdaptiveCGSmootherBase::compute_coarsening_metrics(Index elem, Real &mean_d
             Real x = bounds.xmin + u * dx;
             Real y = bounds.ymin + v * dy;
 
-            Real z_fine = smoother_evaluate(x, y);
-            Real z_coarse = evaluate_prev_solution(x, y);
+            Real z_fine = basis.evaluate_scalar(fine_coeffs, u, v);
+            Real z_coarse = prev.value(basis, x, y);
 
             Real diff = z_fine - z_coarse;
             sum_abs_diff += w * std::abs(diff);

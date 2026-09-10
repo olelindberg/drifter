@@ -39,8 +39,10 @@ struct HermiteIterationProfile {
 
     double matrix_build_ms = 0.0;
     double constraint_condense_ms = 0.0;
-    double ldlt_compute_ms = 0.0;
-    double ldlt_solve_ms = 0.0;
+    /// Named for the phases rather than for a factorisation: which backend runs
+    /// is CGHermiteSmootherConfig::solver, and not all of them are an LDL^T.
+    double factorize_ms = 0.0;
+    double substitute_ms = 0.0;
 
     Index num_elements = 0;
     Index num_dofs = 0;
@@ -106,11 +108,29 @@ struct AdaptiveCGHermiteConfig {
     int vtk_order = 0;
 };
 
+/// @brief Why an element may not be refined
+///
+/// The refinement level cap is deliberately not part of this: it is a user
+/// budget, not a property of the data, and is tested separately.
+enum class RefinementBlock {
+    None,            ///< Refinement is allowed
+    Pinned,          ///< Land / NoData element, pinned out of the fit
+    PixelResolution, ///< Children would fall below the raster pixel size
+    DataDensity      ///< Children would cover fewer than min_data_points_per_element
+};
+
 /// @brief Result of a single adaptation iteration
 struct HermiteAdaptationResult {
     int iteration = 0;
     Index num_elements = 0;
     Real max_error = 0.0;
+    /// Largest error among elements that may still be refined. The stopping
+    /// test uses this rather than max_error, which elements parked at their
+    /// resolution floor could otherwise hold above the threshold forever.
+    Real max_refinable_error = 0.0;
+    /// How many elements may still be refined. Below num_elements when part of
+    /// the mesh has reached a data-resolution floor, the level cap, or is pinned.
+    Index num_refinable = 0;
     Real mean_error = 0.0;
     Index elements_refined = 0;
     bool converged = false;
@@ -225,6 +245,12 @@ private:
     /// to discard it would be wasted work. adapt_once() builds it lazily.
     void refine_octree_only(const std::vector<Index> &elements_to_refine);
 
+    /// @brief Basis values at the error-quadrature points, one row per point
+    ///
+    /// The grid is parametric and fixed, so this is evaluated once and reused
+    /// for every element of every iteration.
+    const MatX &error_basis() const;
+
     /// @brief L2 error over the element, ignoring pinned (land / NoData) points
     /// @param elem Element index
     /// @param l2_error Output error, renormalised by the weight actually sampled
@@ -242,8 +268,25 @@ private:
     /// @brief Data resolution (pixel size) at the centre of an element, or 0 if unknown
     Real element_resolution(Index elem) const;
 
+    /// @brief Why refining this element is not allowed, or None if it is
+    ///
+    /// Covers only the data-driven limits; the refinement level cap is a
+    /// separate test, because a level cap is a user budget rather than a
+    /// property of the data. See can_refine() for the combined predicate.
+    RefinementBlock classify_refinement(Index elem) const;
+
     /// @brief Whether refining this element is allowed by the resolution limits
-    bool refinement_allowed(Index elem) const;
+    bool refinement_allowed(Index elem) const {
+        return classify_refinement(elem) == RefinementBlock::None;
+    }
+
+    /// @brief Whether this element may be refined at all: below the level cap
+    ///        and admissible under the data-resolution limits
+    ///
+    /// This is the single predicate that gates marking. The limits are
+    /// per-element floors, so an element failing it is skipped while the rest
+    /// of the mesh keeps adapting.
+    bool can_refine(Index elem) const;
 
     void print_profile_report() const;
 
@@ -269,6 +312,13 @@ private:
     std::vector<HermiteAdaptationResult> history_;
     std::vector<HermiteIterationProfile> profiles_;
     HermiteIterationProfile *current_profile_ = nullptr;
+
+    /// Lazily filled by error_basis()
+    mutable MatX error_basis_;
+
+    /// The last iteration's per-element errors, so write_vtk() need not repeat
+    /// the whole estimation pass the adaptive loop has just done
+    mutable std::vector<HermiteElementErrorEstimate> last_errors_;
 };
 
 } // namespace drifter

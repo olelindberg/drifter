@@ -33,18 +33,9 @@ namespace {
 /// write_vtk()'s second argument is the one thing that is not shared: for the
 /// Bezier path it is a sample resolution, for the Hermite path the polynomial
 /// degree of the emitted cells. The caller passes the right one as @p vtk_arg.
-template <typename Smoother, typename Config>
-int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_config,
-                          const std::string &label, Real xmin, Real xmax, Real ymin, Real ymax,
-                          const std::function<Real(Real, Real)> &depth_func,
-                          const std::function<bool(Real, Real)> &land_mask,
-                          const std::function<bool(Real, Real)> &has_data_func,
-                          const std::function<bool(Real, Real)> &is_land_func, int vtk_arg,
-                          const std::function<Real(Real, Real)> &resolution_func,
-                          const std::shared_ptr<const CoastlineIndex> &coastline_index,
-                          const CoastlineConfig &coastline_config) {
-  std::cout << "\n=== " << label << " ===" << std::endl;
-  std::cout << "Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]" << std::endl;
+template <typename Smoother, typename Config> int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_config, const std::string &label, Real xmin, Real xmax, Real ymin, Real ymax, const std::function<Real(Real, Real)> &depth_func, const std::function<bool(Real, Real)> &land_mask, const std::function<bool(Real, Real)> &has_data_func, const std::function<bool(Real, Real)> &is_land_func, int vtk_arg, const std::function<Real(Real, Real)> &resolution_func, const std::shared_ptr<const CoastlineIndex> &coastline_index, const CoastlineConfig &coastline_config) {
+  LOG_INFO("=== " << label << " ===");
+  LOG_INFO("Domain: [" << xmin << ", " << xmax << "] x [" << ymin << ", " << ymax << "]");
 
   // Create smoother
   Smoother smoother(xmin, xmax, ymin, ymax, config.nx, config.ny, adaptive_config);
@@ -72,7 +63,7 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
       if (config.write_input_raster) {
         const std::string mesh_path = config.output_file + "_coastline_mesh";
         QuadtreeVTKWriter().write_mesh_only(mesh_path, smoother.mesh());
-        std::cout << "Coastline mesh written to: " << mesh_path << ".vtu" << std::endl;
+        LOG_INFO("Coastline mesh written to: " << mesh_path << ".vtu");
       }
     }
   }
@@ -85,34 +76,33 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
   double time_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
   // Print results
-  std::cout << "\nFinal result:" << std::endl;
-  std::cout << "  Elements: " << result.num_elements << std::endl;
-  std::cout << "  Max error: " << result.max_error << " m" << std::endl;
-  std::cout << "  Mean error: " << result.mean_error << " m" << std::endl;
-  std::cout << "  Converged: " << (result.converged ? "yes" : "no") << std::endl;
-  std::cout << "  Time: " << time_ms << " ms" << std::endl;
+  LOG_INFO("Final result:");
+  LOG_INFO("  Elements: " << result.num_elements);
+  LOG_INFO("  Max error: " << result.max_error << " m");
+  LOG_INFO("  Mean error: " << result.mean_error << " m");
+  LOG_INFO("  Converged: " << (result.converged ? "yes" : "no"));
+  LOG_INFO("  Time: " << time_ms << " ms");
 
   // Refinement statistics, measured on the mesh rather than derived from the
   // domain size (elements may be anisotropic, and nx/ny need not be equal)
-  int max_level = 0;
+  int max_level         = 0;
   Real element_size_min = std::numeric_limits<Real>::max();
   for (Index i = 0; i < smoother.mesh().num_elements(); ++i) {
-    max_level = std::max(max_level, smoother.mesh().element_level(i).max_level());
-    const auto &b = smoother.mesh().element_bounds(i);
+    max_level        = std::max(max_level, smoother.mesh().element_level(i).max_level());
+    const auto &b    = smoother.mesh().element_bounds(i);
     element_size_min = std::min(element_size_min, std::min(b.xmax - b.xmin, b.ymax - b.ymin));
   }
 
-  std::cout << "Number of levels         : " << max_level << std::endl;
-  std::cout << "Size of smallest element : " << element_size_min << " m" << std::endl;
+  LOG_INFO("Number of levels         : " << max_level);
+  LOG_INFO("Size of smallest element : " << element_size_min << " m");
 
   // How much data the smallest element actually sees, which is what the
   // min_element_size / min_data_points_per_element limits act on
-  const Real resolution = resolution_func ? resolution_func(0.5 * (xmin + xmax), 0.5 * (ymin + ymax))
-                                          : 0.0;
+  const Real resolution = resolution_func ? resolution_func(0.5 * (xmin + xmax), 0.5 * (ymin + ymax)) : 0.0;
   if (resolution > 0.0) {
     const Real pts = (element_size_min / resolution) * (element_size_min / resolution);
-    std::cout << "Data resolution          : " << resolution << " m" << std::endl;
-    std::cout << "Data points in smallest  : " << pts << std::endl;
+    LOG_INFO("Data resolution          : " << resolution << " m");
+    LOG_INFO("Data points in smallest  : " << pts);
   }
 
   // Write VTK output. With max_iterations = 0 the run is a coastline pre-pass only:
@@ -120,10 +110,9 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
   // written above.
   if (smoother.is_solved()) {
     smoother.write_vtk(config.output_file, vtk_arg);
-    std::cout << "Output written to        : " << config.output_file << ".vtu" << std::endl;
+    LOG_INFO("Output written to        : " << config.output_file << ".vtu");
   } else {
-    std::cout << "No surface was fitted (max_iterations = " << adaptive_config.max_iterations
-              << "); no surface VTK written" << std::endl;
+    LOG_INFO("No surface was fitted (max_iterations = " << adaptive_config.max_iterations << "); no surface VTK written");
   }
 
   return 0;
@@ -134,45 +123,45 @@ int run_adaptive_smoother(const DrifterConfig &config, const Config &adaptive_co
 Drifter::Drifter(const DrifterConfig &config) : config_(config) {}
 
 bool Drifter::data_files_exist() const {
-    std::string primary_path = config_.data_dir + config_.primary_file;
-    if (!std::filesystem::exists(primary_path)) {
-        LOG_ERROR("Primary bathymetry file not found: " << primary_path);
-        return false;
+  std::string primary_path = config_.data_dir + config_.primary_file;
+  if (!std::filesystem::exists(primary_path)) {
+    LOG_ERROR("Primary bathymetry file not found: " << primary_path);
+    return false;
+  }
+  for (const auto &tile : config_.tile_files) {
+    std::string tile_path = config_.data_dir + tile;
+    if (!std::filesystem::exists(tile_path)) {
+      LOG_ERROR("Tile file not found: " << tile_path);
+      return false;
     }
-    for (const auto& tile : config_.tile_files) {
-        std::string tile_path = config_.data_dir + tile;
-        if (!std::filesystem::exists(tile_path)) {
-            LOG_ERROR("Tile file not found: " << tile_path);
-            return false;
-        }
-    }
+  }
 
     // The coastline path is absolute, not relative to data_dir
-    if (config_.coastline.enabled() && !std::filesystem::exists(config_.coastline.file)) {
-        LOG_ERROR("Coastline file not found: " << config_.coastline.file);
-        return false;
-    }
+  if (config_.coastline.enabled() && !std::filesystem::exists(config_.coastline.file)) {
+    LOG_ERROR("Coastline file not found: " << config_.coastline.file);
+    return false;
+  }
 
-    return true;
+  return true;
 }
 
 int Drifter::run() {
     // Check data files
-    if (!data_files_exist()) {
-        LOG_ERROR("Bathymetry data not available. Exiting.");
-        return 1;
-    }
+  if (!data_files_exist()) {
+    LOG_ERROR("Bathymetry data not available. Exiting.");
+    return 1;
+  }
 
     // Build full paths for tile files
-    std::string primary_path = config_.data_dir + config_.primary_file;
-    std::vector<std::string> tile_paths;
-    for (const auto& tile : config_.tile_files) {
-        tile_paths.push_back(config_.data_dir + tile);
-    }
+  std::string primary_path = config_.data_dir + config_.primary_file;
+  std::vector<std::string> tile_paths;
+  for (const auto &tile : config_.tile_files) {
+    tile_paths.push_back(config_.data_dir + tile);
+  }
 
     // Load multi-source bathymetry
-    LOG_INFO("Loading bathymetry data...");
-    MultiSourceBathymetry bathymetry(primary_path, tile_paths);
+  LOG_INFO("Loading bathymetry data...");
+  MultiSourceBathymetry bathymetry(primary_path, tile_paths);
 
   // Create depth and land mask functions
   auto depth_func = [&bathymetry](Real x, Real y) -> Real {
@@ -196,12 +185,8 @@ int Drifter::run() {
   // fit and spanned by the smoothness term; land is held at 0 by a Dirichlet
   // condition. Pinning a gap instead would force the surface from the surrounding
   // depth up to 0 across one element, which is what produced the spikes.
-  auto has_data_func = [&bathymetry](Real x, Real y) -> bool {
-    return bathymetry.has_data(x, y);
-  };
-  auto is_land_func = [&bathymetry](Real x, Real y) -> bool {
-    return bathymetry.is_land_point(x, y);
-  };
+  auto has_data_func = [&bathymetry](Real x, Real y) -> bool { return bathymetry.has_data(x, y); };
+  auto is_land_func  = [&bathymetry](Real x, Real y) -> bool { return bathymetry.is_land_point(x, y); };
 
   // Compute domain bounds
   Real xmin = config_.center_x - config_.domain_size / 2;
@@ -234,15 +219,14 @@ int Drifter::run() {
   if (config_.coastline.enabled()) {
     LOG_INFO("Loading coastline: " << config_.coastline.file);
     CoastlineReader reader;
-    if (!reader.load(config_.coastline.file, config_.coastline.layer, config_.coastline.srs, xmin,
-                     ymin, xmax, ymax)) {
+    if (!reader.load(config_.coastline.file, config_.coastline.layer, config_.coastline.srs, xmin, ymin, xmax, ymax)) {
       LOG_ERROR("Failed to load coastline: " << reader.last_error());
       return 1;
     }
 
+    LOG_INFO("Coastline building index ...");
     auto index = reader.build_index(xmin, ymin, xmax, ymax);
-    LOG_INFO("Coastline index: " << index->num_segments() << " segments, "
-                                 << index->num_circumradius_points() << " circumradius samples");
+    LOG_INFO("Coastline index: " << index->num_segments() << " segments, " << index->num_circumradius_points() << " circumradius samples");
     if (index->num_circumradius_points() == 0) {
       LOG_WARNING("Coastline carries no circumradius samples in this domain; the pre-pass "
                   "will refine nothing");
@@ -264,10 +248,7 @@ int Drifter::run() {
   int status = 1;
   switch (config_.smoother_kind) {
   case BathySmootherKind::CubicBezier:
-    status = run_adaptive_smoother<AdaptiveCGCubicBezierSmoother>(
-        config_, config_.adaptive, "Adaptive CG Cubic Bezier Bathymetry Smoother", xmin, xmax, ymin,
-        ymax, depth_func, land_mask, has_data_func, is_land_func, config_.vtk_subdivision,
-        resolution_func, coastline_index, config_.coastline);
+    status = run_adaptive_smoother<AdaptiveCGCubicBezierSmoother>(config_, config_.adaptive, "Adaptive CG Cubic Bezier Bathymetry Smoother", xmin, xmax, ymin, ymax, depth_func, land_mask, has_data_func, is_land_func, config_.vtk_subdivision, resolution_func, coastline_index, config_.coastline);
     break;
   case BathySmootherKind::HermiteC0:
   case BathySmootherKind::HermiteC1: {
@@ -275,11 +256,7 @@ int Drifter::run() {
     // argument; both must use the same visual degree.
     AdaptiveCGHermiteConfig hermite_config = config_.hermite_adaptive;
     hermite_config.vtk_order               = config_.vtk_surface_degree;
-    status                                 = run_adaptive_smoother<AdaptiveCGHermiteSmoother>(
-        config_, hermite_config,
-        "Adaptive CG " + to_string(config_.smoother_kind) + " Bathymetry Smoother", xmin, xmax,
-        ymin, ymax, depth_func, land_mask, has_data_func, is_land_func,
-        config_.vtk_surface_degree, resolution_func, coastline_index, config_.coastline);
+    status                                 = run_adaptive_smoother<AdaptiveCGHermiteSmoother>(config_, hermite_config, "Adaptive CG " + to_string(config_.smoother_kind) + " Bathymetry Smoother", xmin, xmax, ymin, ymax, depth_func, land_mask, has_data_func, is_land_func, config_.vtk_surface_degree, resolution_func, coastline_index, config_.coastline);
     break;
   }
   }
@@ -288,8 +265,8 @@ int Drifter::run() {
     return status;
   }
 
-    LOG_INFO("Simulation complete.");
-    return 0;
+  LOG_INFO("Simulation complete.");
+  return 0;
 }
 
 } // namespace drifter

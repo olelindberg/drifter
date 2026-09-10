@@ -18,19 +18,19 @@
     ]
   },
   "domain": {
-    "center_x": 4095238.0,
+    "center_x": 4070000.0,
     "center_y": 3344695.0,
-    "domain_size": 100000.0
+    "domain_size": 2000000.0
   },
   "initial_grid": {
     "nx": 8,
     "ny": 8
   },
   "adaptive": {
-    "error_threshold": 12.0,
+    "error_threshold": 4.0,
     "error_metric_type": "PixelMaxError",
-    "max_iterations": 10,
-    "max_elements": 100000,
+    "max_iterations": 20,
+    "max_elements": 80000,
     "max_refinement_level": 100,
     "enforce_pixel_limit": true,
     "min_element_size": 0.0,
@@ -46,18 +46,19 @@
     "ngauss_data": 4,
     "enable_zero_gradient_bc": true,
     "use_equilibration": true,
+    "solver": "PardisoLDLT",
     "verbose": true
   },
   "coastline": {
     "file": "/home/ole/Projects/drifter/data/input/openstreetmap/coastlines-split-4326/lines.shp",
     "layer": "",
     "srs": "EPSG:3034",
-    "max_level": 12
+    "max_level": 1
   },
   "output": {
     "output_file": "/tmp/drifter_bathymetry_hermite",
     "vtk_subdivision": 3,
     "vtk_surface_degree": 6,
-    "write_input_raster": true
+    "write_input_raster": false
   }
 }

@@ -48,7 +48,7 @@ void write_error_csv(const std::string &dir, int iteration,
 
     std::ofstream ofs(fname.str());
     if (!ofs) {
-        std::cerr << "Warning: could not open " << fname.str() << " for writing\n";
+        LOG_WARNING("Could not open " << fname.str() << " for writing");
         return;
     }
 
@@ -95,6 +95,8 @@ AdaptiveCGHermiteSmoother::AdaptiveCGHermiteSmoother(OctreeAdapter &octree,
 // =============================================================================
 
 void AdaptiveCGHermiteSmoother::rebuild_smoother() {
+    // The mesh is about to change under them
+    last_errors_.clear();
     {
         OptionalScopedTimer t(current_profile_ ? &current_profile_->quadtree_build_ms : nullptr);
         quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
@@ -140,6 +142,22 @@ const CGHermiteBathymetrySmoother &AdaptiveCGHermiteSmoother::smoother() const {
 // =============================================================================
 // Error estimation
 // =============================================================================
+
+const MatX &AdaptiveCGHermiteSmoother::error_basis() const {
+    // The error quadrature is a fixed parametric grid, identical for every
+    // element and every iteration, so the basis is evaluated on it once
+    if (error_basis_.rows() == 0) {
+        std::vector<Vec2> points;
+        points.reserve(static_cast<size_t>(config_.ngauss_error * config_.ngauss_error));
+        for (int j = 0; j < config_.ngauss_error; ++j) {
+            for (int i = 0; i < config_.ngauss_error; ++i) {
+                points.emplace_back(gauss_nodes_(i), gauss_nodes_(j));
+            }
+        }
+        error_basis_ = sample_basis(get_basis_impl(), points);
+    }
+    return error_basis_;
+}
 
 bool AdaptiveCGHermiteSmoother::is_element_on_land(Index elem) const {
     const QuadBounds &bounds = quadtree_->element_bounds(elem);
@@ -193,13 +211,13 @@ Real AdaptiveCGHermiteSmoother::element_resolution(Index elem) const {
     return 0.0;
 }
 
-bool AdaptiveCGHermiteSmoother::refinement_allowed(Index elem) const {
+RefinementBlock AdaptiveCGHermiteSmoother::classify_refinement(Index elem) const {
     // A non-water element is pinned to depth 0, or out of the system entirely.
     // There is no fit to improve there, so refining it only adds DOFs.
     if (smoother_) {
         if (const ElementDataMask *mask = smoother_->element_mask()) {
             if (mask->is_pinned(elem)) {
-                return false;
+                return RefinementBlock::Pinned;
             }
         }
     }
@@ -220,18 +238,25 @@ bool AdaptiveCGHermiteSmoother::refinement_allowed(Index elem) const {
             min_size = res;
         }
         if (min_size > 0.0 && std::min(child_dx, child_dy) < min_size) {
-            return false;
+            return RefinementBlock::PixelResolution;
         }
     }
 
     if (config_.min_data_points_per_element > 0 && res > 0.0) {
         const Real child_points = (child_dx / res) * (child_dy / res);
         if (child_points < static_cast<Real>(config_.min_data_points_per_element)) {
-            return false;
+            return RefinementBlock::DataDensity;
         }
     }
 
-    return true;
+    return RefinementBlock::None;
+}
+
+bool AdaptiveCGHermiteSmoother::can_refine(Index elem) const {
+    if (quadtree_->element_level(elem).max_level() >= config_.max_refinement_level) {
+        return false;
+    }
+    return refinement_allowed(elem);
 }
 
 void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem, Real &l2_error,
@@ -243,6 +268,11 @@ void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem, Rea
     const QuadBounds &bounds = quadtree_->element_bounds(elem);
     const Real dx = bounds.xmax - bounds.xmin;
     const Real dy = bounds.ymax - bounds.ymin;
+
+    // The element's coefficients and the basis at the quadrature points are both
+    // independent of the point being evaluated, so neither belongs in the loop
+    const ElementSurface surface = smoother_->element_surface(elem);
+    const MatX &N = error_basis();
 
     Real sum_error_sq = 0.0;
     valid_weight = 0.0;
@@ -263,7 +293,8 @@ void AdaptiveCGHermiteSmoother::compute_element_error_statistics(Index elem, Rea
 
             // Evaluate within this element, avoiding a point-location lookup that
             // could land on a neighbour at an element boundary
-            const Real diff = bathy_func_(x, y) - smoother_->evaluate_in_element(elem, x, y);
+            const Real diff =
+                bathy_func_(x, y) - surface.value_of(N.col(j * config_.ngauss_error + i));
             sum_error_sq += w * diff * diff;
         }
     }
@@ -344,16 +375,33 @@ std::vector<Index> AdaptiveCGHermiteSmoother::select_elements_for_refinement(
         return {};
     }
 
+    // Only elements that may actually be refined take part in the marking. The
+    // resolution limits are per-element floors: letting an element parked at its
+    // floor consume Dorfler budget would shrink the marked set to nothing and
+    // stall the whole adaptation while the rest of the mesh is still coarse.
+    std::vector<HermiteElementErrorEstimate> candidates;
+    candidates.reserve(errors.size());
+    for (const auto &err : errors) {
+        if (can_refine(err.element)) {
+            candidates.push_back(err);
+        }
+    }
+    if (candidates.empty()) {
+        return {};
+    }
+
     // Dorfler bulk marking, extended by symmetry: find the cutoff by greedy
     // accumulation of squared error, then include *every* element at or above it
-    // so that symmetric configurations refine symmetrically.
+    // so that symmetric configurations refine symmetrically. The fraction is of
+    // the refinable error, so theta keeps its meaning as the mesh runs into its
+    // floors.
     Real total_sq = 0.0;
-    for (const auto &err : errors) {
+    for (const auto &err : candidates) {
         const Real m = error_metric(err);
         total_sq += m * m;
     }
 
-    auto sorted = errors;
+    auto sorted = candidates;
     std::stable_sort(sorted.begin(), sorted.end(),
                      [this](const HermiteElementErrorEstimate &a,
                             const HermiteElementErrorEstimate &b) {
@@ -374,7 +422,7 @@ std::vector<Index> AdaptiveCGHermiteSmoother::select_elements_for_refinement(
 
     std::vector<Index> selected;
     const Real threshold_val = cutoff_error * (1.0 - config_.symmetry_tolerance);
-    for (const auto &err : errors) {
+    for (const auto &err : candidates) {
         if (error_metric(err) >= threshold_val) {
             selected.push_back(err.element);
         }
@@ -382,8 +430,8 @@ std::vector<Index> AdaptiveCGHermiteSmoother::select_elements_for_refinement(
 
     if (selected.empty()) {
         Real max_err = 0.0;
-        Index max_elem = errors[0].element;
-        for (const auto &err : errors) {
+        Index max_elem = candidates[0].element;
+        for (const auto &err : candidates) {
             const Real m = error_metric(err);
             if (m > max_err) {
                 max_err = m;
@@ -423,6 +471,7 @@ void AdaptiveCGHermiteSmoother::refine_octree_only(
     const std::vector<RefineMask> masks(elements_to_refine.size(), RefineMask::XY);
     octree_->refine(elements_to_refine, masks); // auto-balances to 2:1
     quadtree_ = std::make_unique<QuadtreeAdapter>(*octree_);
+    last_errors_.clear();
 }
 
 // =============================================================================
@@ -483,8 +532,11 @@ int AdaptiveCGHermiteSmoother::refine_coastline() {
             // pinned-element test is inert here because no smoother exists yet,
             // which is what we want: the coast is exactly where the pinned land
             // and beach elements are, and resolving them is the point.
-            if (!refinement_allowed(elem)) {
-                at_data_limit.push_back(elem);
+            const RefinementBlock block = classify_refinement(elem);
+            if (block != RefinementBlock::None) {
+                if (block != RefinementBlock::Pinned) {
+                    at_data_limit.push_back(elem);
+                }
                 continue;
             }
 
@@ -556,24 +608,60 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
     profile.num_free_dofs = smoother_->num_free_dofs();
     profile.num_constraints = smoother_->num_constraints();
 
-    std::vector<HermiteElementErrorEstimate> errors;
     {
         ScopedTimer t(profile.error_estimation_ms);
-        errors = estimate_errors();
+        last_errors_ = estimate_errors();
     }
+    // Kept for write_vtk(), which labels the same mesh with the same estimates.
+    // Invalidated by rebuild_smoother() as soon as the mesh moves under them.
+    const std::vector<HermiteElementErrorEstimate> &errors = last_errors_;
 
+    // Partition the errors by refinability once: max_err describes the mesh and
+    // is what gets reported, while max_refinable_err is what the stopping test
+    // may legitimately act on. Elements held at a per-element floor can keep
+    // max_err above the threshold indefinitely without that meaning the
+    // adaptation has anything left to do for them.
     Real max_err = 0.0;
+    Real max_refinable_err = 0.0;
     Real sum_err = 0.0;
+    Index num_refinable = 0;
+    Index num_blocked_by_resolution = 0;
+    Index num_pinned = 0;
+    Index num_at_max_level = 0;
     for (const auto &err : errors) {
         max_err = std::max(max_err, error_metric(err));
         sum_err += error_metric(err);
+
+        if (can_refine(err.element)) {
+            ++num_refinable;
+            max_refinable_err = std::max(max_refinable_err, error_metric(err));
+            continue;
+        }
+        if (quadtree_->element_level(err.element).max_level() >= config_.max_refinement_level) {
+            ++num_at_max_level;
+        } else if (classify_refinement(err.element) == RefinementBlock::Pinned) {
+            ++num_pinned;
+        } else {
+            ++num_blocked_by_resolution;
+        }
     }
 
     result.num_elements = quadtree_->num_elements();
     result.max_error = max_err;
+    result.max_refinable_error = max_refinable_err;
+    result.num_refinable = num_refinable;
     result.mean_error = errors.empty() ? 0.0 : sum_err / static_cast<Real>(errors.size());
 
-    bool error_converged = (max_err <= config_.error_threshold);
+    if (config_.verbose && max_refinable_err < max_err) {
+        LOG_INFO("  " << (num_blocked_by_resolution + num_pinned + num_at_max_level)
+                      << " element(s) cannot be refined further ("
+                      << num_blocked_by_resolution << " at the data resolution, " << num_pinned
+                      << " pinned, " << num_at_max_level << " at the level cap); max error over "
+                      << num_refinable << " refinable element(s) is " << max_refinable_err
+                      << " vs " << max_err << " over the whole mesh");
+    }
+
+    bool error_converged = (max_refinable_err <= config_.error_threshold);
     const bool max_elements_reached =
         (static_cast<int>(result.num_elements) >= config_.max_elements);
 
@@ -596,6 +684,20 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
         return result;
     };
 
+    // Nothing anywhere in the mesh can be refined: this, and only this, is when
+    // a per-element floor becomes a reason to stop the whole adaptation.
+    if (!errors.empty() && num_refinable == 0) {
+        if (config_.verbose) {
+            LOG_INFO("  No element can be refined further: " << num_blocked_by_resolution
+                                                             << " at the data resolution, "
+                                                             << num_pinned << " pinned, "
+                                                             << num_at_max_level
+                                                             << " at the level cap");
+        }
+        return finish_converged(num_blocked_by_resolution > 0 ? ConvergenceReason::PixelResolution
+                                                              : ConvergenceReason::MaxRefinementLevel);
+    }
+
     if (error_converged) {
         return finish_converged(ConvergenceReason::ErrorThreshold);
     }
@@ -609,7 +711,9 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
         if (is_bootstrap) {
             // Refine everything once to establish a baseline for comparison
             for (Index e = 0; e < quadtree_->num_elements(); ++e) {
-                selected.push_back(e);
+                if (can_refine(e)) {
+                    selected.push_back(e);
+                }
             }
         } else {
             selected = select_elements_for_refinement(errors);
@@ -625,38 +729,29 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::adapt_once() {
             config_.vtk_output_prefix + "_iter_" + std::to_string(result.iteration);
 
         io::write_high_order_surface_vtk(
-            vtk_file, *quadtree_,
-            [this](Index elem, Real x, Real y) {
-                return smoother_->evaluate_in_element(elem, x, y);
-            },
+            vtk_file, *quadtree_, element_major_evaluator(*smoother_),
             config_.vtk_order > 0 ? std::max(config_.vtk_order, smoother_->surface_degree())
                                   : smoother_->surface_degree(),
             "elevation", element_cell_data(errors));
 
         if (config_.verbose) {
-            std::cout << "Wrote VTK: " << vtk_file << ".vtu\n";
+            LOG_INFO("Wrote VTK: " << vtk_file << ".vtu");
         }
     }
 
+    // Selection already applies can_refine; this is a guard, not the place where
+    // the stopping reason is decided (that is the num_refinable gate above).
     std::vector<Index> valid_refine;
-    bool blocked_by_resolution = false;
     for (Index elem : selected) {
-        if (quadtree_->element_level(elem).max_level() >= config_.max_refinement_level) {
-            continue;
+        if (can_refine(elem)) {
+            valid_refine.push_back(elem);
         }
-        if (!refinement_allowed(elem)) {
-            blocked_by_resolution = true;
-            continue;
-        }
-        valid_refine.push_back(elem);
     }
     result.elements_refined = static_cast<Index>(valid_refine.size());
 
     if (valid_refine.empty()) {
         result.converged = true;
-        result.convergence_reason = blocked_by_resolution
-                                        ? ConvergenceReason::PixelResolution
-                                        : ConvergenceReason::MaxRefinementLevel;
+        result.convergence_reason = ConvergenceReason::MaxRefinementLevel;
     } else {
         store_current_solution();
         refine_elements(valid_refine);
@@ -696,16 +791,31 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::solve_adaptive() {
         history_.push_back(result);
 
         if (config_.verbose) {
-            std::cout << "Iteration " << iter << ": " << result.num_elements << " elements, "
-                      << "max_error=" << result.max_error << " m, "
-                      << "mean_error=" << result.mean_error << " m, "
-                      << "refined=" << result.elements_refined << "\n";
+            LOG_INFO("Iteration " << iter << ": " << result.num_elements << " elements, "
+                                  << "max_error=" << result.max_error << " m, "
+                                  << "mean_error=" << result.mean_error << " m, "
+                                  << "refined=" << result.elements_refined);
         }
 
         if (result.converged) {
             if (config_.verbose) {
-                std::cout << "Converged after " << (iter + 1) << " iterations ("
-                          << convergence_reason_string(result.convergence_reason) << ")\n";
+                LOG_INFO("Converged after " << (iter + 1) << " iterations ("
+                                            << convergence_reason_string(result.convergence_reason)
+                                            << ")");
+                // The threshold is tested against the refinable elements only, so
+                // say so when the mesh maximum is larger: that error sits on
+                // elements no amount of further refinement can improve.
+                if (result.convergence_reason == ConvergenceReason::ErrorThreshold &&
+                    result.max_refinable_error < result.max_error) {
+                    LOG_INFO("  The threshold applies to the "
+                             << result.num_refinable
+                             << " refinable element(s), whose max error is "
+                             << result.max_refinable_error << " m. The remaining "
+                             << (result.num_elements - result.num_refinable)
+                             << " element(s) cannot be refined further and still carry up to "
+                             << result.max_error << " m; lower the data-resolution limits or "
+                                                    "supply finer data to reduce that.");
+                }
             }
             break;
         }
@@ -714,8 +824,9 @@ HermiteAdaptationResult AdaptiveCGHermiteSmoother::solve_adaptive() {
     if (!result.converged) {
         result.convergence_reason = ConvergenceReason::MaxIterations;
         if (config_.verbose) {
-            std::cout << "Stopped after " << config_.max_iterations << " iterations ("
-                      << convergence_reason_string(result.convergence_reason) << ")\n";
+            LOG_INFO("Stopped after " << config_.max_iterations << " iterations ("
+                                      << convergence_reason_string(result.convergence_reason)
+                                      << ")");
         }
     }
 
@@ -775,7 +886,13 @@ void AdaptiveCGHermiteSmoother::write_vtk(const std::string &filename, int order
     // Inland elements carry no data and are not solved for, so they are left out of
     // the file entirely - a hole in the surface rather than a misleading flat patch.
     // Water and Beach are emitted, tagged so the rim is identifiable in ParaView.
-    auto cell_data = element_cell_data(estimate_errors());
+    //
+    // The estimates are the ones the last iteration computed on this same mesh and
+    // solution; re-running the whole pass here would only reproduce them.
+    if (last_errors_.empty()) {
+        last_errors_ = estimate_errors();
+    }
+    auto cell_data = element_cell_data(last_errors_);
     std::function<bool(Index)> include_element;
     if (const ElementDataMask *mask = smoother_->element_mask()) {
         std::vector<Real> element_class(static_cast<size_t>(quadtree_->num_elements()));
@@ -787,10 +904,8 @@ void AdaptiveCGHermiteSmoother::write_vtk(const std::string &filename, int order
         include_element = [mask](Index elem) { return !mask->is_excluded(elem); };
     }
 
-    io::write_high_order_surface_vtk(
-        filename, *quadtree_,
-        [this](Index elem, Real x, Real y) { return smoother_->evaluate_in_element(elem, x, y); },
-        emit_order, "elevation", cell_data, include_element);
+    io::write_high_order_surface_vtk(filename, *quadtree_, element_major_evaluator(*smoother_),
+                                     emit_order, "elevation", cell_data, include_element);
 }
 
 void AdaptiveCGHermiteSmoother::print_profile_report() const {
@@ -798,11 +913,15 @@ void AdaptiveCGHermiteSmoother::print_profile_report() const {
         return;
     }
 
+    // The phases are printed individually rather than lumped into one assembly
+    // column: they respond to different things, and a single number hides which
+    // of them a change actually moved.
     std::cout << "\n=== Adaptive CG Hermite profile ===\n"
               << std::left << std::setw(6) << "iter" << std::setw(10) << "elements"
-              << std::setw(10) << "dofs" << std::setw(8) << "constr" << std::setw(10) << "solve_ms"
-              << std::setw(10) << "assem_ms" << std::setw(10) << "error_ms" << std::setw(10)
-              << "total_ms" << "\n";
+              << std::setw(10) << "dofs" << std::setw(8) << "constr" << std::setw(9) << "hess_ms"
+              << std::setw(9) << "data_ms" << std::setw(9) << "buildQ" << std::setw(9) << "conden"
+              << std::setw(9) << "factor" << std::setw(9) << "subst" << std::setw(10) << "solve_ms"
+              << std::setw(10) << "error_ms" << std::setw(10) << "total_ms" << "\n";
 
     // Restore the stream state afterwards: setprecision is sticky, and the
     // caller keeps printing physical quantities to the same stream.
@@ -814,9 +933,12 @@ void AdaptiveCGHermiteSmoother::print_profile_report() const {
         const auto &p = profiles_[i];
         std::cout << std::left << std::setw(6) << i << std::setw(10) << p.num_elements
                   << std::setw(10) << p.num_dofs << std::setw(8) << p.num_constraints
-                  << std::setw(10) << p.solve_ms << std::setw(10)
-                  << (p.hessian_assembly_ms + p.data_fitting_ms) << std::setw(10)
-                  << p.error_estimation_ms << std::setw(10) << p.total_ms() << "\n";
+                  << std::setw(9) << p.hessian_assembly_ms << std::setw(9) << p.data_fitting_ms
+                  << std::setw(9) << p.matrix_build_ms << std::setw(9)
+                  << p.constraint_condense_ms << std::setw(9) << p.factorize_ms
+                  << std::setw(9) << p.substitute_ms << std::setw(10) << p.solve_ms
+                  << std::setw(10) << p.error_estimation_ms << std::setw(10) << p.total_ms()
+                  << "\n";
     }
     std::cout.flags(saved_flags);
     std::cout.precision(saved_precision);

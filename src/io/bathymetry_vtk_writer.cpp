@@ -2,13 +2,59 @@
 #include "bathymetry/quadtree_adapter.hpp"
 #include "dg/basis_hexahedron.hpp" // For compute_gauss_lobatto_nodes
 #include "mesh/octree_adapter.hpp"
+#include <charconv>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <ostream>
 #include <stdexcept>
+#include <string>
 
 namespace drifter {
 namespace io {
+
+namespace {
+
+/// @brief Buffered shortest-round-trip formatting for large ASCII arrays
+///
+/// operator<<(double) goes through glibc's arbitrary-precision decimal
+/// conversion (__mpn_divrem / printf_fp), which on a mesh of a million points
+/// costs more than everything else the writer does put together. std::to_chars
+/// answers the same question without that path: it emits the *shortest* text
+/// that reads back as bit-identically the same double - so it is no less exact
+/// than the 17-significant-digit form it replaces, and usually shorter.
+class RealArrayWriter {
+public:
+    explicit RealArrayWriter(std::ostream &out) : out_(out) { buffer_.reserve(FLUSH_AT + 64); }
+    ~RealArrayWriter() { flush(); }
+
+    RealArrayWriter(const RealArrayWriter &) = delete;
+    RealArrayWriter &operator=(const RealArrayWriter &) = delete;
+
+    /// @brief Append one value followed by @p terminator (a space or a newline)
+    void write(Real value, char terminator) {
+        char text[32];
+        const auto result = std::to_chars(text, text + sizeof(text), value);
+        buffer_.append(text, static_cast<size_t>(result.ptr - text));
+        buffer_.push_back(terminator);
+        if (buffer_.size() >= FLUSH_AT) {
+            flush();
+        }
+    }
+
+    void flush() {
+        out_.write(buffer_.data(), static_cast<std::streamsize>(buffer_.size()));
+        buffer_.clear();
+    }
+
+private:
+    static constexpr size_t FLUSH_AT = 1u << 16;
+
+    std::ostream &out_;
+    std::string buffer_;
+};
+
+} // namespace
 
 void write_bezier_surface_vtk(const std::string &filename, const QuadtreeAdapter &mesh,
                               const std::function<VecX(Index)> &get_coefficients,
@@ -978,14 +1024,20 @@ void write_high_order_surface_vtk(
     file << "<Piece NumberOfPoints=\"" << total_points << "\" NumberOfCells=\"" << num_elements
          << "\">\n";
 
-    // Full round-trip precision: at projected coordinates ~1e6 the usual 12
-    // significant digits quantise node positions to centimetres, which is a
-    // visible displacement once elements refine below a few metres.
-    file << std::setprecision(std::numeric_limits<Real>::max_digits10);
+    // Full round-trip precision throughout: at projected coordinates ~1e6 the
+    // usual 12 significant digits quantise node positions to centimetres, which
+    // is a visible displacement once elements refine below a few metres.
+    // RealArrayWriter emits the shortest text that reads back as the same
+    // double, which is exact and far cheaper than the stream's 17-digit path.
     file << "<Points>\n";
     file << "<DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
-    for (const auto &v : vertices) {
-        file << v.x() << " " << v.y() << " " << v.z() << "\n";
+    {
+        RealArrayWriter points(file);
+        for (const auto &v : vertices) {
+            points.write(v.x(), ' ');
+            points.write(v.y(), ' ');
+            points.write(v.z(), '\n');
+        }
     }
     file << "</DataArray>\n";
     file << "</Points>\n";
@@ -1015,8 +1067,11 @@ void write_high_order_surface_vtk(
 
     file << "<PointData Scalars=\"" << scalar_name << "\">\n";
     file << "<DataArray type=\"Float64\" Name=\"" << scalar_name << "\" format=\"ascii\">\n";
-    for (const auto &v : vertices) {
-        file << v.z() << "\n";
+    {
+        RealArrayWriter scalars(file);
+        for (const auto &v : vertices) {
+            scalars.write(v.z(), '\n');
+        }
     }
     file << "</DataArray>\n";
     file << "</PointData>\n";
@@ -1029,8 +1084,11 @@ void write_high_order_surface_vtk(
     file << "</DataArray>\n";
     for (const auto &[name, values] : element_cell_data) {
         file << "<DataArray type=\"Float64\" Name=\"" << name << "\" format=\"ascii\">\n";
-        for (const Index elem : emitted) {
-            file << values[static_cast<size_t>(elem)] << "\n";
+        {
+            RealArrayWriter cell_values(file);
+            for (const Index elem : emitted) {
+                cell_values.write(values[static_cast<size_t>(elem)], '\n');
+            }
         }
         file << "</DataArray>\n";
     }

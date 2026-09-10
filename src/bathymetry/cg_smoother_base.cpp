@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 
 namespace drifter {
@@ -188,20 +189,58 @@ Vec2 CGSmootherBase::evaluate_gradient_uv(const VecX &coeffs, Real u, Real v) co
 }
 
 // =============================================================================
+// Element surface
+// =============================================================================
+
+ElementSurface::ElementSurface(const Basis2DBase &basis, const QuadBounds &bounds, VecX coeffs)
+    : basis_(&basis), xmin_(bounds.xmin), ymin_(bounds.ymin), dx_(bounds.xmax - bounds.xmin),
+      dy_(bounds.ymax - bounds.ymin), coeffs_(std::move(coeffs)) {}
+
+Real ElementSurface::value(Real x, Real y) const {
+    return value_uv(std::clamp((x - xmin_) / dx_, 0.0, 1.0),
+                    std::clamp((y - ymin_) / dy_, 0.0, 1.0));
+}
+
+Real ElementSurface::value_uv(Real u, Real v) const {
+    return basis_->evaluate_scalar(coeffs_, u, v);
+}
+
+Vec2 ElementSurface::gradient(Real x, Real y) const {
+    const Real u = std::clamp((x - xmin_) / dx_, 0.0, 1.0);
+    const Real v = std::clamp((y - ymin_) / dy_, 0.0, 1.0);
+    return Vec2(coeffs_.dot(basis_->evaluate_du(u, v)) / dx_,
+                coeffs_.dot(basis_->evaluate_dv(u, v)) / dy_);
+}
+
+MatX sample_basis(const Basis2DBase &basis, const std::vector<Vec2> &points) {
+    MatX N(basis.num_dofs(), static_cast<Index>(points.size()));
+    for (size_t p = 0; p < points.size(); ++p) {
+        N.col(static_cast<Index>(p)) = basis.evaluate(points[p](0), points[p](1));
+    }
+    return N;
+}
+
+ElementSurface CGSmootherBase::element_surface(Index elem) const {
+    return ElementSurface(basis(), quadtree_->element_bounds(elem), element_coefficients(elem));
+}
+
+std::function<Real(Index, Real, Real)> element_major_evaluator(const CGSmootherBase &smoother) {
+    return [&smoother, cached = std::optional<ElementSurface>(),
+            last = Index(-1)](Index elem, Real x, Real y) mutable -> Real {
+        if (elem != last) {
+            cached = smoother.element_surface(elem);
+            last = elem;
+        }
+        return cached->value(x, y);
+    };
+}
+
+// =============================================================================
 // Evaluation
 // =============================================================================
 
 Real CGSmootherBase::evaluate_in_element(Index elem, Real x, Real y) const {
-    const auto &bounds = quadtree_->element_bounds(elem);
-
-    Real u = (x - bounds.xmin) / (bounds.xmax - bounds.xmin);
-    Real v = (y - bounds.ymin) / (bounds.ymax - bounds.ymin);
-
-    u = std::clamp(u, 0.0, 1.0);
-    v = std::clamp(v, 0.0, 1.0);
-
-    VecX coeffs = element_coefficients(elem);
-    return evaluate_scalar(coeffs, u, v);
+    return element_surface(elem).value(x, y);
 }
 
 Real CGSmootherBase::evaluate(Real x, Real y) const {
@@ -214,22 +253,7 @@ Real CGSmootherBase::evaluate(Real x, Real y) const {
 }
 
 Vec2 CGSmootherBase::evaluate_gradient_in_element(Index elem, Real x, Real y) const {
-    const auto &bounds = quadtree_->element_bounds(elem);
-    Real dx = bounds.xmax - bounds.xmin;
-    Real dy = bounds.ymax - bounds.ymin;
-
-    Real u = (x - bounds.xmin) / dx;
-    Real v = (y - bounds.ymin) / dy;
-    u = std::clamp(u, 0.0, 1.0);
-    v = std::clamp(v, 0.0, 1.0);
-
-    VecX coeffs = element_coefficients(elem);
-
-    // Get gradient in parametric coordinates
-    Vec2 grad_uv = evaluate_gradient_uv(coeffs, u, v);
-
-    // Transform to physical coordinates
-    return Vec2(grad_uv(0) / dx, grad_uv(1) / dy);
+    return element_surface(elem).gradient(x, y);
 }
 
 Vec2 CGSmootherBase::evaluate_gradient(Real x, Real y) const {
@@ -301,6 +325,27 @@ void CGSmootherBase::assemble_hessian_global(const HessianBase &hessian) {
         }
     }
 
+    // A quadtree has one element size per refinement level, so the element
+    // hessian takes only a handful of distinct values across the whole mesh
+    // while scaled_hessian() is a Kronecker assembly of its own. Element sizes
+    // are produced by the same halving arithmetic, so they compare bit-exactly
+    // and a linear scan over the few entries beats hashing them.
+    struct SizedHessian {
+        Real dx;
+        Real dy;
+        MatX H;
+    };
+    std::vector<SizedHessian> hessian_by_size;
+    auto element_hessian = [&](Real dx, Real dy) -> const MatX & {
+        for (const auto &entry : hessian_by_size) {
+            if (entry.dx == dx && entry.dy == dy) {
+                return entry.H;
+            }
+        }
+        hessian_by_size.push_back({dx, dy, hessian.scaled_hessian(dx, dy)});
+        return hessian_by_size.back().H;
+    };
+
     for (Index elem = 0; elem < num_elements; ++elem) {
         // A non-water element has every DOF pinned to 0, so contributing smoothness
         // energy it can never influence would only add rows condensation drops again.
@@ -312,7 +357,7 @@ void CGSmootherBase::assemble_hessian_global(const HessianBase &hessian) {
         Real dx = size(0);
         Real dy = size(1);
 
-        MatX H_local = hessian.scaled_hessian(dx, dy);
+        const MatX &H_local = element_hessian(dx, dy);
         const auto &global_dofs = element_global_dofs(elem);
 
         // Store hessian contribution in temporary cache
@@ -349,9 +394,25 @@ void CGSmootherBase::assemble_data_fitting_global(
 
     std::vector<Real> gauss_pts, gauss_wts;
     gauss_legendre_01(ngauss, gauss_pts, gauss_wts);
+    const int nq = static_cast<int>(gauss_pts.size()); // clamped to 4 above
 
+    // The parametric basis at the quadrature points does not depend on the
+    // element - only the physical scaling applied to it below does - so it is
+    // evaluated once here instead of once per element per quadrature point.
+    MatX Nhat(nq * nq, ndof);
+    for (int qi = 0; qi < nq; ++qi) {
+        for (int qj = 0; qj < nq; ++qj) {
+            Nhat.row(qi * nq + qj) = basis().evaluate(gauss_pts[qi], gauss_pts[qj]).transpose();
+        }
+    }
+
+    // One ndof x ndof block per element, not per quadrature point: the element
+    // matrix is a sum over the quadrature points, so accumulating it densely
+    // first and emitting it once cuts the triplet count - and with it the peak
+    // memory and the sort in setFromTriplets - by a factor of ngauss^2.
     std::vector<Eigen::Triplet<Real>> triplets;
-    triplets.reserve(num_elements * ngauss * ngauss * ndof * ndof);
+    triplets.reserve(static_cast<size_t>(num_elements) * static_cast<size_t>(ndof) *
+                     static_cast<size_t>(ndof));
 
     BtWd_global_.setZero(num_dofs);
     dTWd_global_ = 0.0;
@@ -376,12 +437,16 @@ void CGSmootherBase::assemble_data_fitting_global(
         // Hoisted out of the quadrature loop - it depends only on element size.
         const VecX dof_scal = element_dof_scaling(dx, dy);
 
-        // Accumulate local data fitting matrix for caching
+        // Local data fitting matrix and RHS, scattered to the global system once
+        // the element's quadrature is complete
         MatX B_local = MatX::Zero(ndof, ndof);
+        VecX d_local = VecX::Zero(ndof);
+        VecX B(ndof);
+        bool has_observation = false;
 
-        for (int qi = 0; qi < static_cast<int>(gauss_pts.size()); ++qi) {
+        for (int qi = 0; qi < nq; ++qi) {
             Real u = gauss_pts[qi];
-            for (int qj = 0; qj < static_cast<int>(gauss_pts.size()); ++qj) {
+            for (int qj = 0; qj < nq; ++qj) {
                 Real v = gauss_pts[qj];
 
                 Real x = bounds.xmin + u * dx;
@@ -404,19 +469,28 @@ void CGSmootherBase::assemble_data_fitting_global(
                 Real d = bathy_func(x, y);
 
                 dTWd_global_ += weight * d * d;
+                has_observation = true;
 
-                VecX B = basis().evaluate(u, v).cwiseProduct(dof_scal);
+                B = Nhat.row(qi * nq + qj).transpose().cwiseProduct(dof_scal);
 
-                for (int i = 0; i < ndof; ++i) {
-                    Index I = global_dofs[i];
-                    for (int j = 0; j < ndof; ++j) {
-                        Index J = global_dofs[j];
-                        Real val = weight * B(i) * B(j);
-                        triplets.emplace_back(I, J, val);
-                        B_local(i, j) += val;
-                    }
-                    BtWd_global_(I) += weight * B(i) * d;
+                // Grouped as (weight * B(i)) * B(j) and (weight * B(i)) * d, the
+                // same association the per-point scatter used, so the accumulated
+                // values are unchanged rather than merely equal to round-off.
+                B_local.noalias() += weight * B * B.transpose();
+                d_local.noalias() += (weight * B) * d;
+            }
+        }
+
+        // An element whose every quadrature point was excluded contributed no
+        // entries before this loop was hoisted, and must not start contributing
+        // a block of explicit zeros now.
+        if (has_observation) {
+            for (int i = 0; i < ndof; ++i) {
+                const Index I = global_dofs[i];
+                for (int j = 0; j < ndof; ++j) {
+                    triplets.emplace_back(I, global_dofs[j], B_local(i, j));
                 }
+                BtWd_global_(I) += d_local(i);
             }
         }
 
@@ -451,12 +525,22 @@ void CGSmootherBase::assemble_data_fitting_global(
 
 SpMat CGSmootherBase::assemble_Q() const {
     Index num_dofs = dof_manager_num_global_dofs();
-    SpMat Q = alpha_ * H_global_ + lambda() * BtWB_global_;
+
+    // The ridge is added as a sparse diagonal rather than through coeffRef(i, i).
+    // A DOF that no assembled element touches - every pinned land DOF, and any
+    // isolated one - has no diagonal entry to reach, so coeffRef would *insert*
+    // it, and an insertion into a compressed sparse matrix shifts everything
+    // after it. That is O(nnz) per pinned DOF, which dominated the whole solve.
+    // Summing three matrices merges the patterns in one pass instead.
     const VecX ridge = ridge_diagonal();
+    SpMat ridge_matrix(num_dofs, num_dofs);
+    ridge_matrix.reserve(Eigen::VectorXi::Constant(num_dofs, 1));
     for (Index i = 0; i < num_dofs; ++i) {
-        Q.coeffRef(i, i) += ridge(i);
+        ridge_matrix.insert(i, i) = ridge(i);
     }
-    return Q;
+    ridge_matrix.makeCompressed();
+
+    return alpha_ * H_global_ + lambda() * BtWB_global_ + ridge_matrix;
 }
 
 VecX CGSmootherBase::assemble_b() const { return lambda() * BtWd_global_; }

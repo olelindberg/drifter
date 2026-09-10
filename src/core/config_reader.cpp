@@ -3,6 +3,7 @@
 
 #include "core/config_reader.hpp"
 #include "core/enum_strings.hpp"
+#include "core/logger.hpp"
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -125,6 +126,12 @@ CGHermiteSmootherConfig parse_hermite_smoother_config(const pt::ptree &tree,
   config.use_equilibration       = tree.get<bool>("use_equilibration", config.use_equilibration);
   config.verbose                 = tree.get<bool>("verbose", config.verbose);
 
+  // Names an available backend, not necessarily a compiled-in one: whether the
+  // library is there is settled by CMake, and solve() reports the mismatch.
+  if (auto str = tree.get_optional<std::string>("solver")) {
+    config.solver = hermite_solver_kind_from_string(*str);
+  }
+
   // The data-fitting integrand has degree 2p per direction, so C0 needs 2 points
   // and C1 needs 4. Default to the requirement rather than the struct default.
   const int default_ngauss = (config.continuity_order == 0) ? 2 : 4;
@@ -233,6 +240,7 @@ pt::ptree serialize_hermite_smoother_config(const CGHermiteSmootherConfig &confi
   tree.put("ridge_epsilon", config.ridge_epsilon);
   tree.put("enable_zero_gradient_bc", config.enable_zero_gradient_bc);
   tree.put("use_equilibration", config.use_equilibration);
+  tree.put("solver", to_string(config.solver));
   tree.put("verbose", config.verbose);
 
   return tree;
@@ -471,20 +479,20 @@ namespace {
 /// field names, so one template serves both.
 template <typename AdaptiveConfig>
 void print_adaptive_section(int w, const AdaptiveConfig &a) {
-  std::cout << "\nAdaptive Refinement:\n";
-  std::cout << "  " << std::left << std::setw(w) << "error_threshold" << ": " << a.error_threshold << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "error_metric_type" << ": " << to_string(a.error_metric_type) << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_iterations" << ": " << a.max_iterations << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_elements" << ": " << a.max_elements << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_refinement_level" << ": " << a.max_refinement_level << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "dorfler_theta" << ": " << a.dorfler_theta << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ngauss_error" << ": " << a.ngauss_error << "\n";
+  LOG_INFO("Adaptive Refinement:");
+  LOG_INFO("  " << std::left << std::setw(w) << "error_threshold" << ": " << a.error_threshold);
+  LOG_INFO("  " << std::left << std::setw(w) << "error_metric_type" << ": " << to_string(a.error_metric_type));
+  LOG_INFO("  " << std::left << std::setw(w) << "max_iterations" << ": " << a.max_iterations);
+  LOG_INFO("  " << std::left << std::setw(w) << "max_elements" << ": " << a.max_elements);
+  LOG_INFO("  " << std::left << std::setw(w) << "max_refinement_level" << ": " << a.max_refinement_level);
+  LOG_INFO("  " << std::left << std::setw(w) << "dorfler_theta" << ": " << a.dorfler_theta);
+  LOG_INFO("  " << std::left << std::setw(w) << "ngauss_error" << ": " << a.ngauss_error);
   if constexpr (requires { a.min_data_points_per_element; }) {
-    std::cout << "  " << std::left << std::setw(w) << "enforce_pixel_limit" << ": " << (a.enforce_pixel_limit ? "true" : "false") << "\n";
-    std::cout << "  " << std::left << std::setw(w) << "min_element_size" << ": " << a.min_element_size << "\n";
-    std::cout << "  " << std::left << std::setw(w) << "min_data_points_per_element" << ": " << a.min_data_points_per_element << "\n";
+    LOG_INFO("  " << std::left << std::setw(w) << "enforce_pixel_limit" << ": " << (a.enforce_pixel_limit ? "true" : "false"));
+    LOG_INFO("  " << std::left << std::setw(w) << "min_element_size" << ": " << a.min_element_size);
+    LOG_INFO("  " << std::left << std::setw(w) << "min_data_points_per_element" << ": " << a.min_data_points_per_element);
   }
-  std::cout << "  " << std::left << std::setw(w) << "verbose" << ": " << (a.verbose ? "true" : "false") << "\n";
+  LOG_INFO("  " << std::left << std::setw(w) << "verbose" << ": " << (a.verbose ? "true" : "false"));
 }
 
 /// @brief Print the Hermite smoother section
@@ -492,33 +500,34 @@ void print_adaptive_section(int w, const AdaptiveConfig &a) {
 /// The Hermite path solves the condensed SPD system directly, so it has neither
 /// an iterative-solver nor a multigrid section to report.
 void print_hermite_smoother_section(int w, const CGHermiteSmootherConfig &sc) {
-  std::cout << "\nSmoother (Hermite):\n";
-  std::cout << "  " << std::left << std::setw(w) << "continuity_order" << ": " << sc.continuity_order << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "lambda" << ": " << sc.lambda << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ngauss_data" << ": " << sc.ngauss_data << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ridge_epsilon" << ": " << sc.ridge_epsilon << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "enable_zero_gradient_bc" << ": " << (sc.enable_zero_gradient_bc ? "true" : "false") << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "use_equilibration" << ": " << (sc.use_equilibration ? "true" : "false") << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "solver" << ": SimplicialLDLT (direct, SPD)\n";
+  LOG_INFO("Smoother (Hermite):");
+  LOG_INFO("  " << std::left << std::setw(w) << "continuity_order" << ": " << sc.continuity_order);
+  LOG_INFO("  " << std::left << std::setw(w) << "lambda" << ": " << sc.lambda);
+  LOG_INFO("  " << std::left << std::setw(w) << "ngauss_data" << ": " << sc.ngauss_data);
+  LOG_INFO("  " << std::left << std::setw(w) << "ridge_epsilon" << ": " << sc.ridge_epsilon);
+  LOG_INFO("  " << std::left << std::setw(w) << "enable_zero_gradient_bc" << ": " << (sc.enable_zero_gradient_bc ? "true" : "false"));
+  LOG_INFO("  " << std::left << std::setw(w) << "use_equilibration" << ": " << (sc.use_equilibration ? "true" : "false"));
+  LOG_INFO("  " << std::left << std::setw(w) << "solver" << ": " << to_string(sc.solver)
+                << " (direct)");
 }
 
 /// @brief Print the coastline pre-pass section
 ///
 /// Only the Hermite path runs the pre-pass, so the caller reports it there.
 void print_coastline_section(int w, const CoastlineConfig &c) {
-  std::cout << "\nCoastline:\n";
+  LOG_INFO("Coastline:");
   if (!c.enabled()) {
-    std::cout << "  " << std::left << std::setw(w) << "file" << ": (disabled)\n";
+    LOG_INFO("  " << std::left << std::setw(w) << "file" << ": (disabled)");
     return;
   }
-  std::cout << "  " << std::left << std::setw(w) << "file" << ": " << c.file << "\n";
+  LOG_INFO("  " << std::left << std::setw(w) << "file" << ": " << c.file);
   if (!c.layer.empty()) {
-    std::cout << "  " << std::left << std::setw(w) << "layer" << ": " << c.layer << "\n";
+    LOG_INFO("  " << std::left << std::setw(w) << "layer" << ": " << c.layer);
   }
   if (!c.srs.empty()) {
-    std::cout << "  " << std::left << std::setw(w) << "srs" << ": " << c.srs << "\n";
+    LOG_INFO("  " << std::left << std::setw(w) << "srs" << ": " << c.srs);
   }
-  std::cout << "  " << std::left << std::setw(w) << "max_level" << ": " << c.max_level << "\n";
+  LOG_INFO("  " << std::left << std::setw(w) << "max_level" << ": " << c.max_level);
 }
 
 } // namespace
@@ -526,21 +535,21 @@ void print_coastline_section(int w, const CoastlineConfig &c) {
 void print_config(const DrifterConfig &config) {
   const int w = 26;
 
-  std::cout << "\n=== Configuration ===\n";
-  std::cout << "\nSmoother family:\n";
-  std::cout << "  " << std::left << std::setw(w) << "type" << ": " << to_string(config.smoother_kind) << "\n";
+  LOG_INFO("=== Configuration ===");
+  LOG_INFO("Smoother family:");
+  LOG_INFO("  " << std::left << std::setw(w) << "type" << ": " << to_string(config.smoother_kind));
 
-  std::cout << "\nData:\n";
-  std::cout << "  " << std::left << std::setw(w) << "data_dir" << ": " << config.data_dir << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "primary_file" << ": " << config.primary_file << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "tile_files" << ": " << config.tile_files.size() << " files\n";
+  LOG_INFO("Data:");
+  LOG_INFO("  " << std::left << std::setw(w) << "data_dir" << ": " << config.data_dir);
+  LOG_INFO("  " << std::left << std::setw(w) << "primary_file" << ": " << config.primary_file);
+  LOG_INFO("  " << std::left << std::setw(w) << "tile_files" << ": " << config.tile_files.size() << " files");
 
-  std::cout << "\nDomain:\n";
-  std::cout << "  " << std::left << std::setw(w) << "center_x" << ": " << config.center_x << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "center_y" << ": " << config.center_y << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "domain_size" << ": " << config.domain_size << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "nx" << ": " << config.nx << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ny" << ": " << config.ny << "\n";
+  LOG_INFO("Domain:");
+  LOG_INFO("  " << std::left << std::setw(w) << "center_x" << ": " << config.center_x);
+  LOG_INFO("  " << std::left << std::setw(w) << "center_y" << ": " << config.center_y);
+  LOG_INFO("  " << std::left << std::setw(w) << "domain_size" << ": " << config.domain_size);
+  LOG_INFO("  " << std::left << std::setw(w) << "nx" << ": " << config.nx);
+  LOG_INFO("  " << std::left << std::setw(w) << "ny" << ": " << config.ny);
 
   // Only the family that will actually run is reported. Both configs are parsed
   // so that save() is lossless, but printing the unused one is misleading.
@@ -549,11 +558,10 @@ void print_config(const DrifterConfig &config) {
     print_hermite_smoother_section(w, config.hermite_adaptive.smoother_config);
     print_coastline_section(w, config.coastline);
 
-    std::cout << "\nOutput:\n";
-    std::cout << "  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file << "\n";
-    std::cout << "  " << std::left << std::setw(w) << "vtk_surface_degree" << ": " << config.vtk_surface_degree << "\n";
-    std::cout << "  " << std::left << std::setw(w) << "write_input_raster" << ": " << (config.write_input_raster ? "true" : "false") << "\n";
-    std::cout << "\n";
+    LOG_INFO("Output:");
+    LOG_INFO("  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file);
+    LOG_INFO("  " << std::left << std::setw(w) << "vtk_surface_degree" << ": " << config.vtk_surface_degree);
+    LOG_INFO("  " << std::left << std::setw(w) << "write_input_raster" << ": " << (config.write_input_raster ? "true" : "false"));
     return;
   }
 
@@ -562,41 +570,40 @@ void print_config(const DrifterConfig &config) {
   const auto &sc = config.adaptive.smoother_config;
   const auto &mg = sc.multigrid_config;
 
-  std::cout << "\nSmoother:\n";
-  std::cout << "  " << std::left << std::setw(w) << "lambda" << ": " << sc.lambda << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ngauss_data" << ": " << sc.ngauss_data << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ngauss_energy" << ": " << sc.ngauss_energy << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "ridge_epsilon" << ": " << sc.ridge_epsilon << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "edge_ngauss" << ": " << sc.edge_ngauss << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "enable_natural_bc" << ": " << (sc.enable_natural_bc ? "true" : "false") << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "enable_zero_gradient_bc" << ": " << (sc.enable_zero_gradient_bc ? "true" : "false") << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "use_condensation" << ": " << (sc.use_condensation ? "true" : "false") << "\n";
+  LOG_INFO("Smoother:");
+  LOG_INFO("  " << std::left << std::setw(w) << "lambda" << ": " << sc.lambda);
+  LOG_INFO("  " << std::left << std::setw(w) << "ngauss_data" << ": " << sc.ngauss_data);
+  LOG_INFO("  " << std::left << std::setw(w) << "ngauss_energy" << ": " << sc.ngauss_energy);
+  LOG_INFO("  " << std::left << std::setw(w) << "ridge_epsilon" << ": " << sc.ridge_epsilon);
+  LOG_INFO("  " << std::left << std::setw(w) << "edge_ngauss" << ": " << sc.edge_ngauss);
+  LOG_INFO("  " << std::left << std::setw(w) << "enable_natural_bc" << ": " << (sc.enable_natural_bc ? "true" : "false"));
+  LOG_INFO("  " << std::left << std::setw(w) << "enable_zero_gradient_bc" << ": " << (sc.enable_zero_gradient_bc ? "true" : "false"));
+  LOG_INFO("  " << std::left << std::setw(w) << "use_condensation" << ": " << (sc.use_condensation ? "true" : "false"));
 
-  std::cout << "\nIterative Solver:\n";
-  std::cout << "  " << std::left << std::setw(w) << "use_iterative_solver" << ": " << (sc.use_iterative_solver ? "true" : "false") << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "tolerance" << ": " << sc.tolerance << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_iterations" << ": " << sc.max_iterations << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "inner_tolerance" << ": " << sc.inner_tolerance << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "inner_max_iterations" << ": " << sc.inner_max_iterations << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "icc_shift" << ": " << sc.icc_shift << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "schur_preconditioner" << ": " << to_string(sc.schur_preconditioner) << "\n";
+  LOG_INFO("Iterative Solver:");
+  LOG_INFO("  " << std::left << std::setw(w) << "use_iterative_solver" << ": " << (sc.use_iterative_solver ? "true" : "false"));
+  LOG_INFO("  " << std::left << std::setw(w) << "tolerance" << ": " << sc.tolerance);
+  LOG_INFO("  " << std::left << std::setw(w) << "max_iterations" << ": " << sc.max_iterations);
+  LOG_INFO("  " << std::left << std::setw(w) << "inner_tolerance" << ": " << sc.inner_tolerance);
+  LOG_INFO("  " << std::left << std::setw(w) << "inner_max_iterations" << ": " << sc.inner_max_iterations);
+  LOG_INFO("  " << std::left << std::setw(w) << "icc_shift" << ": " << sc.icc_shift);
+  LOG_INFO("  " << std::left << std::setw(w) << "schur_preconditioner" << ": " << to_string(sc.schur_preconditioner));
 
-  std::cout << "\nMultigrid:\n";
-  std::cout << "  " << std::left << std::setw(w) << "use_multigrid" << ": " << (sc.use_multigrid ? "true" : "false") << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "min_tree_level" << ": " << mg.min_tree_level << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "pre_smoothing" << ": " << mg.pre_smoothing << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "post_smoothing" << ": " << mg.post_smoothing << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "smoother_type" << ": " << to_string(mg.smoother_type) << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "transfer_strategy" << ": " << to_string(mg.transfer_strategy) << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "coarse_grid_strategy" << ": " << to_string(mg.coarse_grid_strategy) << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "max_vcycles" << ": " << mg.max_vcycles << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "vcycle_tolerance" << ": " << mg.vcycle_tolerance << "\n";
+  LOG_INFO("Multigrid:");
+  LOG_INFO("  " << std::left << std::setw(w) << "use_multigrid" << ": " << (sc.use_multigrid ? "true" : "false"));
+  LOG_INFO("  " << std::left << std::setw(w) << "min_tree_level" << ": " << mg.min_tree_level);
+  LOG_INFO("  " << std::left << std::setw(w) << "pre_smoothing" << ": " << mg.pre_smoothing);
+  LOG_INFO("  " << std::left << std::setw(w) << "post_smoothing" << ": " << mg.post_smoothing);
+  LOG_INFO("  " << std::left << std::setw(w) << "smoother_type" << ": " << to_string(mg.smoother_type));
+  LOG_INFO("  " << std::left << std::setw(w) << "transfer_strategy" << ": " << to_string(mg.transfer_strategy));
+  LOG_INFO("  " << std::left << std::setw(w) << "coarse_grid_strategy" << ": " << to_string(mg.coarse_grid_strategy));
+  LOG_INFO("  " << std::left << std::setw(w) << "max_vcycles" << ": " << mg.max_vcycles);
+  LOG_INFO("  " << std::left << std::setw(w) << "vcycle_tolerance" << ": " << mg.vcycle_tolerance);
 
-  std::cout << "\nOutput:\n";
-  std::cout << "  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "vtk_subdivision" << ": " << config.vtk_subdivision << "\n";
-  std::cout << "  " << std::left << std::setw(w) << "write_input_raster" << ": " << (config.write_input_raster ? "true" : "false") << "\n";
-  std::cout << "\n";
+  LOG_INFO("Output:");
+  LOG_INFO("  " << std::left << std::setw(w) << "output_file" << ": " << config.output_file);
+  LOG_INFO("  " << std::left << std::setw(w) << "vtk_subdivision" << ": " << config.vtk_subdivision);
+  LOG_INFO("  " << std::left << std::setw(w) << "write_input_raster" << ": " << (config.write_input_raster ? "true" : "false"));
 }
 
 } // namespace drifter

@@ -21,6 +21,9 @@ option(DRIFTER_USE_VTK "Enable VTK output" ON)
 option(DRIFTER_BUILD_TESTS "Build unit tests" ON)
 option(DRIFTER_BUILD_DOCS "Build documentation" OFF)
 option(DRIFTER_USE_METIS "Enable METIS ordering for sparse solvers" ON)
+option(DRIFTER_USE_CHOLMOD "Enable CHOLMOD supernodal Cholesky (SuiteSparse)" OFF)
+option(DRIFTER_USE_UMFPACK "Enable UMFPACK LU (SuiteSparse)" OFF)
+option(DRIFTER_USE_MKL "Enable Intel MKL PARDISO (parallel direct solver)" OFF)
 
 # Find required packages
 find_package(Eigen3 3.4 REQUIRED)
@@ -51,6 +54,90 @@ if(DRIFTER_USE_METIS)
         message(STATUS "METIS found: ${METIS_LIBRARY}")
     else()
         message(WARNING "METIS not found, using default COLAMD ordering")
+    endif()
+endif()
+
+# Optional backends for the Hermite smoother's direct solve. Each option decides
+# only whether a backend is *available*; which available one runs is
+# "smoother": {"solver": ...} in the JSON config, so they can be compared inside
+# a single run (tests/benchmarks/test_hermite_solver_comparison.cpp).
+#
+# All three are off by default: the default SimplicialLDLT needs no optional
+# dependency. When an option is on, a missing library is a hard error rather than
+# a quiet downgrade to another backend.
+
+# CHOLMOD supernodal Cholesky. Measured at 18.7 s against SimplicialLDLT's 1.9 s
+# on the condensed matrix of a real adaptive run - but under Eigen's default AMD
+# ordering, which gives a supernodal factorisation nothing to work with. The
+# CholmodSupernodalNesdis solver kind asks for nested dissection instead; Debian's
+# libcholmod is linked against libmetis and can supply it.
+if(DRIFTER_USE_CHOLMOD)
+    find_library(CHOLMOD_LIBRARY NAMES cholmod)
+    find_path(CHOLMOD_INCLUDE_DIR NAMES cholmod.h PATH_SUFFIXES suitesparse)
+    if(CHOLMOD_LIBRARY AND CHOLMOD_INCLUDE_DIR)
+        add_definitions(-DDRIFTER_USE_CHOLMOD)
+        include_directories(${CHOLMOD_INCLUDE_DIR})
+        message(STATUS "CHOLMOD found: ${CHOLMOD_LIBRARY}")
+    else()
+        message(FATAL_ERROR
+            "CHOLMOD not found (install libsuitesparse-dev), "
+            "or configure with -DDRIFTER_USE_CHOLMOD=OFF to use Eigen's SimplicialLDLT")
+    endif()
+endif()
+
+# UMFPACK. An unsymmetric LU on a matrix that is SPD, so it does roughly twice
+# the arithmetic of a Cholesky and is not expected to win on speed; it is here as
+# a reference point and for the case where the system is driven indefinite.
+# Eigen's UmfPackSupport calls only umfpack_di_*, and libumfpack already pulls
+# amd/suitesparseconfig/blas itself, so the one library is enough.
+if(DRIFTER_USE_UMFPACK)
+    find_library(UMFPACK_LIBRARY NAMES umfpack)
+    find_path(UMFPACK_INCLUDE_DIR NAMES umfpack.h PATH_SUFFIXES suitesparse)
+    if(UMFPACK_LIBRARY AND UMFPACK_INCLUDE_DIR)
+        add_definitions(-DDRIFTER_USE_UMFPACK)
+        include_directories(${UMFPACK_INCLUDE_DIR})
+        message(STATUS "UMFPACK found: ${UMFPACK_LIBRARY}")
+    else()
+        message(FATAL_ERROR
+            "UMFPACK not found (install libsuitesparse-dev), "
+            "or configure with -DDRIFTER_USE_UMFPACK=OFF")
+    endif()
+endif()
+
+# Intel MKL PARDISO: the only backend here that uses more than one core for the
+# factorisation, which is the whole reason to have it.
+#
+# The three layers are found by hand rather than through pkg-config because
+# Debian ships only the -iomp and -seq variants of the .pc files, and we want
+# neither: OpenBLAS here is the OpenMP build, linked against libgomp, and a
+# second OpenMP runtime (MKL's libiomp5, or the libomp that libmkl-dev pulls in)
+# in the same process oversubscribes the cores at best. libmkl_gnu_thread.so
+# declares no OpenMP runtime of its own - it resolves those symbols from the
+# executable - so linking it together with libgomp leaves exactly one.
+if(DRIFTER_USE_MKL)
+    find_library(MKL_INTERFACE_LIBRARY NAMES mkl_intel_lp64)
+    find_library(MKL_THREADING_LIBRARY NAMES mkl_gnu_thread)
+    find_library(MKL_CORE_LIBRARY NAMES mkl_core)
+    find_path(MKL_INCLUDE_DIR NAMES mkl_pardiso.h PATH_SUFFIXES mkl)
+    if(MKL_INTERFACE_LIBRARY AND MKL_THREADING_LIBRARY AND MKL_CORE_LIBRARY AND MKL_INCLUDE_DIR)
+        add_definitions(-DDRIFTER_USE_MKL)
+        include_directories(${MKL_INCLUDE_DIR})
+        # "-fopenmp" here is a *link* flag: it makes the driver link libgomp,
+        # whose symbols mkl_gnu_thread leaves to the executable to resolve.
+        # DRIFTER_USE_OPENMP already brings libgomp in when it is ON, which is
+        # its default; this keeps the MKL block correct when it is not, without
+        # OpenMP::OpenMP_CXX and the compile option it would carry with it.
+        # MKL resolves across its three layers, so they must be a link group.
+        set(MKL_LIBRARIES
+            -Wl,--start-group
+            ${MKL_INTERFACE_LIBRARY} ${MKL_THREADING_LIBRARY} ${MKL_CORE_LIBRARY}
+            -Wl,--end-group
+            -fopenmp ${CMAKE_DL_LIBS})
+        message(STATUS "MKL found: ${MKL_CORE_LIBRARY} (GNU threading layer)")
+    else()
+        message(FATAL_ERROR
+            "MKL not found (install libmkl-dev), "
+            "or configure with -DDRIFTER_USE_MKL=OFF")
     endif()
 endif()
 
@@ -282,6 +369,9 @@ target_link_libraries(drifter_lib PUBLIC
     $<$<BOOL:${VTK_FOUND}>:${VTK_LIBRARIES}>
     $<$<BOOL:${ZARRS_FFI_LIB}>:${ZARRS_FFI_LIB}>
     $<$<BOOL:${METIS_FOUND}>:${METIS_LIBRARY}>
+    $<$<BOOL:${DRIFTER_USE_CHOLMOD}>:${CHOLMOD_LIBRARY}>
+    $<$<BOOL:${DRIFTER_USE_UMFPACK}>:${UMFPACK_LIBRARY}>
+    $<$<BOOL:${DRIFTER_USE_MKL}>:${MKL_LIBRARIES}>
 )
 
 # Shared library (for lowrider and other projects linking to drifter)
@@ -310,6 +400,9 @@ if(BUILD_SHARED_LIBS)
         $<$<BOOL:${VTK_FOUND}>:${VTK_LIBRARIES}>
         $<$<BOOL:${ZARRS_FFI_LIB}>:${ZARRS_FFI_LIB}>
         $<$<BOOL:${METIS_FOUND}>:${METIS_LIBRARY}>
+        $<$<BOOL:${DRIFTER_USE_CHOLMOD}>:${CHOLMOD_LIBRARY}>
+        $<$<BOOL:${DRIFTER_USE_UMFPACK}>:${UMFPACK_LIBRARY}>
+        $<$<BOOL:${DRIFTER_USE_MKL}>:${MKL_LIBRARIES}>
     )
 endif()
 

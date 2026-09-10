@@ -459,6 +459,27 @@ The pinned-element test is shared with the error-driven loop and is **inert duri
 since no smoother — and hence no mask — exists yet. That is the intended behaviour: the coast is
 exactly where the pinned beach elements will be, and resolving them is the point of the pre-pass.
 
+### 8.1 A floor per element, not a stop for the mesh
+
+Because $\rho$ is per element, so is every limit built on it: an element reaching its floor says
+nothing about the rest of the mesh. The error-driven loop therefore applies the predicate **at
+marking time** — `select_elements_for_refinement` marks only among elements passing `can_refine`,
+so an element parked at its floor consumes no Dörfler budget and the greedy walk keeps descending
+the error list to elements that still have room.
+
+Two consequences follow, both visible in the reported result:
+
+- `ConvergenceReason::PixelResolution` is raised only when **no** element in the mesh may be
+  refined. A run whose steepest features sit on the coarsest data keeps adapting everywhere else.
+- The `error_threshold` test is against `max_refinable_error`, not `max_error`. Elements at their
+  floor can hold error above the threshold indefinitely; testing the mesh maximum would spend
+  every remaining iteration refining elsewhere for nothing. When the two differ, the log says so
+  and reports both — a converged run may legitimately leave large residual error on elements the
+  data cannot resolve, and that is a signal to supply finer data rather than to refine harder.
+
+The floor bounds *marking*, not element size. Where $\rho$ varies sharply in space, 2:1 balancing
+across the jump can still split an element below its own floor; a valid quadtree takes precedence.
+
 ---
 
 ## 9. The two pipelines
@@ -663,7 +684,7 @@ $$
 Q_{\text{red}} \;=\; T^\top Q\, T
 $$
 
-remains symmetric positive definite, the direct `SimplicialLDLT` factorization still applies, and
+remains symmetric positive definite, the direct Cholesky factorization still applies, and
 `constraint_violation()` stays identically zero. No side condition, no KKT block, no Lagrange
 multiplier — see §10 of [hermite_bathymetry_system.md](hermite_bathymetry_system.md).
 

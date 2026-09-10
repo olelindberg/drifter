@@ -122,14 +122,9 @@ relevant gtest filters and then the plotters:
 
 ## Code Formatting
 
-The project uses clang-format for code style. CI checks formatting with clang-format-15:
-```bash
-# Check formatting (dry run)
-find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 --dry-run --Werror
-
-# Apply formatting
-find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format-15 -i
-```
+**Do not run clang-format.** Match the surrounding code by hand instead. The `clang-format` on
+`PATH` here is a different version from the one CI uses and reformats whole files rather than the
+lines you touched.
 
 ## CI
 
@@ -268,7 +263,17 @@ structural; C¹ is imposed by collocation, which makes the system an indefinite 
 **structural**: no edge constraints, no KKT system. `continuity_order` selects 0 (bilinear, 4
 DOFs/element) or 1 (bicubic Bogner–Fox–Schmit, 16 DOFs/element). Hanging nodes and zero-gradient
 BCs are pure master/slave substitutions, so the condensed system `Q_red = TᵀQT` is **SPD** and is
-factorized directly with `SimplicialLDLT` — no Schur complement, no iterative path, no multigrid.
+factorized directly — no Schur complement, no iterative path, no multigrid.
+Which direct backend runs is the **runtime** config key `"smoother": {"solver": ...}` →
+`HermiteSolverKind`, one of nine (`SimplicialLDLT` default, `SimplicialLDLTMetis`,
+`SimplicialLLT`, `PardisoLDLT`, `PardisoLLT`, `UmfPackLU`, `CholmodSimplicialLDLT`,
+`CholmodSupernodalLLT`, `CholmodSupernodalNesdis`). The CMake options decide only which are
+*available*; naming an uncompiled one throws from `solve()` rather than substituting another.
+On 66k DOFs the supernodal/multifrontal backends beat the simplicial ones by ~7x
+(`PardisoLDLT` 540 ms vs `SimplicialLDLT` 3743 ms) because they reach dense BLAS3 kernels;
+the default stays `SimplicialLDLT` only because it needs no optional dependency. The table is
+at the top of `src/bathymetry/cg_hermite_bathymetry_smoother.cpp`, reproduced by
+`tests/benchmarks/test_hermite_solver_comparison.cpp`.
 `constraint_violation()` is identically zero by construction. The trade-off vs Bezier is the loss
 of the convex-hull / variation-diminishing property: a Hermite fit can overshoot in steep regions,
 which is why both families are kept. See `docs/hermite_bathymetry_system.md`.
@@ -449,12 +454,21 @@ Optional: VTK, zarrs_ffi (Zarr output), netCDF, HDF5
 
 CMake build options (set with `-D`):
 - `DRIFTER_USE_MPI=ON` - MPI parallelization (default ON)
-- `DRIFTER_USE_OPENMP` - OpenMP threading. The option defaults ON but is **unconditionally
-  overridden to OFF** at `CMakeLists.txt:25`; `-D` on the command line will not enable it.
+- `DRIFTER_USE_OPENMP=ON` - OpenMP threading. (An earlier revision of this file claimed the
+  option was unconditionally overridden to OFF; there is no such line, and `OpenMP::OpenMP_CXX`
+  is linked PUBLIC, so `-fopenmp` is on every compile line.)
 - `DRIFTER_USE_CUDA=OFF` - CUDA GPU acceleration (default OFF)
 - `DRIFTER_USE_ZARR=ON` - Zarr v3 output via zarrs_ffi (default ON)
 - `DRIFTER_USE_VTK=ON` - VTK output (default ON)
 - `DRIFTER_USE_METIS=ON` - METIS ordering for sparse solvers (default ON, found QUIET)
+- `DRIFTER_USE_CHOLMOD=OFF` / `DRIFTER_USE_UMFPACK=OFF` / `DRIFTER_USE_MKL=OFF` - make extra
+  `HermiteSolverKind` backends available (see the Hermite section above). CHOLMOD and UMFPACK
+  need `libsuitesparse-dev`; MKL needs `libmkl-dev` (~1.8 GB with its dependencies). Unlike the
+  METIS option none of them degrade quietly - if the option is ON and the library is missing, the
+  configure fails. MKL links the **GNU** threading layer (`libmkl_gnu_thread` + `-fopenmp` as a
+  link flag) rather than `libiomp5`, so the process holds one OpenMP runtime and not two;
+  `ldd build/... | grep -E "iomp5|gomp"` should show only `gomp`. Set `MKL_NUM_THREADS` — PARDISO
+  single-threaded gives up its whole advantage
 - `DRIFTER_BUILD_TESTS=ON` / `DRIFTER_BUILD_DOCS=OFF`
 - `BUILD_SHARED_LIBS=OFF` - also build `libdrifter.so` alongside the static `drifter_lib`
 - `ZARRS_FFI_DIR=/path` - Custom path to zarrs_ffi library

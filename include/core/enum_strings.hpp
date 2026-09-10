@@ -86,6 +86,62 @@ inline BathySmootherKind bathy_smoother_kind_from_string(const std::string &s) {
 }
 
 // =============================================================================
+// HermiteSolverKind
+// =============================================================================
+
+/// @brief Which direct factorisation the Hermite smoother uses
+///
+/// The enum itself is declared with the config it belongs to, in
+/// bathymetry/cg_hermite_bathymetry_smoother.hpp. Availability is a build
+/// decision, so a name that parses here can still be rejected at solve() time
+/// if its backend was not compiled in.
+inline std::string to_string(HermiteSolverKind e) {
+  switch (e) {
+  case HermiteSolverKind::SimplicialLDLT:
+    return "SimplicialLDLT";
+  case HermiteSolverKind::SimplicialLDLTMetis:
+    return "SimplicialLDLTMetis";
+  case HermiteSolverKind::SimplicialLLT:
+    return "SimplicialLLT";
+  case HermiteSolverKind::PardisoLDLT:
+    return "PardisoLDLT";
+  case HermiteSolverKind::PardisoLLT:
+    return "PardisoLLT";
+  case HermiteSolverKind::UmfPackLU:
+    return "UmfPackLU";
+  case HermiteSolverKind::CholmodSimplicialLDLT:
+    return "CholmodSimplicialLDLT";
+  case HermiteSolverKind::CholmodSupernodalLLT:
+    return "CholmodSupernodalLLT";
+  case HermiteSolverKind::CholmodSupernodalNesdis:
+    return "CholmodSupernodalNesdis";
+  }
+  throw std::invalid_argument("Unknown HermiteSolverKind");
+}
+
+inline HermiteSolverKind hermite_solver_kind_from_string(const std::string &s) {
+  if (s == "SimplicialLDLT")
+    return HermiteSolverKind::SimplicialLDLT;
+  if (s == "SimplicialLDLTMetis")
+    return HermiteSolverKind::SimplicialLDLTMetis;
+  if (s == "SimplicialLLT")
+    return HermiteSolverKind::SimplicialLLT;
+  if (s == "PardisoLDLT")
+    return HermiteSolverKind::PardisoLDLT;
+  if (s == "PardisoLLT")
+    return HermiteSolverKind::PardisoLLT;
+  if (s == "UmfPackLU")
+    return HermiteSolverKind::UmfPackLU;
+  if (s == "CholmodSimplicialLDLT")
+    return HermiteSolverKind::CholmodSimplicialLDLT;
+  if (s == "CholmodSupernodalLLT")
+    return HermiteSolverKind::CholmodSupernodalLLT;
+  if (s == "CholmodSupernodalNesdis")
+    return HermiteSolverKind::CholmodSupernodalNesdis;
+  throw std::invalid_argument("Unknown HermiteSolverKind: '" + s + "'. Valid values: SimplicialLDLT, SimplicialLDLTMetis, SimplicialLLT, PardisoLDLT, PardisoLLT, UmfPackLU, CholmodSimplicialLDLT, CholmodSupernodalLLT, CholmodSupernodalNesdis");
+}
+
+// =============================================================================
 // SmootherType
 // =============================================================================
 

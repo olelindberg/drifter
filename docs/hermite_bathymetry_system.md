@@ -529,7 +529,7 @@ symmetric positive definite**. Consequences:
 | Bézier system | Hermite system |
 |---|---|
 | indefinite KKT, size $n_f + m_e + m_b + m_g$ | SPD, size $n_f$ |
-| `SparseLU` (+ METIS ordering) | `SimplicialLDLT` / `SimplicialLLT` |
+| `SparseLU` (+ METIS ordering) | any direct SPD backend, chosen by `"solver"` |
 | Schur-complement CG on $S = AQ^{-1}A^\top$ | plain PCG on $Q_{\text{red}}$ |
 | `ISchurPreconditioner` + 2 approximate-CG variants | not needed |
 | `FlexibleCG` (variable preconditioner) | not needed |

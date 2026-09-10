@@ -16,7 +16,7 @@
 /// |--------------------|-------------------------|------------------|
 /// | continuity         | approximate C1 (~2.4e-8)| exact C1         |
 /// | system             | indefinite KKT          | **SPD**          |
-/// | solver             | SparseLU / Schur CG     | SimplicialLDLT   |
+/// | solver             | SparseLU / Schur CG     | direct, SPD      |
 /// | constraint rows    | 8N(N-1)                 | 0                |
 /// | DOFs on N x N mesh | (3N+1)^2                | 4(N+1)^2         |
 ///
@@ -43,6 +43,32 @@ class OctreeAdapter;
 /// Follows the same split as the Bezier smoothers: the profile struct lives with
 /// the adaptive driver, and the inner smoother only fills in its own fields.
 struct HermiteIterationProfile;
+
+/// @brief Which direct factorisation solves the condensed system
+///
+/// Q_red is SPD, so a Cholesky-type factorisation is the natural choice and the
+/// Cholesky kinds differ only in ordering and in whether they are supernodal.
+/// UmfPackLU is an unsymmetric LU: it does roughly twice the arithmetic of a
+/// Cholesky and orders for stability rather than symmetric fill, so it is here
+/// as a measured reference point and as the kind that still works if the system
+/// is ever driven indefinite - not as a speed candidate.
+///
+/// Availability is a build decision: a kind whose backend was not compiled in
+/// throws from make_factorization() naming the CMake option that enables it.
+/// There is no fallback to another kind. Which *available* kind runs is a
+/// config decision, so the backends can be compared within a single run; see
+/// tests/benchmarks/test_hermite_solver_comparison.cpp.
+enum class HermiteSolverKind {
+    SimplicialLDLT,          ///< Eigen simplicial LDL^T, AMD ordering (default)
+    SimplicialLDLTMetis,     ///< As above with nested dissection; needs DRIFTER_USE_METIS
+    SimplicialLLT,           ///< Eigen simplicial LL^T, AMD ordering
+    PardisoLDLT,             ///< MKL PARDISO LDL^T, parallel; needs DRIFTER_USE_MKL
+    PardisoLLT,              ///< MKL PARDISO LL^T, parallel; needs DRIFTER_USE_MKL
+    UmfPackLU,               ///< SuiteSparse UMFPACK LU; needs DRIFTER_USE_UMFPACK
+    CholmodSimplicialLDLT,   ///< CHOLMOD simplicial LDL^T; needs DRIFTER_USE_CHOLMOD
+    CholmodSupernodalLLT,    ///< CHOLMOD supernodal LL^T, AMD; needs DRIFTER_USE_CHOLMOD
+    CholmodSupernodalNesdis  ///< CHOLMOD supernodal LL^T, nested dissection
+};
 
 /// @brief Configuration for the CG Hermite smoother
 struct CGHermiteSmootherConfig {
@@ -76,6 +102,10 @@ struct CGHermiteSmootherConfig {
     /// See docs/hermite_bathymetry_system.md S11.
     bool use_equilibration = true;
 
+    /// Direct factorisation used by solve(). The default is the only kind that
+    /// needs no optional dependency.
+    HermiteSolverKind solver = HermiteSolverKind::SimplicialLDLT;
+
     bool verbose = false;
 
     /// Boundary relaxation zone (reduces data fitting weight near boundaries)
@@ -108,10 +138,11 @@ public:
     /// @brief Solve the smoothing problem
     ///
     /// Condenses the master/slave substitutions to Q_red = T' Q T, which is SPD,
-    /// and factorises it with SimplicialLDLT. There is no KKT path, no Schur
-    /// complement and no iterative fallback.
+    /// and factorises it directly with the backend named by config.solver. There
+    /// is no KKT path, no Schur complement and no iterative fallback.
     ///
     /// @throws std::runtime_error if data is unset or the factorisation fails
+    /// @throws std::invalid_argument if config.solver was not compiled in
     void solve();
 
     // =========================================================================
@@ -149,7 +180,10 @@ public:
     /// approximate. See docs/hermite_bathymetry_system.md S3.
     Real constraint_violation() const { return 0.0; }
 
-    const CGHermiteDofManager &dof_manager() const { return *dof_manager_; }
+    const CGHermiteDofManager &dof_manager() const {
+        ensure_dof_system();
+        return *dof_manager_;
+    }
     const Basis2DBase &get_basis() const { return *basis_; }
 
     /// @brief The Hermite basis, with the change of basis and midpoint matrices
@@ -180,10 +214,20 @@ protected:
     // =========================================================================
 
     void set_bathymetry_data_impl(std::function<Real(Real, Real)> bathy_func) override;
-    Index dof_manager_num_global_dofs() const override { return dof_manager_->num_global_dofs(); }
-    Index dof_manager_num_free_dofs() const override { return dof_manager_->num_free_dofs(); }
-    Index dof_manager_num_constraints() const override { return dof_manager_->num_constraints(); }
+    Index dof_manager_num_global_dofs() const override {
+        ensure_dof_system();
+        return dof_manager_->num_global_dofs();
+    }
+    Index dof_manager_num_free_dofs() const override {
+        ensure_dof_system();
+        return dof_manager_->num_free_dofs();
+    }
+    Index dof_manager_num_constraints() const override {
+        ensure_dof_system();
+        return dof_manager_->num_constraints();
+    }
     const std::vector<Index> &element_global_dofs(Index elem) const override {
+        ensure_dof_system();
         return dof_manager_->element_dofs(elem);
     }
     const Basis2DBase &basis() const override { return *basis_; }
@@ -198,7 +242,17 @@ protected:
     VecX ridge_diagonal() const override;
 
 private:
-    void init_components();
+    /// @brief Build the basis and the smoothness operator (construction time)
+    void init_basis();
+
+    /// @brief Build the element mask, the DOF numbering and its constraints
+    ///
+    /// Depends on the data masks, so it runs once they are known rather than in
+    /// the constructor.
+    void build_dof_system();
+
+    /// @brief Build the DOF numbering if it has not been built yet
+    void ensure_dof_system() const;
 
     /// @brief Expand a global DOF into free DOFs and weights (the T operator)
     std::vector<std::pair<Index, Real>> expand_dof(Index global) const;

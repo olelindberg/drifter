@@ -1,4 +1,5 @@
 #include "io/quadtree_vtk_writer.hpp"
+#include "core/logger.hpp"
 #include "io/vtk_binary_utils.hpp"
 #include <fstream>
 #include <iostream>
@@ -46,7 +47,7 @@ void QuadtreeVTKWriter::write(const std::string& filename,
     std::vector<char> file_buffer;
     std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
-        std::cerr << "Error: Could not open " << full_path << " for writing" << std::endl;
+        LOG_ERROR("Could not open " << full_path << " for writing");
         return;
     }
 
@@ -278,7 +279,7 @@ void QuadtreeVTKWriter::write_mesh_only(const std::string& filename,
     std::vector<char> file_buffer;
     std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
-        std::cerr << "Error: Could not open " << full_path << " for writing" << std::endl;
+        LOG_ERROR("Could not open " << full_path << " for writing");
         return;
     }
 
@@ -365,7 +366,7 @@ void QuadtreeVTKWriter::write_with_errors(const std::string& filename,
     std::vector<char> file_buffer;
     std::ofstream f = open_buffered(full_path, file_buffer);
     if (!f.is_open()) {
-        std::cerr << "Error: Could not open " << full_path << " for writing" << std::endl;
+        LOG_ERROR("Could not open " << full_path << " for writing");
         return;
     }
 
@@ -519,7 +520,7 @@ void QuadtreeVTKWriter::write_with_errors(const std::string& filename,
 
     write_footer(f);
     f.close();
-    std::cout << "Wrote error field to: " << full_path << std::endl;
+    LOG_INFO("Wrote error field to: " << full_path);
 }
 
 } // namespace drifter

@@ -41,6 +41,27 @@ Real high_frequency_bathy(Real x, Real y) {
     return 50.0 + 10.0 * std::sin(x * M_PI / 12.5) * std::cos(y * M_PI / 12.5);
 }
 
+/// Steep on the left half of the domain, gentler but still unresolved on the right
+///
+/// Paired with LEFT_HALF_COARSE_RESOLUTION below, this puts the largest errors
+/// on exactly the elements that hit their data-resolution floor first. The
+/// resolution limit is a per-element floor, so the right half must keep
+/// refining regardless.
+Real left_heavy_bathy(Real x, Real y) {
+    if (x < 50.0) {
+        return 50.0 + 20.0 * std::sin(x * M_PI / 12.5) * std::cos(y * M_PI / 12.5);
+    }
+    return 50.0 + 4.0 * std::sin(x * M_PI / 12.5) * std::cos(y * M_PI / 12.5);
+}
+
+/// Coarse data on the left half, fine on the right
+///
+/// The initial 4x4 mesh has 25 m elements, so the left half may split exactly
+/// once (to 12.5 m) before its children would fall below the pixel size.
+Real left_half_coarse_resolution(Real x, Real /*y*/) {
+    return x < 50.0 ? 12.5 : 0.5;
+}
+
 /// Write a sawtooth "coastline" across the middle of the [0,100]^2 domain
 ///
 /// Vertices alternate y = 45 / 55 every 5 in x, which puts the circumradius at
@@ -398,6 +419,66 @@ TEST_F(AdaptiveCGHermiteSmootherTest, StopsAtMinimumDataPointsPerElement) {
         EXPECT_GE((dx / 1.25) * (dy / 1.25),
                   static_cast<Real>(config.min_data_points_per_element) - TOLERANCE);
     }
+}
+
+/// The resolution limit is a per-element floor, not a global stop
+///
+/// The left half of the domain reaches its floor after one split while still
+/// holding the largest errors in the mesh. Marking on error alone would hand
+/// the whole Dorfler budget to those elements, leave nothing refinable, and
+/// stop the adaptation with PixelResolution while the right half was still
+/// coarse. Marking only among refinable elements keeps the right half going.
+TEST_F(AdaptiveCGHermiteSmootherTest, RefinesCoarseRegionsWhileOthersAreAtTheResolutionLimit) {
+    auto config = make_config(1);
+    config.error_threshold = 1e-6; // unreachable, so a limit has to stop the run
+    config.max_iterations = 6;
+    config.max_elements = 100000;
+    config.max_refinement_level = 20;
+    config.enforce_pixel_limit = true;
+    config.min_element_size = 0.0;            // auto, from the resolution function
+    config.min_data_points_per_element = 0;   // isolate the pixel-size criterion
+    config.smoother_config.lambda = 100.0;
+
+    AdaptiveCGHermiteSmoother smoother(0.0, 100.0, 0.0, 100.0, 4, 4, config);
+    smoother.set_bathymetry_data(left_heavy_bathy);
+    smoother.set_resolution_func(left_half_coarse_resolution);
+
+    const auto result = smoother.solve_adaptive();
+
+    // The left half being exhausted is not a reason to stop the whole run
+    EXPECT_NE(result.convergence_reason, ConvergenceReason::PixelResolution);
+
+    // Refinement kept going well past the iteration that exhausted the left half
+    ASSERT_GE(smoother.history().size(), 4u);
+    for (size_t i = 0; i + 1 < smoother.history().size(); ++i) {
+        EXPECT_GT(smoother.history()[i].elements_refined, 0)
+            << "adaptation stalled at iteration " << i;
+    }
+
+    // Blocked elements hold error the refinable ones no longer do
+    EXPECT_LT(result.max_refinable_error, result.max_error);
+
+    // The right half, which has room, is far finer than the left, which does
+    // not. The floor governs *marking* only: it is not a hard bound on element
+    // size here, because 2:1 balancing across the resolution jump at x = 50
+    // still pulls left-half elements below 12.5. A valid quadtree has to win
+    // that argument; StopsAtMinimumElementSize pins the bound for the uniform
+    // resolution case, where no such cascade exists.
+    Index num_left = 0, num_right = 0;
+    Real min_right = std::numeric_limits<Real>::max();
+    for (Index e = 0; e < smoother.mesh().num_elements(); ++e) {
+        const auto &b = smoother.mesh().element_bounds(e);
+        const Real side = std::min(b.xmax - b.xmin, b.ymax - b.ymin);
+        if (0.5 * (b.xmin + b.xmax) < 50.0) {
+            ++num_left;
+        } else {
+            ++num_right;
+            min_right = std::min(min_right, side);
+        }
+    }
+    EXPECT_LT(min_right, 12.5) << "the unconstrained half never refined";
+    EXPECT_GT(num_right, num_left)
+        << "refinement did not concentrate where the data supports it";
 }
 
 // =============================================================================

@@ -65,7 +65,8 @@ set(BENCHMARK_TESTS
     benchmarks/test_solver_scaling.cpp
     benchmarks/test_adaptive_solver_scaling.cpp
     benchmarks/test_convergence_comparison.cpp
-    benchmarks/test_hierarchical_ordering_performance.cpp)
+    benchmarks/test_hierarchical_ordering_performance.cpp
+    benchmarks/test_hermite_solver_comparison.cpp)
 
 # Tool tests (matrix visualization, developer diagnostics)
 set(TOOL_TESTS
