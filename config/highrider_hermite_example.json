@@ -20,7 +20,7 @@
   "domain": {
     "center_x": 4070000.0,
     "center_y": 3344695.0,
-    "domain_size": 2000000.0
+    "domain_size": 100000.0
   },
   "initial_grid": {
     "nx": 8,
@@ -29,7 +29,7 @@
   "adaptive": {
     "error_threshold": 4.0,
     "error_metric_type": "PixelMaxError",
-    "max_iterations": 20,
+    "max_iterations": 1,
     "max_elements": 80000,
     "max_refinement_level": 100,
     "enforce_pixel_limit": true,
@@ -53,7 +53,7 @@
     "file": "/home/ole/Projects/drifter/data/input/openstreetmap/coastlines-split-4326/lines.shp",
     "layer": "",
     "srs": "EPSG:3034",
-    "max_level": 1
+    "max_level": 10
   },
   "output": {
     "output_file": "/tmp/drifter_bathymetry_hermite",
